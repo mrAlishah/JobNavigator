@@ -120,9 +120,16 @@ Open `http://localhost`. On first run, click "Sign In" with a blank API key to p
 
 ## Chrome Extension ("The Navigator")
 
+**What it does:**
+- **Unblocks the Job Feed preview.** Strips frame-blocking headers (`X-Frame-Options` / CSP `frame-ancestors`) so job postings render in the in-app `iframe` preview pane instead of showing blank.
+- **Captures your LinkedIn collections.** As you browse your personalized **Recommended** and **Top Applicant** collections (`linkedin.com/jobs/collections/*`), it passively collects the job IDs, then imports them into the Job Feed with full details (title, company, description, real apply URL).
+
+**Install:**
 1. `chrome://extensions/` → Developer mode → Load unpacked → select `extension/`
-2. Toggle LinkedIn capture on, browse job collections
+2. Toggle LinkedIn capture on, browse your personal job collections
 3. Click "Send to JobNavigator" to import
+
+**Make sure it works:** the import fetches each job's full data through LinkedIn's Voyager API using a **mock LinkedIn account** — set its email + password in **Settings → Accounts → LinkedIn Extension** before importing. Without it, capture still collects IDs but the import returns nothing.
 
 ## Optional Integrations
 
