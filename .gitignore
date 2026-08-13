@@ -124,6 +124,9 @@ cython_debug/
 .vscode/
 .idea/
 
+# OS metadata
+.DS_Store
+
 # Node
 node_modules/
 frontend/dist/
@@ -131,6 +134,7 @@ frontend/node_modules/
 
 # Project-specific
 backups/
+tmp/
 *.sql
 backend/gmail_token.json
 backend/gmail_credentials.json
@@ -153,3 +157,4 @@ docker-compose.test.yml
 .worktrees/
 resumes-example/
 .full-review/
+misc
