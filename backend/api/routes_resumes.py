@@ -526,13 +526,15 @@ async def tailor_resume(body: dict, db: Session = Depends(get_db)):
         if not base:
             raise HTTPException(404, "Base resume not found")
 
-    # Fast-fail: job must exist (if job_id given) and have usable text
+    # Fast-fail: job must exist (if job_id given) and have *some* JD source. The worker
+    # resolves the actual text (description → live fetch → cached page); here we only
+    # confirm there's something to work from, without doing the (slow) fetch.
     if job_id:
         job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
             raise HTTPException(404, "Job not found")
-        if not _get_tailor_job_text(job).strip():
-            raise HTTPException(400, "Job has no description")
+        if not ((job.description or "").strip() or (job.url or "").strip() or (job.cached_page_text or "").strip()):
+            raise HTTPException(400, "Job has no description, URL, or cached page to tailor from")
 
     # Fast-fail: the prompt template must exist
     prompt_row = db.query(Setting).filter(Setting.key == "cv_tailor_prompt").first()
@@ -561,6 +563,29 @@ async def tailor_resume(body: dict, db: Session = Depends(get_db)):
             status_code=409,
             content={"detail": f"{e.job_type} is already running for this pair"},
         )
+
+
+async def _resolve_tailoring_jd(job, db) -> str:
+    """Resolve the JD text to tailor against, best-quality first:
+
+    1. ``job.description`` — clean, already stored.
+    3. live ``_fetch_job_description(job.url)`` — a fresh ATS-parsed description;
+       persisted back to ``job.description`` so scoring and future tailors reuse it.
+    2. ``job.cached_page_text`` — raw page text captured on apply; noisy, so it's the
+       last resort and is NOT persisted as the description.
+
+    Returns "" when nothing usable exists (the caller then hard-fails).
+    """
+    if (job.description or "").strip():
+        return job.description
+    if (job.url or "").strip():
+        from backend.scraper.ats._descriptions import _fetch_job_description
+        fetched = await _fetch_job_description(job.url)
+        if fetched and fetched.strip():
+            job.description = fetched
+            db.commit()
+            return fetched
+    return job.cached_page_text or ""
 
 
 async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_override: str | None):
@@ -609,11 +634,11 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
                 if not job:
                     logger.error(f"Tailor: job {job_id} missing at execution time")
                     raise RuntimeError(f"Tailor: job {job_id} missing at execution time")
-                jd_text = _get_tailor_job_text(job)
+                jd_text = await _resolve_tailoring_jd(job, db)
                 job_name = f"{job.company} \u2014 {job.title}" if job.company else (job.title or "")
                 if not jd_text:
-                    logger.error(f"Tailor: job {job_id} has no description")
-                    raise RuntimeError(f"Tailor: job {job_id} has no description")
+                    logger.error(f"Tailor: job {job_id} has no usable description")
+                    raise RuntimeError(f"Tailor: job {job_id} has no usable description")
 
             # Persona-as-base uses a constrained prompt (select 3-5 bullets per role
             # from the rich pool); falls back to the standard cv_tailor_prompt if the

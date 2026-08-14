@@ -32,8 +32,14 @@
         reverse_proxy backend:8000
     }
 
-    # Tracer link redirects
+    # Tracer link redirects — path style (/cv/{token})
     handle /cv/* {
+        reverse_proxy backend:8000
+    }
+
+    # Tracer link redirects — param style (/?cv={token}); bare / still goes to frontend
+    @tracer_param query cv=*
+    handle @tracer_param {
         reverse_proxy backend:8000
     }
 

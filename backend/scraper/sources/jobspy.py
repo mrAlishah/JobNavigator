@@ -19,6 +19,25 @@ from backend.scraper._shared.dedup import make_external_id, make_content_hash
 logger = logging.getLogger("jobnavigator.scraper.sources.jobspy")
 
 
+def _clean(v):
+    """Null-safe scalar → clean string, or None when the cell is empty/missing.
+
+    JobSpy rows come from a pandas DataFrame, so absent cells are None or NaN. A bare
+    ``str(cell)`` turns those into the literal text ``'None'`` / ``'nan'``, which then
+    passes every ``if description:`` / ``.strip()`` emptiness check downstream and
+    masquerades as real content (it broke resume tailoring). Detect the actual null
+    here so an empty cell is stored as real emptiness, not a lie.
+    """
+    import pandas as pd
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass  # non-scalar (list/array) — fall through and stringify
+    s = str(v).strip()
+    return s or None
+
+
 def _apply_h1b_inline(job, db=None, company_lookup=None, phrases=None, loop=None) -> None:
     """Sync-safe H-1B JD scan.
 
@@ -170,9 +189,9 @@ def _run_sync(search, proxy_url: str = None) -> dict:
             phrases = load_exclusion_phrases(db)
 
             for _, row in jobs_df.iterrows():
-                company = str(row.get("company", "")) or ""
-                title = str(row.get("title", "")) or ""
-                url = str(row.get("job_url", "")) or ""
+                company = _clean(row.get("company")) or ""
+                title = _clean(row.get("title")) or ""
+                url = _clean(row.get("job_url")) or ""
                 ext_id = make_external_id(company, title, url)
 
                 # Skip if already exists (URL-based dedup)
@@ -199,8 +218,8 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                     url=url,
                     source=source,
                     search_id=search.id,
-                    description=str(row.get("description", "")) or None,
-                    location=str(row.get("location", "")) or None,
+                    description=_clean(row.get("description")),
+                    location=_clean(row.get("location")),
                     remote=None,  # JobSpy doesn't always return this reliably
                     status="new",
                     seen=False,
@@ -253,9 +272,9 @@ def _run_sync(search, proxy_url: str = None) -> dict:
             # Save filtered-out jobs as "ignored" for dedup purposes
             if rejected_df is not None and not rejected_df.empty:
                 for _, row in rejected_df.iterrows():
-                    company = str(row.get("company", "")) or ""
-                    title = str(row.get("title", "")) or ""
-                    url = str(row.get("job_url", "")) or ""
+                    company = _clean(row.get("company")) or ""
+                    title = _clean(row.get("title")) or ""
+                    url = _clean(row.get("job_url")) or ""
                     ext_id = make_external_id(company, title, url)
 
                     if ext_id in existing_ids:
@@ -277,8 +296,8 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                         url=url,
                         source=source,
                         search_id=search.id,
-                        description=str(row.get("description", "")) or None,
-                        location=str(row.get("location", "")) or None,
+                        description=_clean(row.get("description")),
+                        location=_clean(row.get("location")),
                         status="ignored",
                         seen=False,
                         saved=False,

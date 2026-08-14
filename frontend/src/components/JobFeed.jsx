@@ -3,6 +3,47 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import api from '../api'
 import { ExternalLink, Bookmark, X, CheckCircle, ChevronDown, ChevronUp, Filter, Ban, Info, FileText, Loader2, ScrollText, RotateCw, Mail } from 'lucide-react'
 
+// Toast with slide/fade in on mount and out when `t.leaving` flips (no lib needed).
+function ToastItem({ t, label, onClose }) {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true))
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  const visible = shown && !t.leaving
+  return (
+    <div className={`rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl text-white text-sm max-w-[80vw] transform transition-all duration-300 ease-out ${
+      visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+    } ${t.phase === 'ok' ? 'bg-green-700' : t.phase === 'nok' ? 'bg-red-700' : 'bg-gray-800'}`}>
+      {t.phase === 'start' && <Loader2 size={14} className="animate-spin flex-shrink-0" />}
+      {t.phase === 'ok' && <CheckCircle size={14} className="flex-shrink-0" />}
+      {t.phase === 'nok' && <Ban size={14} className="flex-shrink-0" />}
+      <span className="truncate min-w-0 flex-1" title={label}>{label}</span>
+      <button onClick={onClose} className="text-white/60 hover:text-white ml-1 flex-shrink-0">
+        <X size={14} />
+      </button>
+    </div>
+  )
+}
+
+// Undo toast (skip / apply) with the same slide/fade in-and-out as ToastItem.
+function UndoToast({ toast, onUndo }) {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true))
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  const visible = shown && !toast.leaving
+  return (
+    <div className={`fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl z-50 transform transition-all duration-300 ease-out ${
+      visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+    }`}>
+      <span className="text-sm">{toast.message}</span>
+      <button onClick={onUndo} className="text-sm text-blue-400 hover:text-blue-300 font-medium">Undo</button>
+    </div>
+  )
+}
+
 const STORAGE_KEY = 'jobfeed_filters'
 
 const H1B_BADGES = {
@@ -119,8 +160,39 @@ export default function JobFeed() {
   const [cvMode, setCvMode] = useState('tailor') // 'tailor' or 'copy'
   const [cvPersonaAvailable, setCvPersonaAvailable] = useState(false)
 
-  // Tailor background toasts
+  // Tailor / score completion toasts (start + OK/NOK), driven by the in-flight poll.
   const [tailorToasts, setTailorToasts] = useState([])
+  // Per-job op-types the in-flight endpoint reported last tick: { jobId: Set(opType) }.
+  const prevInFlightRef = useRef({})
+  // Epoch ms of the previous poll tick — bounds the /monitor/finished status lookup.
+  const lastPollMsRef = useRef(Date.now())
+
+  // Op types we surface as toasts, with their display verbs.
+  const TOASTED_OPS = { tailor_resume: 'tailor', analyze_job: 'score' }
+  const toastLabel = (t) => {
+    const at = t.company ? ` at ${t.company}` : ''
+    const who = `for ${t.title || 'the job'}${at}`
+    if (t.kind === 'tailor') {
+      return t.phase === 'start' ? `Tailoring ${who}`
+        : t.phase === 'ok' ? `Tailored ${who}` : `Tailoring failed ${who}`
+    }
+    return t.phase === 'start' ? `Scoring ${who}`
+      : t.phase === 'ok' ? `Scored ${who}` : `Scoring failed ${who}`
+  }
+  // Flip `leaving` to trigger the exit transition, then remove after it finishes.
+  const dismissToast = useCallback((id) => {
+    setTailorToasts(prev => prev.map(t => t.id === id ? { ...t, leaving: true } : t))
+    setTimeout(() => setTailorToasts(prev => prev.filter(t => t.id !== id)), 300)
+  }, [])
+  const pushToast = useCallback((toast) => {
+    const id = `${toast.kind}-${toast.phase}-${toast.jobId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    setTailorToasts(prev => [...prev, { ...toast, id, leaving: false }])
+    setTimeout(() => dismissToast(id), 2500)  // auto-dismiss (with exit animation)
+  }, [dismissToast])
+  // Jobs to keep in the toast poll even after they leave the visible feed (e.g. a job
+  // saved on the "new" filter is pruned but its score op still needs start/OK-NOK toasts).
+  // [{ id, addedMs, title, company }]
+  const [watchExtra, setWatchExtra] = useState([])
 
   // #22 Additional filters
   const [minSalary, setMinSalary] = useState('')
@@ -258,36 +330,114 @@ export default function JobFeed() {
   // Bails out immediately when no cards are running, so there's zero
   // network/CPU cost in the idle state.
   useEffect(() => {
-    const activeIds = jobs
-      .filter(j => (j.in_flight || []).length > 0)
-      .map(j => j.id)
-    if (activeIds.length === 0) return  // nothing running, no poll
+    const visibleActive = jobs.filter(j => (j.in_flight || []).length > 0).map(j => j.id)
+    const watchIds = [...new Set([...visibleActive, ...watchExtra.map(w => w.id)])]
+    if (watchIds.length === 0) return  // nothing to watch, no poll
+
+    const extraMeta = {}
+    watchExtra.forEach(w => { extraMeta[w.id] = w })
 
     let cancelled = false
     const tick = async () => {
       try {
+        const tickStart = Date.now()
         const { data } = await api.get('/monitor/in-flight', {
-          params: { job_ids: activeIds.join(',') },
+          params: { job_ids: watchIds.join(',') },
         })
         if (cancelled) return
 
-        // Which jobs finished? (were running, now absent from response)
-        const finished = activeIds.filter(id => !data[id])
+        const jobsById = {}
+        jobs.forEach(j => { jobsById[j.id] = j })
+        const metaFor = (id) => jobsById[id] || extraMeta[id] || {}
+
+        // Diff each job's toasted op-types vs the previous tick → start / finished.
+        const prevMap = prevInFlightRef.current
+        const nextMap = {}
+        const appeared = []                 // [{ id, op }]
+        const disappearedByJob = {}         // { id: [op] }
+        const trackedIds = new Set([...watchIds, ...Object.keys(prevMap)])
+        trackedIds.forEach(id => {
+          const cur = new Set((data[id] || []).filter(op => TOASTED_OPS[op]))
+          const prev = prevMap[id] || new Set()
+          cur.forEach(op => { if (!prev.has(op)) appeared.push({ id, op }) })
+          prev.forEach(op => {
+            if (!cur.has(op)) (disappearedByJob[id] = disappearedByJob[id] || []).push(op)
+          })
+          if (cur.size) nextMap[id] = cur
+        })
+        prevInFlightRef.current = nextMap
+
+        // Start toasts (title/company from visible state or the watch-extra meta)
+        appeared.forEach(({ id, op }) => {
+          const m = metaFor(id)
+          pushToast({ kind: TOASTED_OPS[op], phase: 'start', jobId: id, title: m.title, company: m.company })
+        })
+
+        // Jobs that left in-flight entirely → re-fetch so scores/tailored_id + in_flight land
+        const finished = watchIds.filter(id => !data[id])
+        const refetched = {}
         if (finished.length > 0) {
-          // Re-fetch each finished job so scores/tailored_id land in state
           await Promise.all(finished.map(async id => {
             try {
               const { data: jobData } = await api.get(`/jobs/${id}`)
+              refetched[id] = jobData
               setJobs(prev => prev.map(j => j.id === id ? jobData : j))
+              setSelectedJob(prev => (prev && prev.id === id ? jobData : prev))
             } catch {/* skip */}
           }))
+          if (cancelled) return
         }
-        // For still-active ones, patch in_flight in place
+
+        // Completion toasts: resolve OK/NOK from the run's ACTUAL status (not inferred).
+        const disappearedIds = Object.keys(disappearedByJob)
+        if (disappearedIds.length > 0) {
+          const statusMap = {}  // "jobId:op" -> "completed" | "failed" (newest per pair)
+          try {
+            const { data: fin } = await api.get('/monitor/finished', {
+              params: { job_ids: disappearedIds.join(','), since: Math.floor(lastPollMsRef.current - 5000) },
+            })
+            ;(fin || []).forEach(r => {
+              const k = `${r.target_job_id}:${r.job_type}`
+              if (!(k in statusMap)) statusMap[k] = r.status  // fin is newest-first
+            })
+          } catch {/* status unknown — skip the completion toast rather than guess */}
+          disappearedIds.forEach(id => {
+            const m = refetched[id] || metaFor(id)
+            disappearedByJob[id].forEach(op => {
+              const st = statusMap[`${id}:${op}`]
+              if (!st) return
+              pushToast({
+                kind: TOASTED_OPS[op],
+                phase: st === 'completed' ? 'ok' : 'nok',
+                jobId: id, title: m.title, company: m.company,
+              })
+            })
+          })
+        }
+
+        // Patch still-active in_flight in place
         setJobs(prev => prev.map(j => {
           if (data[j.id]) return { ...j, in_flight: data[j.id] }
           if (finished.includes(j.id)) return j  // already refreshed above
           return j
         }))
+
+        // Retire watch-extra entries: seen-then-finished this tick, or aged out (60s)
+        // without ever surfacing an op (e.g. on_save_action = off → nothing runs).
+        setWatchExtra(prev => {
+          if (prev.length === 0) return prev
+          const now = Date.now()
+          const kept = prev.filter(w => {
+            const hasOps = (data[w.id] || []).some(op => TOASTED_OPS[op])
+            if (hasOps) return true
+            const wasSeen = prevMap[w.id] && prevMap[w.id].size > 0
+            if (wasSeen) return false
+            return (now - w.addedMs) < 60000
+          })
+          return kept.length === prev.length ? prev : kept
+        })
+
+        lastPollMsRef.current = tickStart
       } catch {/* network hiccup — next tick retries */}
     }
 
@@ -297,16 +447,24 @@ export default function JobFeed() {
       cancelled = true
       clearInterval(handle)
     }
-  }, [jobs.map(j => (j.in_flight || []).length > 0 ? j.id : null).filter(Boolean).join(',')])
-  // Re-subscribe only when the set of active IDs actually changes
+  }, [
+    jobs.map(j => (j.in_flight || []).length > 0 ? j.id : null).filter(Boolean).join(','),
+    watchExtra.map(w => w.id).join(','),
+  ])
+  // Re-subscribe when the visible-active set OR the watch-extra set changes
 
   // Watch freshly-saved jobs for their score (save-triggered scoring runs as an
   // untracked FastAPI background task, so it never shows in /monitor/in-flight).
   // Poll each watched job's /jobs/{id} until cv_scores populates, then patch it in.
-  const watchForScore = useCallback((id) => {
+  const watchForScore = useCallback((id, meta = {}) => {
     if (!id) return
-    if (scoreWatchRef.current.some(w => w.id === id)) return
-    scoreWatchRef.current = [...scoreWatchRef.current, { id, until: Date.now() + 60000 }]
+    if (!scoreWatchRef.current.some(w => w.id === id)) {
+      scoreWatchRef.current = [...scoreWatchRef.current, { id, until: Date.now() + 60000 }]
+    }
+    // Keep it in the toast poll too (start + OK/NOK), even once it's pruned from the feed.
+    setWatchExtra(prev => prev.some(w => w.id === id)
+      ? prev
+      : [...prev, { id, addedMs: Date.now(), title: meta.title, company: meta.company }])
   }, [])
   const watchForScoreRef = useRef(watchForScore)
   useEffect(() => { watchForScoreRef.current = watchForScore }, [watchForScore])
@@ -400,7 +558,7 @@ export default function JobFeed() {
           // Advance to next job immediately
           if (idx + 1 < currentJobs.length) selectJobAt(idx + 1)
           api.patch(`/jobs/${job.id}`, { saved: newSaved, status: newStatus }).then(() => {
-            if (newSaved && !(job.cv_scores && Object.keys(job.cv_scores).length)) watchForScoreRef.current(job.id)
+            if (newSaved && !(job.cv_scores && Object.keys(job.cv_scores).length)) watchForScoreRef.current(job.id, { title: job.title, company: job.company })
             patchJobLocallyRef.current(job.id, { saved: newSaved, status: newStatus })
           }).catch(console.error)
           break
@@ -545,10 +703,16 @@ export default function JobFeed() {
   }
 
   // #20 Undo toast helpers
+  // Trigger the exit animation, then remove — but only if a fresh toast hasn't
+  // replaced it in the meantime (guards rapid consecutive skips).
+  const dismissUndo = useCallback(() => {
+    setUndoToast(prev => prev ? { ...prev, leaving: true } : prev)
+    setTimeout(() => setUndoToast(prev => (prev && prev.leaving) ? null : prev), 300)
+  }, [])
   const showUndo = (jobId, prevStatus, prevSaved, message) => {
     if (undoToast?.timer) clearTimeout(undoToast.timer)
-    const timer = setTimeout(() => setUndoToast(null), 5000)
-    setUndoToast({ jobId, prevStatus, prevSaved, message, timer })
+    const timer = setTimeout(() => dismissUndo(), 5000)
+    setUndoToast({ jobId, prevStatus, prevSaved, message, timer, leaving: false })
   }
   showUndoRef.current = showUndo
 
@@ -556,7 +720,7 @@ export default function JobFeed() {
     if (!undoToast) return
     clearTimeout(undoToast.timer)
     await api.patch(`/jobs/${undoToast.jobId}`, { status: undoToast.prevStatus, saved: undoToast.prevSaved })
-    setUndoToast(null)
+    dismissUndo()
     fetchJobs()
   }
 
@@ -580,24 +744,25 @@ export default function JobFeed() {
       return
     }
 
-    // Tailor — background; endpoint returns 202 + run_id immediately.
-    const toastId = Date.now()
-    setTailorToasts(prev => [...prev, { id: toastId, company, status: 'loading' }])
+    // Tailor — background; endpoint returns 202 + run_id immediately. Start + OK/NOK
+    // toasts are driven by the in-flight poll (same signal as the badge), so here we
+    // just kick it off. On the 202 we optimistically mark the job in-flight (the run
+    // is already registered by then) so the poll picks it up at once.
     setShowCvModal(false)
     setCvSelectedBase('')
 
     api.post('/resumes/tailor', { base_resume_id: cvSelectedBase, job_id: jobId })
       .then(() => {
-        // No payload to use — the tailored Resume appears once the background
-        // job completes. The card polling loop (Task 9) picks it up.
-        setTailorToasts(prev => prev.map(t => t.id === toastId ? { ...t, status: 'running' } : t))
-        // optimistic refresh after a moment so the spinner badge shows
-        setTimeout(() => fetchJobs(), 500)
+        setJobs(prev => prev.map(j => j.id === jobId
+          ? { ...j, in_flight: [...new Set([...(j.in_flight || []), 'tailor_resume'])] }
+          : j))
       })
       .catch(e => {
-        const msg = e.response?.data?.detail || e.message
-        setTailorToasts(prev => prev.map(t => t.id === toastId ? { ...t, status: 'error', error: msg } : t))
-        setTimeout(() => setTailorToasts(prev => prev.filter(t => t.id !== toastId)), 10000)
+        // Immediate HTTP rejection (e.g. 400/409) — no run was created, so the poll
+        // will never toast it. Surface it directly.
+        const title = jobs.find(j => j.id === jobId)?.title
+        pushToast({ kind: 'tailor', phase: 'nok', jobId, title, company })
+        console.error('Tailor request failed:', e.response?.data?.detail || e.message)
       })
   }
 
@@ -620,7 +785,7 @@ export default function JobFeed() {
       const willSave = !job.saved
       const newStatus = job.saved ? 'new' : 'saved'
       await api.patch(`/jobs/${job.id}`, { saved: willSave, status: newStatus })
-      if (willSave && !(job.cv_scores && Object.keys(job.cv_scores).length)) watchForScore(job.id)
+      if (willSave && !(job.cv_scores && Object.keys(job.cv_scores).length)) watchForScore(job.id, { title: job.title, company: job.company })
       patchJobLocally(job.id, { saved: willSave, status: newStatus })
     } catch (e) { console.error(e) }
   }
@@ -722,7 +887,7 @@ export default function JobFeed() {
       if (action !== 'skip') {
         ids.forEach(id => {
           const j = jobs.find(x => x.id === id)
-          if (!(j && j.cv_scores && Object.keys(j.cv_scores).length)) watchForScore(id)
+          if (!(j && j.cv_scores && Object.keys(j.cv_scores).length)) watchForScore(id, { title: j?.title, company: j?.company })
         })
       }
       setSelectedIds(new Set())
@@ -1212,33 +1377,14 @@ export default function JobFeed() {
 
       {/* #20 Undo toast — hidden when bulk action bar is visible */}
       {undoToast && selectedIds.size === 0 && (
-        <div className="fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl z-50">
-          <span className="text-sm">{undoToast.message}</span>
-          <button onClick={handleUndo} className="text-sm text-blue-400 hover:text-blue-300 font-medium">Undo</button>
-        </div>
+        <UndoToast key={`${undoToast.jobId}-${undoToast.message}`} toast={undoToast} onUndo={handleUndo} />
       )}
 
-      {/* Tailor background toasts */}
+      {/* Tailor / score start + OK/NOK toasts (auto-dismiss ~2.5s) */}
       {tailorToasts.length > 0 && (
-        <div className="fixed bottom-16 right-4 flex flex-col gap-2 z-50">
+        <div className="fixed bottom-16 right-4 flex flex-col gap-2 z-50 max-w-[80vw] items-end">
           {tailorToasts.map(t => (
-            <div key={t.id} className={`rounded-lg px-4 py-3 flex items-center gap-3 shadow-xl text-white text-sm ${
-              t.status === 'loading' || t.status === 'running' ? 'bg-gray-800' : 'bg-red-700'
-            }`}>
-              {t.status === 'loading' && <><Loader2 size={14} className="animate-spin flex-shrink-0" /> Tailoring Resume for {t.company}...</>}
-              {t.status === 'running' && <><Loader2 size={14} className="animate-spin flex-shrink-0" /> Tailoring Resume for {t.company} in background...</>}
-              {t.status === 'error' && (
-                <>
-                  <Ban size={14} className="flex-shrink-0" />
-                  <span>Tailor failed for {t.company}: {t.error}</span>
-                </>
-              )}
-              {t.status !== 'loading' && t.status !== 'running' && (
-                <button onClick={() => setTailorToasts(prev => prev.filter(x => x.id !== t.id))} className="text-white/60 hover:text-white ml-1">
-                  <X size={14} />
-                </button>
-              )}
-            </div>
+            <ToastItem key={t.id} t={t} label={toastLabel(t)} onClose={() => dismissToast(t.id)} />
           ))}
         </div>
       )}

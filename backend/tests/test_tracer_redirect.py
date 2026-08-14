@@ -34,6 +34,81 @@ def test_tracer_redirect_succeeds_normally(api_client, test_db):
     assert "example.com/apply" in resp.headers.get("location", "")
 
 
+def test_tracer_redirect_bypasses_api_key(api_client, test_db):
+    """With a dashboard API key configured, the public /cv/{token} redirect must still
+    work WITHOUT the key header — recruiters click it from a PDF and have no key.
+
+    Regression for issue #3: the /cv/ bypass prefix had a trailing slash, so it never
+    matched a real token path and every click 401'd once a key was set.
+    """
+    from backend.models.db import Setting, Resume, TracerLink
+    test_db.add(Setting(key="dashboard_api_key", value="secret-key-123"))
+    resume = Resume(id=uuid.uuid4(), name="Test", is_base=True, json_data={})
+    test_db.add(resume)
+    test_db.commit()
+    link = TracerLink(
+        id=uuid.uuid4(),
+        token="pub789",
+        resume_id=resume.id,
+        destination_url="https://example.com/apply3",
+        source_label="manual",
+        is_active=True,
+    )
+    test_db.add(link)
+    test_db.commit()
+
+    # Guard: the key really is enforced — a protected route 401s without the header.
+    protected = api_client.get("/api/settings", follow_redirects=False)
+    assert protected.status_code == 401, (
+        f"key not enforced (got {protected.status_code}); bypass test would be meaningless"
+    )
+
+    # The public tracer path must bypass auth and redirect.
+    resp = api_client.get("/cv/pub789", follow_redirects=False)
+    assert resp.status_code in (302, 307), (
+        f"tracer link should bypass API key, got {resp.status_code}: {resp.text}"
+    )
+    assert "example.com/apply3" in resp.headers.get("location", "")
+
+
+def test_tracer_redirect_param_style_bypasses_and_redirects(api_client, test_db):
+    """Param-style links (?cv=token on root) must also bypass auth and redirect.
+
+    Resumes were exported over time in both shapes — /cv/{token} (path) AND
+    ?cv={token} (param) — so both must resolve. Regression + coverage for all styles.
+    """
+    from backend.models.db import Setting, Resume, TracerLink
+    test_db.add(Setting(key="dashboard_api_key", value="secret-key-123"))
+    resume = Resume(id=uuid.uuid4(), name="Test", is_base=True, json_data={})
+    test_db.add(resume)
+    test_db.commit()
+    link = TracerLink(
+        id=uuid.uuid4(),
+        token="qp123",
+        resume_id=resume.id,
+        destination_url="https://example.com/param-dest",
+        source_label="manual",
+        is_active=True,
+    )
+    test_db.add(link)
+    test_db.commit()
+
+    resp = api_client.get("/?cv=qp123", follow_redirects=False)
+    assert resp.status_code in (302, 307), (
+        f"param-style link should redirect, got {resp.status_code}: {resp.text}"
+    )
+    assert "example.com/param-dest" in resp.headers.get("location", "")
+
+
+def test_root_without_cv_is_not_a_tracer(api_client, test_db):
+    """Bare root path (no ?cv) must not be treated as a tracer redirect."""
+    from backend.models.db import Setting
+    test_db.add(Setting(key="dashboard_api_key", value=""))  # first-run: middleware allows /
+    test_db.commit()
+    resp = api_client.get("/", follow_redirects=False)
+    assert resp.status_code == 404
+
+
 def test_tracer_redirect_survives_commit_failure(api_client, test_db, monkeypatch):
     """A commit failure in click-log must NOT break the 302 redirect."""
     _seed_first_run(test_db)

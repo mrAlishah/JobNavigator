@@ -483,7 +483,11 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{job_id}")
-def update_job(job_id: str, updates: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def update_job(job_id: str, updates: dict, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    # NOTE: must be async — launch_background() below uses asyncio.create_task(), which
+    # needs a running event loop. A sync endpoint runs in a threadpool with no loop, so
+    # the task would silently fail to start (JobRun row created but never registered in
+    # _running → invisible to /monitor/in-flight → no scoring toast).
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -494,14 +498,28 @@ def update_job(job_id: str, updates: dict, background_tasks: BackgroundTasks, db
             setattr(job, key, value)
     db.commit()
 
-    # Trigger CV scoring when job is saved (respects on_save_action setting)
+    # Trigger CV scoring when job is saved (respects on_save_action setting). Launched
+    # as a TRACKED op so it shows in /monitor/in-flight + /monitor/finished — that's
+    # what drives the dashboard's scoring badge and start/OK-NOK toasts.
     if updates.get("saved") is True and not job.cv_scores:
         from backend.models.db import Setting
         on_save_row = db.query(Setting).filter(Setting.key == "on_save_action").first()
         on_save = on_save_row.value if on_save_row and on_save_row.value else "off"
         if on_save != "off":
-            from backend.analyzer.cv_scorer import score_single_job
-            background_tasks.add_task(score_single_job, str(job.id), None, on_save)
+            try:
+                from backend.analyzer.cv_scorer import score_single_job
+                launch_background(
+                    "analyze_job",
+                    score_single_job,
+                    trigger="manual",
+                    scope_key=f"{job.id}:on-save",
+                    target_job_id=job.id,
+                    func_kwargs={"job_id": str(job.id), "depth": on_save},
+                )
+            except JobAlreadyRunningError:
+                pass  # already scoring this job — the save itself still succeeds
+            except Exception as e:
+                logger.warning(f"on-save auto-score launch failed for {job.id}: {e}")
 
     # Auto-cache page and create Application when status changes to applied
     if updates.get("status") == "applied":
