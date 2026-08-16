@@ -151,4 +151,76 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+
+  // --- Application Autofill ---
+
+  // Content script requests a generated answer for a focused application field
+  if (msg.type === 'autofill_generate') {
+    chrome.storage.sync.get(['serverUrl', 'apiKey'], async (settings) => {
+      const serverUrl = settings.serverUrl || 'http://localhost';
+      const apiKey = settings.apiKey || '';
+
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) headers['X-API-Key'] = apiKey;
+
+        const resp = await fetch(`${serverUrl}/api/autofill/answer`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            question: msg.question,
+            company: msg.company,
+            position: msg.position,
+            max_chars: msg.max_chars,
+          }),
+        });
+
+        if (!resp.ok) {
+          sendResponse({ error: `Server error: ${resp.status}` });
+          return;
+        }
+
+        const result = await resp.json();
+        sendResponse(result);
+      } catch (e) {
+        sendResponse({ error: e.message });
+      }
+    });
+
+    return true; // Async response
+  }
+
+  // Content script saves an edited/approved answer to the persona Q&A bank
+  if (msg.type === 'autofill_save') {
+    chrome.storage.sync.get(['serverUrl', 'apiKey'], async (settings) => {
+      const serverUrl = settings.serverUrl || 'http://localhost';
+      const apiKey = settings.apiKey || '';
+
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) headers['X-API-Key'] = apiKey;
+
+        const resp = await fetch(`${serverUrl}/api/persona/qa-bank`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            question: msg.question,
+            answer: msg.answer,
+          }),
+        });
+
+        if (!resp.ok) {
+          sendResponse({ error: `Server error: ${resp.status}` });
+          return;
+        }
+
+        const result = await resp.json();
+        sendResponse(result);
+      } catch (e) {
+        sendResponse({ error: e.message });
+      }
+    });
+
+    return true; // Async response
+  }
 });

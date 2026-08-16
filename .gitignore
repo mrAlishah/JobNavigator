@@ -157,4 +157,7 @@ docker-compose.test.yml
 .worktrees/
 resumes-example/
 .full-review/
+
+# SDD / superpowers scratch (dev process artifacts)
+.superpowers/
 misc

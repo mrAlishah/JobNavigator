@@ -158,6 +158,26 @@ DEFAULT_SETTINGS = {
         # Search-context noise (career page filters that leak into job hrefs):
         "categories", "cities", "locations", "departments", "teams", "regions", "country", "category",
     ]), "URL query params stripped before dedup hashing — tracking/referral noise"),
+    "autofill_llm_provider": ("", "LLM provider for application autofill (empty = use primary llm_provider)"),
+    "autofill_llm_model": ("", "LLM model for application autofill (empty = use primary llm_model)"),
+    "autofill_default_length": ("250", "Default target character length for autofill answers when a field has no maxlength"),
+    "autofill_prompt": (
+        "You are the candidate, writing a short first-person answer to a job-application question.\n\n"
+        "Use ONLY facts from the candidate profile and the reusable Q&A bank below. Never invent employers, "
+        "titles, metrics, or skills. If the Q&A bank already answers this (or a close variant), adapt that answer "
+        "to this company and role instead of writing from scratch.\n\n"
+        "Write like a real person: specific, direct, plain. No corporate filler or buzzwords (no 'leverage', "
+        "'passionate', 'excited to', 'thrilled', 'synergy', 'mission-driven'), no generic mission-statement lines, "
+        "no restating the question. ASCII only, no em-dashes. Keep it at or under {max_chars} characters.\n\n"
+        "Put the finished answer (first person, no preamble, no meta-commentary) inside the JSON below, and put "
+        "NOTHING outside it — no reasoning, no notes about the profile, no 'I'll write...' lines.\n\n"
+        "CANDIDATE PROFILE:\n{persona}\n\n"
+        "Q&A BANK (reusable prior answers):\n{qa_bank}\n\n"
+        "TARGET: {company} - {position}\n"
+        "QUESTION: {question}\n\n"
+        "Return ONLY this JSON:\n{\"answer\": \"...\"}",
+        "Editable application-autofill LLM prompt. Placeholders: {persona}, {qa_bank}, {company}, {position}, {question}, {max_chars}."
+    ),
 }
 
 SEED_COMPANIES = [
@@ -497,14 +517,14 @@ def migrate_llm_settings(db):
             row.value = json.dumps(merged)
 
     provider_keys = ["llm_provider", "llm_fallback_provider", "email_llm_provider",
-                     "cv_tailor_llm_provider", "cover_letter_llm_provider"]
+                     "cv_tailor_llm_provider", "cover_letter_llm_provider", "autofill_llm_provider"]
     for key in provider_keys:
         r = db.query(Setting).filter(Setting.key == key).first()
         if r and r.value == "openai_compat":
             r.value = "openai"
 
     model_keys = ["llm_model", "llm_fallback_model", "email_llm_model",
-                  "cv_tailor_llm_model", "cover_letter_llm_model"]
+                  "cv_tailor_llm_model", "cover_letter_llm_model", "autofill_llm_model"]
     for key in model_keys:
         r = db.query(Setting).filter(Setting.key == key).first()
         if r and r.value == "claude-haiku-4-5-20251001":

@@ -144,6 +144,34 @@ async def call_cover_letter_llm(prompt: str, system: str, max_tokens: int = 1500
                            cached_prefix=cached_prefix)
 
 
+async def call_autofill_llm(prompt: str, system: str, max_tokens: int = 400,
+                            cached_prefix: str | None = None) -> dict:
+    """Route to autofill-specific LLM provider. Returns {text, usage}.
+
+    Supports prompt caching (Claude API): the persona + qa_bank prefix is stable
+    per request, so regenerating with a different length/company only pays for
+    the per-question suffix.
+    """
+    db = SessionLocal()
+    try:
+        provider = _get_setting(db, "autofill_llm_provider", "")
+        model = _get_setting(db, "autofill_llm_model", "")
+        api_key = _get_setting(db, "autofill_llm_api_key", "")
+        if not provider:
+            provider = _get_setting(db, "llm_provider", "claude_api")
+        if not model:
+            model = _get_setting(db, "llm_model", "claude-sonnet-5")
+        if not api_key:
+            api_key = _get_setting(db, "llm_api_key", "")
+    finally:
+        db.close()
+
+    logger.info(f"Autofill LLM call: provider={provider}, model={model}, max_tokens={max_tokens}, "
+                f"caching={'on' if cached_prefix and provider == 'claude_api' else 'off'}")
+    return await _dispatch(provider, model, api_key, prompt, system, max_tokens,
+                           cached_prefix=cached_prefix)
+
+
 async def _dispatch(provider: str, model: str, api_key: str,
                     prompt: str, system: str, max_tokens: int,
                     cached_prefix: str | None = None) -> dict:

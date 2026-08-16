@@ -91,6 +91,7 @@ Self-hosted job search automation — scrape any career portal or use job aggreg
 | **Job Feed** | Filters, sorting, keyboard shortcuts (j/k/s/x/e), scoring reports, bulk operations, in-app job preview |
 | **Application Board** | Kanban pipeline with drag-and-drop, status transition history |
 | **Chrome Extension** | Passive LinkedIn capture + save any job from any page |
+| **Application Autofill** | Generate persona-grounded answers to free-text application questions on any job site, from the extension — review with a length picker, then insert, copy, or save to a reusable Q&A bank |
 | **Gmail Monitor** | OAuth2 polling, auto-classifies responses, updates application status |
 | **Telegram Alerts** | New job alerts, daily digest, scrape health, inline action buttons |
 | **H-1B Data** | Company LCA lookups from MyVisaJobs, JD exclusion scanning |
@@ -123,6 +124,7 @@ Open `http://localhost`. On first run, click "Sign In" with a blank API key to p
 **What it does:**
 - **Unblocks the Job Feed preview.** Strips frame-blocking headers (`X-Frame-Options` / CSP `frame-ancestors`) so job postings render in the in-app `iframe` preview pane instead of showing blank.
 - **Captures your LinkedIn collections.** As you browse your personalized **Recommended** and **Top Applicant** collections (`linkedin.com/jobs/collections/*`), it passively collects the job IDs, then imports them into the Job Feed with full details (title, company, description, real apply URL).
+- **Fills application answers.** On any job site, focus a free-text question and click the Navigator button to generate a first-person answer grounded in your **Persona** + saved **Q&A bank** (no résumé text). Review it with a length picker, then insert, copy, or save it back to the bank. Enable it with the **Application Autofill** toggle in the popup, and fill out your Persona (`/persona`) first so answers have something to ground on. Configure the model/prompt in **Settings → AI**.
 
 **Install:**
 1. `chrome://extensions/` → Developer mode → Load unpacked → select `extension/`

@@ -2,6 +2,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from backend.models.db import get_db, Persona, utcnow
 
@@ -67,3 +68,32 @@ def update_persona(updates: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(p)
     return _to_dict(p)
+
+
+@router.post("/qa-bank")
+def append_qa_bank(body: dict, db: Session = Depends(get_db)):
+    """Append one {question, answer} entry to the singleton Persona's qa_bank.
+    Creates the Persona row if missing. Empty question/answer -> 400.
+
+    This is the "flywheel" save used by the extension's autofill review
+    popover: whenever the user edits/approves a generated answer, it can be
+    saved back into the bank to improve future generations.
+    """
+    question = (body.get("question") or "").strip()
+    answer = (body.get("answer") or "").strip()
+    if not question or not answer:
+        raise HTTPException(status_code=400, detail="question and answer are required")
+
+    p = db.query(Persona).filter(Persona.id == 1).first()
+    if not p:
+        p = Persona(id=1, qa_bank=[])
+        db.add(p)
+
+    bank = list(p.qa_bank or [])
+    bank.append({"question": question, "answer": answer})
+    p.qa_bank = bank
+    # JSON columns need explicit change flagging so SQLAlchemy detects the mutation.
+    flag_modified(p, "qa_bank")
+    p.updated_at = utcnow()
+    db.commit()
+    return {"count": len(bank)}

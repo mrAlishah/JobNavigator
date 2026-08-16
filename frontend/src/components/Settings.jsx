@@ -674,6 +674,77 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* Application Autofill */}
+      <section className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="font-semibold text-lg dark:text-gray-100">Application Autofill</h2>
+          <div className="relative group">
+            <Info size={15} className="text-gray-400 dark:text-gray-500 cursor-help" />
+            <div className="hidden group-hover:block absolute left-6 top-0 z-50 w-80 p-3 text-xs bg-gray-900 text-gray-100 rounded-lg shadow-lg leading-relaxed">
+              <p className="font-semibold mb-1.5">Application Autofill</p>
+              <p className="mb-1">Generates first-person answers to job-application free-text questions from the extension, grounded in your persona + Q&amp;A bank. Triggered by the Navigator button anchored to answer fields on job sites.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Provider</label>
+            <select value={settings.autofill_llm_provider || ''}
+              onChange={e => { setSettings(p => ({...p, autofill_llm_provider: e.target.value})); saveSetting('autofill_llm_provider', e.target.value) }}
+              className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
+              <option value="">Use Primary</option>
+              <option value="claude_api">Claude API (Anthropic)</option>
+              <option value="claude_code">Claude Code (Subscription)</option>
+              <option value="openai">OpenAI</option>
+              <option value="ollama">Ollama (Local)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Model</label>
+            {(() => {
+              const models = Array.isArray(settings.llm_models_list) ? settings.llm_models_list : []
+              const provider = settings.autofill_llm_provider || settings.llm_provider || 'claude_api'
+              const filtered = models.filter(m => m.provider === provider)
+              const currentModel = settings.autofill_llm_model || ''
+              const currentInList = filtered.some(m => m.model === currentModel)
+              return (
+                <select value={currentModel}
+                  onChange={e => { setSettings(p => ({...p, autofill_llm_model: e.target.value})); saveSetting('autofill_llm_model', e.target.value) }}
+                  className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
+                  <option value="">Use Primary</option>
+                  {!currentInList && currentModel && <option value={currentModel}>Custom: {currentModel}</option>}
+                  {filtered.map(m => <option key={m.model} value={m.model}>{m.label || m.model}</option>)}
+                </select>
+              )
+            })()}
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Default Answer Length (characters)</label>
+          <input type="number" min="1" value={settings.autofill_default_length || '120'}
+            onChange={e => setSettings(p => ({...p, autofill_default_length: e.target.value}))}
+            onBlur={e => saveSetting('autofill_default_length', e.target.value)}
+            className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600" />
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Used when the field has no detectable <code>maxlength</code>.</p>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Autofill Prompt</label>
+          <textarea
+            className="w-full border rounded px-3 py-2 text-sm font-mono dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600"
+            rows={10}
+            defaultValue={settings.autofill_prompt || ''}
+            onBlur={e => saveSetting('autofill_prompt', e.target.value)}
+            placeholder="Application autofill generation prompt template..."
+          />
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            Placeholders: {'{persona} {qa_bank} {company} {position} {question} {max_chars}'}
+          </p>
+        </div>
+      </section>
+
       {/* Email Classification */}
       <section className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-6">
         <div className="flex items-center gap-2 mb-3">

@@ -103,6 +103,23 @@
         border-radius: 50%;
         transition: 0.2s;
       }
+      #autofillToggle:checked + #autofillToggleSlider {
+        background: #7c3aed !important;
+      }
+      #autofillToggle:checked + #autofillToggleSlider::before {
+        transform: translateX(18px) !important;
+      }
+      #autofillToggleSlider::before {
+        content: '';
+        position: absolute;
+        height: 16px;
+        width: 16px;
+        left: 3px;
+        bottom: 3px;
+        background: white;
+        border-radius: 50%;
+        transition: 0.2s;
+      }
     </style>
 </head>
 <body>
@@ -129,6 +146,23 @@
         </div>
       </div>
       <div id="linkedin-status" style="font-size: 11px; margin-top: 6px; display: none;"></div>
+    </div>
+    <!-- Application Autofill Section -->
+    <div id="autofill-section" style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <span style="font-weight: 600; font-size: 13px; color: #7e22ce;">Application Autofill</span>
+        <label style="position: relative; display: inline-block; width: 40px; height: 22px;">
+          <input type="checkbox" id="autofillToggle" style="opacity: 0; width: 0; height: 0;">
+          <span id="autofillToggleSlider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #cbd5e1; border-radius: 22px; transition: 0.2s;"></span>
+        </label>
+      </div>
+      <div style="font-size: 11px; color: #64748b; margin-top: 6px;">Show the Navigator button on job-application answer fields.</div>
+      <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
+        <label style="font-size: 11px; color: #64748b;">Default length</label>
+        <input type="number" id="autofillDefaultLength" min="50" max="4000" step="50" value="250"
+               style="width: 60px; padding: 3px 5px; border: 1px solid #e9d5ff; border-radius: 5px; font-size: 12px;">
+        <span style="font-size: 11px; color: #64748b;">chars (when a field has no limit)</span>
+      </div>
     </div>
       <div class="form-group">
         <label>Job Title</label>
