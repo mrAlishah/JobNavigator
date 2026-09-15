@@ -17,7 +17,8 @@ DEFAULT_SETTINGS = {
     "telegram_chat_id": ("", "Your Telegram chat ID"),
     "telegram_webhook_secret": ("", "Auto-generated secret token validated on every /api/telegram/webhook call. Rotate from the Telegram settings tab."),
     "body_exclusion_phrases": (json.dumps([]), "JD phrases that flag exclusion (H-1B, language, etc.). Add phrases to auto-skip jobs containing them."),
-    "h1b_cron": ("0 2 * * 0", "H-1B refresh cron (min hour day month dow). Empty = disabled"),
+    # weekday NAME, not a digit: APScheduler numbers 0 = Monday (vixie cron 0 = Sunday), so "0" fired Monday
+    "h1b_cron": ("0 2 * * sun", "H-1B refresh cron (min hour day month dow). Empty = disabled"),
     "cleanup_cron": ("0 4 * * *", "Job cleanup cron (min hour day month dow). Empty = disabled"),
     "job_archive_after_days": ("90", "Delete skipped jobs older than N days (used by cleanup job)"),
     "auto_reject_after_days": ("0", "Reject applications older than N days, 0 = disabled (used by reject job)"),
@@ -33,17 +34,23 @@ DEFAULT_SETTINGS = {
     "jobright_email": ("", "Jobright.ai account email"),
     "jobright_password": ("", "Jobright.ai account password"),
     "jobright_session_id": ("", "Jobright.ai session cookie (auto-managed, 60-day expiry)"),
+    # The cookie itself is write-only to the UI (redacted on GET), so the
+    # Accounts tab needs a plain timestamp to say how long it is still good for.
+    "jobright_session_obtained_at": ("", "UTC ISO timestamp of the last successful Jobright login. Read-only; set by the scraper."),
     "reject_cron": ("0 4 * * *", "Auto-reject cron (min hour day month dow). Empty = disabled"),
     "backup_cron": ("0 3 * * *", "Backup cron schedule (min hour day month dow). Empty = disabled"),
     "scoring_rubric": ("Score each resume using these criteria (each 0-20, sum to 0-100):\n1. SKILLS MATCH (weight: 20): How many required technical skills/tools does the candidate have?\n2. EXPERIENCE LEVEL (weight: 20): Does seniority/years match? (entry-level resume for senior role = low)\n3. DOMAIN FIT (weight: 20): Has the candidate worked in the same industry/domain?\n4. ROLE ALIGNMENT (weight: 20): Does the candidate's career trajectory match this role type?\n5. REQUIREMENTS MET (weight: 20): Does the candidate meet stated requirements (education, certs, clearance)?\n\nUse the FULL 0-100 range. 90+ = perfect match. 50-70 = decent with gaps. Below 30 = poor match.\nAvoid clustering scores — differentiate meaningfully between resumes and jobs.", "Editable resume scoring rubric"),
     "scoring_output_light": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME"\n}', "Light scoring output schema"),
-    "scoring_output_full": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME",\n  "summary": "2-3 sentence assessment of candidate-job fit",\n  "requirement_mapping": [\n    {"requirement": "JD requirement text", "cv_match": "matching CV line or null", "matched": true/false, "severity": "required or preferred"}\n  ],\n  "keyword_coverage_pct": 0-100,\n  "matched_keywords": ["keyword1", "keyword2"],\n  "missing_keywords": ["keyword3", "keyword4"],\n  "hard_blockers": ["blocker if any"],\n  "ats_tip": "one actionable ATS optimization suggestion"\n}', "Full scoring output schema with keyword analysis"),
-    "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, openai, ollama"),
+    "scoring_output_full": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME",\n  "breakdown": {"skills": 0-20, "experience": 0-20, "domain": 0-20, "role": 0-20, "requirements": 0-20},\n  "summary": "2-3 sentence assessment of candidate-job fit",\n  "requirement_mapping": [\n    {"requirement": "JD requirement text", "cv_match": "matching CV line or null", "matched": true/false, "severity": "required or preferred"}\n  ],\n  "keyword_coverage_pct": 0-100,\n  "matched_keywords": ["keyword1", "keyword2"],\n  "missing_keywords": ["keyword3", "keyword4"],\n  "hard_blockers": ["blocker if any"],\n  "ats_tip": "one actionable ATS optimization suggestion"\n}', "Full scoring output schema with keyword analysis"),
+    "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, codex_cli, openai, ollama, openrouter"),
     "llm_model": ("claude-sonnet-5", "LLM model name"),
-    "llm_api_key": ("", "API key for OpenAI (not needed for Claude API/Ollama)"),
+    "llm_api_key": ("", "API key for API-backed providers (not needed for subscription CLIs or Ollama)"),
     "llm_fallback_provider": ("", "Fallback LLM provider (empty = no fallback)"),
     "llm_fallback_model": ("", "Fallback model name"),
     "llm_fallback_api_key": ("", "API key for fallback provider (OpenAI)"),
+    "scoring_llm_provider": ("", "Resume scoring provider override (empty = use Primary)"),
+    "scoring_llm_model": ("", "Resume scoring model override (empty = use Primary)"),
+    "scoring_llm_api_key": ("", "API key for the scoring provider override"),
     "llm_models_list": (json.dumps([
         {"provider": "claude_api", "model": "claude-sonnet-5"},
         {"provider": "claude_api", "model": "claude-sonnet-4-6"},
@@ -61,6 +68,10 @@ DEFAULT_SETTINGS = {
         {"provider": "claude_code", "model": "claude-opus-4-6"},
         {"provider": "claude_code", "model": "claude-haiku-4-5"},
         {"provider": "claude_code", "model": "claude-fable-5"},
+        {"provider": "codex_cli", "model": "gpt-5.6-sol"},
+        {"provider": "codex_cli", "model": "gpt-5.6-terra"},
+        {"provider": "codex_cli", "model": "gpt-5.6-luna"},
+        {"provider": "codex_cli", "model": "gpt-5.5"},
         {"provider": "openai", "model": "gpt-5.4"},
         {"provider": "openai", "model": "gpt-5.4-mini"},
         {"provider": "openai", "model": "gpt-5.4-nano"},
@@ -79,6 +90,19 @@ DEFAULT_SETTINGS = {
         {"provider": "ollama", "model": "mistral:7b"},
         {"provider": "ollama", "model": "gemma2:9b"},
         {"provider": "ollama", "model": "phi3:14b"},
+        # OpenRouter — one key reaches every vendor; slugs are vendor-prefixed.
+        # A popular starter set; the full ~420 are fetchable in Settings via the API.
+        {"provider": "openrouter", "model": "anthropic/claude-opus-5"},
+        {"provider": "openrouter", "model": "anthropic/claude-sonnet-5"},
+        {"provider": "openrouter", "model": "openai/gpt-5.6-luna"},
+        {"provider": "openrouter", "model": "openai/o3-pro"},
+        {"provider": "openrouter", "model": "openai/o4-mini-high"},
+        {"provider": "openrouter", "model": "google/gemini-3.7-flash"},
+        {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+        {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"},
+        {"provider": "openrouter", "model": "meta-llama/llama-4-maverick"},
+        {"provider": "openrouter", "model": "x-ai/grok-4.6"},
+        {"provider": "openrouter", "model": "mistralai/mistral-large-2512"},
     ]), "Known LLM models per provider (JSON array, user can add custom entries)"),
     "scoring_max_concurrent": ("5", "Max parallel scoring jobs (others queue until a slot opens)"),
     "tailoring_max_concurrent": ("2", "Max concurrent resume-tailoring LLM calls"),
@@ -130,6 +154,104 @@ DEFAULT_SETTINGS = {
         {"id": "storytelling", "label": "Storytelling", "instruction": "Open with a brief hook or narrative, then connect it to the role."},
     ]), "Editable cover-letter voice presets: list of {id, label, instruction}. The selected preset's instruction is injected into the generation prompt."),
     "cover_letter_default_voice": ("professional", "Default voice preset id for new cover letters (must match an id in cover_letter_voice_presets)"),
+    "autofill_field_patterns": (json.dumps({
+        "gender": ["gender", "what is your gender", "gender identity"],
+        "race_ethnicity": ["race", "ethnicity", "race/ethnicity", "racial background", "ethnicities"],
+        "veteran_status": ["veteran", "protected veteran", "vevraa"],
+        "hispanic_latino": ["hispanic or latino", "hispanic/latino", "are you hispanic", "hispanic latino"],
+        "disability_status": ["disability", "disabled", "section 503"],
+        "age_range": ["current age", "your age", "age range", "how old", "what is your age"],
+        "transgender": ["transgender", "identify as transgender", "trans"],
+        "sexual_orientation": ["sexual orientation", "your sexual orientation", "how do you identify your sexual"],
+        "authorized_us": ["authorized to work", "legally authorized", "work authorization"],
+        "requires_sponsorship_now": ["require sponsorship", "need sponsorship", "visa sponsorship", "require immigration", "immigration sponsorship"],
+        "requires_sponsorship_future": ["future sponsorship", "sponsorship in the future"],
+        "over_18": ["over 18", "at least 18", "18 years of age"],
+        "first_name": ["first name", "given name"],
+        "last_name": ["last name", "surname", "family name"],
+        "full_name": ["full name", "your name", "legal name"],
+        "email": ["email"],
+        "phone": ["phone", "mobile", "telephone"],
+        "city": ["city", "current location", "location"],
+        "state": ["state", "province"],
+        "country": ["country"],
+        "linkedin": ["linkedin"],
+        "github": ["github"],
+        "portfolio": ["portfolio", "personal website", "website"],
+        "current_company": ["current company", "current employer"],
+        "willing_to_relocate": ["relocate", "willing to relocate"],
+        "willing_remote": ["work remotely", "remote work"],
+        "desired_salary": ["desired salary", "salary expectation", "expected salary", "compensation expectation"],
+        "notice_period": ["notice period"],
+        "earliest_start": ["start date", "available to start", "earliest start"],
+        "referral_source": ["referral source", "referred by"],
+        "how_did_you_hear": ["how did you hear"],
+    }), "Editable dictionary: canonical autofill key -> list of label synonyms used to match a form field to an answer"),
+    "autofill_option_synonyms": (json.dumps({
+        "veteran_status": {
+            "protected_veteran": ["i am a protected veteran", "identify as one or more", "yes"],
+            "not_protected_veteran": ["not a protected veteran", "not a veteran", "no"],
+            "decline": ["decline", "don't wish to answer", "do not wish to answer", "prefer not"],
+        },
+        "hispanic_latino": {
+            "yes": ["hispanic or latino", "yes, i am", "yes"],
+            "no": ["not hispanic or latino", "no, i am not", "no"],
+            "decline": ["decline", "don't wish to answer", "prefer not"],
+        },
+        "disability_status": {
+            "yes": ["yes, i have a disability", "yes", "i have a disability"],
+            "no": ["no, i don't have a disability", "no", "do not have a disability"],
+            "decline": ["decline", "do not want to answer", "prefer not"],
+        },
+        "gender": {
+            "male": ["male", "man"],
+            "female": ["female", "woman"],
+            "nonbinary": ["non-binary", "nonbinary", "other"],
+            "decline": ["decline", "prefer not", "don't wish"],
+        },
+        "race_ethnicity": {
+            "hispanic_latino": ["hispanic", "latino", "latinx"],
+            "white": ["white"],
+            "black": ["black", "african american"],
+            "asian": ["asian"],
+            "native_american": ["native american", "alaska native", "american indian"],
+            "pacific_islander": ["pacific islander", "native hawaiian"],
+            "two_or_more": ["two or more"],
+            "decline": ["decline", "prefer not", "don't wish"],
+        },
+        "work_auth_type": {
+            "citizen": ["u.s. citizen", "us citizen", "citizen"],
+            "permanent_resident": ["permanent resident", "green card"],
+            "visa": ["visa", "work visa"],
+            "other": ["other"],
+        },
+        "age_range": {
+            "under_30": ["under 30", "under 30 years", "less than 30"],
+            "30_39": ["30-39", "30 - 39", "30 to 39"],
+            "40_49": ["40-49", "40 - 49", "40 to 49"],
+            "50_59": ["50-59", "50 - 59", "50 to 59"],
+            "60_plus": ["60 or older", "60+", "60 and over", "over 60"],
+            "decline": ["prefer not to answer", "decline", "don't wish", "do not wish"],
+        },
+        "transgender": {
+            "yes": ["yes"],
+            "no": ["no"],
+            "decline": ["prefer not to answer", "decline", "don't wish", "do not wish"],
+        },
+        "sexual_orientation": {
+            "heterosexual": ["heterosexual", "straight"],
+            "gay": ["gay"],
+            "lesbian": ["lesbian"],
+            "bisexual": ["bisexual"],
+            "queer": ["queer"],
+            "other": ["other"],
+            "decline": ["prefer not to answer", "decline", "don't wish", "do not wish"],
+        },
+        "_bool": {
+            "true": ["yes", "true"],
+            "false": ["no", "false"],
+        },
+    }), "Editable dictionary: enum key -> {enum value -> list of option-text synonyms}; '_bool' maps yes/no. Used to pick the right option on a form."),
     "tracer_links_enabled": ("false", "Enable URL rewriting in PDF generation with tracking links"),
     "tracer_links_base_url": ("", "Public base URL for tracer links (e.g., https://yourdomain.com)"),
     "tracer_links_url_style": ("path", "URL format: path or param. Token: random or job_id. Combinations: path, param, path_jobid, param_jobid"),
@@ -154,12 +276,14 @@ DEFAULT_SETTINGS = {
         "__jvsd", "__jvst", "jobpipeline", "cmpid", "codes", "feedid",
         "partnerid", "siteid", "bid", "customredirect",
         "chnlid", "v", "ccd", "frd", "r", "a",
-        "jk",
+        # "jk" deliberately absent — it is Indeed's job identity, and stripping
+        # it collapsed every Indeed posting onto one external_id.
         # Search-context noise (career page filters that leak into job hrefs):
         "categories", "cities", "locations", "departments", "teams", "regions", "country", "category",
     ]), "URL query params stripped before dedup hashing — tracking/referral noise"),
     "autofill_llm_provider": ("", "LLM provider for application autofill (empty = use primary llm_provider)"),
     "autofill_llm_model": ("", "LLM model for application autofill (empty = use primary llm_model)"),
+    "autofill_llm_api_key": ("", "API key for the autofill LLM (empty = use the primary llm_api_key)"),
     "autofill_default_length": ("250", "Default target character length for autofill answers when a field has no maxlength"),
     "autofill_prompt": (
         "You are the candidate, writing a short first-person answer to a job-application question.\n\n"
@@ -178,7 +302,137 @@ DEFAULT_SETTINGS = {
         "Return ONLY this JSON:\n{\"answer\": \"...\"}",
         "Editable application-autofill LLM prompt. Placeholders: {persona}, {qa_bank}, {company}, {position}, {question}, {max_chars}."
     ),
+    "prep_include": ("resume,posting,notes",
+        "Sections the interview prep handover includes by default (comma-separated: resume, posting, notes)"),
+    "prep_ask": (
+        "Prepare me for this interview. Ground every answer in my resume above — use my real projects, "
+        "employers and numbers, and invent nothing.\n\n"
+        "1. The 10 questions this panel is most likely to ask, ordered by likelihood, with a short answer for each.\n"
+        "2. Every requirement in the posting I do not clearly meet, the honest framing to use, and the closest "
+        "adjacent experience I can point to.\n"
+        "3. Two or three stories from my background worth rehearsing, in STAR form.\n"
+        "4. The questions I should ask them that show I read this posting closely.\n"
+        "5. Anything in my resume that is a liability for this role, and how to handle it if raised.",
+        "The closing 'What I need from you' section of the interview prep handover (Applications → Generate prep handover for AI)."
+    ),
 }
+
+# Settings the app writes at runtime but never seeds. PATCH /api/settings rejects
+# keys outside DEFAULT_SETTINGS, so these have to be listed explicitly.
+RUNTIME_SETTING_KEYS = {
+    "gmail_processed_ids",   # email_monitor/gmail_client.py — processed-message dedup
+    "gmail_refresh_token",   # Gmail OAuth setup (gmail_oauth_setup.py)
+    "llm_seeded_models",     # migrate_llm_settings() — one-time "defaults offered" marker
+}
+
+
+def is_known_setting(key: str) -> bool:
+    """True if PATCH /api/settings may write this key."""
+    return key in DEFAULT_SETTINGS or key in RUNTIME_SETTING_KEYS
+
+
+def unknown_setting_keys(keys) -> list:
+    """The subset of `keys` no reader in the codebase would ever look at."""
+    return [k for k in keys if not is_known_setting(k)]
+
+
+# ── Value validation ─────────────────────────────────────────────────────────
+# The value shapes the app actually parses (int, cron, enum) are validated here,
+# so an unparseable value can't reach configure_scheduler() and crash the backend.
+
+def _int_setting_keys() -> set:
+    """Every seeded key whose default is a plain integer, derived (not listed) so a new numeric default automatically picks up the guard."""
+    keys = set()
+    for key, (value, _desc) in DEFAULT_SETTINGS.items():
+        if not isinstance(value, str):
+            continue
+        try:
+            int(value)
+        except (TypeError, ValueError):
+            continue
+        keys.add(key)
+    return keys
+
+
+INT_SETTING_KEYS = _int_setting_keys()
+
+# Providers the LLM dispatcher knows how to call. "" means "inherit the primary
+# llm_provider", which every per-feature prefix does.
+_LLM_PROVIDERS = {"", "claude_api", "claude_code", "codex_cli", "openai", "ollama", "openrouter"}
+
+# Depth words. `tailor_auto_quick_score` also honours legacy boolean spellings
+# (see routes_resumes._resolve_chain_score_depth).
+_DEPTHS = {"light", "full"}
+
+ENUM_SETTING_VALUES = {
+    "llm_provider": _LLM_PROVIDERS,
+    "llm_fallback_provider": _LLM_PROVIDERS,
+    "scoring_llm_provider": _LLM_PROVIDERS,
+    "email_llm_provider": _LLM_PROVIDERS,
+    "cv_tailor_llm_provider": _LLM_PROVIDERS,
+    "cover_letter_llm_provider": _LLM_PROVIDERS,
+    "autofill_llm_provider": _LLM_PROVIDERS,
+    "scoring_default_depth": _DEPTHS,
+    "on_save_action": {"off"} | _DEPTHS,
+    "tailor_auto_quick_score": {"off", "false", "no", "0", "true", "yes", "1", ""} | _DEPTHS,
+    "tracer_links_url_style": {"path", "param", "path_jobid", "param_jobid"},
+}
+
+
+def _cron_error(value: str) -> str | None:
+    """None if `value` is a usable 5-field cron expression (empty = disabled)."""
+    expr = (value or "").strip()
+    if not expr:
+        return None                      # empty disables the job — always allowed
+    if len(expr.split()) != 5:
+        return "needs exactly 5 whitespace-separated fields (min hour day month dow)"
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+    except ImportError:                  # pragma: no cover - apscheduler always present in the app
+        return None
+    try:
+        CronTrigger.from_crontab(expr)
+    except (ValueError, KeyError) as e:
+        return f"not a valid cron expression ({e})"
+    return None
+
+
+def invalid_setting_values(updates: dict) -> list:
+    """Human-readable complaints for every value the app could not parse back, one entry per offending key so PATCH can reject the whole request at once."""
+    problems = []
+    for key, value in sorted(updates.items()):
+        if key in INT_SETTING_KEYS:
+            ok = False
+            if isinstance(value, bool):
+                ok = False               # True/False are ints in Python; not here
+            elif isinstance(value, int):
+                ok = True
+            elif isinstance(value, str):
+                try:
+                    int(value.strip())
+                    ok = True
+                except (TypeError, ValueError):
+                    ok = False
+            if not ok:
+                problems.append(f"{key}: must be a whole number (got {value!r})")
+            elif int(str(value).strip()) < 0:
+                problems.append(f"{key}: must not be negative (got {value!r})")
+            continue
+        if key.endswith("_cron"):
+            if not isinstance(value, str):
+                problems.append(f"{key}: must be a cron string (got {value!r})")
+                continue
+            err = _cron_error(value)
+            if err:
+                problems.append(f"{key}: {err}")
+            continue
+        allowed = ENUM_SETTING_VALUES.get(key)
+        if allowed is not None:
+            if not isinstance(value, str) or value.strip().lower() not in allowed:
+                shown = ", ".join(sorted(v for v in allowed if v)) or "(empty)"
+                problems.append(f"{key}: must be one of {shown} (got {value!r})")
+    return problems
+
 
 SEED_COMPANIES = [
     # Example companies — one per ATS type. All inactive by default.
@@ -216,10 +470,8 @@ def seed_settings(db):
         if key not in existing:
             db.add(Setting(key=key, value=value, description=desc))
     db.commit()
-    # One-shot: ensure the Telegram webhook secret has a cryptographically random
-    # value. We seed an empty string above so operators can see the row exists in
-    # /api/settings; the real value is generated here on first run (or if the
-    # operator manually clears it to force a rotation).
+    # One-shot: seeded empty above so the row is visible in /api/settings; the
+    # real cryptographically random value is generated here on first run.
     row = db.query(Setting).filter(Setting.key == "telegram_webhook_secret").first()
     if row is not None and not (row.value or "").strip():
         row.value = secrets.token_urlsafe(32)
@@ -247,6 +499,37 @@ H1B_SLUG_OVERRIDES = {
 }
 
 
+def run_migration_statements(db, statements) -> list:
+    """Execute each statement in its own SAVEPOINT and return the ones that failed.
+
+    Postgres aborts the *whole* transaction on any error, so a bare try/except
+    around one shared session turns the first failure into
+    `InFailedSqlTransaction` for every statement after it — the rest silently
+    no-op and log a misleading reason (R4-T0-01). One nested transaction per
+    statement keeps each outcome independent, so a genuinely broken migration is
+    the only thing that reports as broken.
+    """
+    failed = []
+    for sql in statements:
+        try:
+            with db.begin_nested():
+                db.execute(text(sql))
+        except Exception as e:
+            failed.append(sql)
+            # str(sql): the formatter must not be the thing that raises. A
+            # non-string statement (a TextClause, or anything a caller passes by
+            # mistake) already failed above; calling .split() on it here would
+            # throw out of the except block and abandon every statement left in
+            # the list — the exact silent no-op this per-statement loop exists to
+            # prevent (R4-E2E-03).
+            logger.warning(
+                "Migration skipped: %s -- statement: %s",
+                str(e).strip()[:300], " ".join(str(sql).split())[:120],
+            )
+    db.commit()
+    return failed
+
+
 def run_migrations(db):
     """Run ALTER TABLE migrations for columns that create_all() won't add to existing tables."""
     migrations = [
@@ -271,10 +554,41 @@ def run_migrations(db):
         "ALTER TABLE companies ADD COLUMN IF NOT EXISTS auto_scoring_depth VARCHAR DEFAULT 'off'",
         "ALTER TABLE companies DROP COLUMN IF EXISTS auto_score",
         "ALTER TABLE companies DROP COLUMN IF EXISTS auto_keyword",
-        "CREATE TABLE IF NOT EXISTS resumes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR NOT NULL, is_base BOOLEAN DEFAULT TRUE, parent_id UUID REFERENCES resumes(id) ON DELETE SET NULL, job_id UUID REFERENCES jobs(id) ON DELETE SET NULL, template VARCHAR DEFAULT 'garamond', page_format VARCHAR DEFAULT 'letter', json_data JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS resumes (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR NOT NULL, is_base BOOLEAN DEFAULT TRUE, parent_id UUID REFERENCES resumes(id) ON DELETE SET NULL, job_id UUID REFERENCES jobs(id) ON DELETE SET NULL, template VARCHAR DEFAULT 'garamond_alt', page_format VARCHAR DEFAULT 'letter', json_data JSONB DEFAULT '{}', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())",
         "CREATE TABLE IF NOT EXISTS tracer_links (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), token VARCHAR(10) UNIQUE NOT NULL, resume_id UUID NOT NULL REFERENCES resumes(id) ON DELETE CASCADE, destination_url VARCHAR NOT NULL, source_label VARCHAR NOT NULL, is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW())",
         "CREATE INDEX IF NOT EXISTS idx_tracer_links_token ON tracer_links(token)",
         "CREATE TABLE IF NOT EXISTS tracer_click_events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tracer_link_id UUID NOT NULL REFERENCES tracer_links(id) ON DELETE CASCADE, clicked_at TIMESTAMPTZ DEFAULT NOW() NOT NULL, device_type VARCHAR DEFAULT 'unknown', ua_family VARCHAR DEFAULT 'unknown', os_family VARCHAR DEFAULT 'unknown', referrer_host VARCHAR, ip_hash VARCHAR, is_likely_bot BOOLEAN DEFAULT FALSE)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS loc_country VARCHAR(2)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS loc_region VARCHAR(64)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS loc_city VARCHAR(120)",
+        # region was VARCHAR(3) at first (US/CA codes); regions elsewhere are names ("Hesse");
+        # city is bounded because it is indexed (a btree entry caps near 2704 bytes)
+        "ALTER TABLE jobs ALTER COLUMN loc_region TYPE VARCHAR(64)",
+        "ALTER TABLE jobs ALTER COLUMN loc_city TYPE VARCHAR(120)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_loc_country ON jobs(loc_country)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_loc_region ON jobs(loc_region)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_loc_city ON jobs(loc_city)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS arr_remote BOOLEAN",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS arr_hybrid BOOLEAN",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS arr_onsite BOOLEAN",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_arr_remote ON jobs(arr_remote)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_arr_hybrid ON jobs(arr_hybrid)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_arr_onsite ON jobs(arr_onsite)",
+        """CREATE TABLE IF NOT EXISTS job_locations (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+            country VARCHAR(2),
+            region VARCHAR(64),
+            city VARCHAR(120),
+            is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+            CONSTRAINT uq_job_location UNIQUE (job_id, country, region, city)
+        )""",
+        "ALTER TABLE job_locations ALTER COLUMN region TYPE VARCHAR(64)",
+        "ALTER TABLE job_locations ALTER COLUMN city TYPE VARCHAR(120)",
+        "CREATE INDEX IF NOT EXISTS ix_job_locations_job_id ON job_locations(job_id)",
+        "CREATE INDEX IF NOT EXISTS ix_job_locations_country ON job_locations(country)",
+        "CREATE INDEX IF NOT EXISTS ix_job_locations_region ON job_locations(region)",
+        "CREATE INDEX IF NOT EXISTS ix_job_locations_city ON job_locations(city)",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS short_id INTEGER UNIQUE",
         "CREATE SEQUENCE IF NOT EXISTS jobs_short_id_seq START 1",
         "ALTER TABLE jobs ALTER COLUMN short_id SET DEFAULT nextval('jobs_short_id_seq')",
@@ -296,27 +610,28 @@ def run_migrations(db):
         "CREATE INDEX IF NOT EXISTS ix_llm_call_log_created_at ON llm_call_log(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_llm_call_log_purpose ON llm_call_log(purpose)",
         "CREATE INDEX IF NOT EXISTS ix_llm_call_log_job_id ON llm_call_log(job_id)",
-        # Fix FK drift: the CREATE TABLE above is a no-op on live DBs where SQLAlchemy's
-        # create_all() already built the table with no ondelete (NO ACTION). Re-align
-        # the live constraint to ON DELETE SET NULL. Safe idempotent SQL.
+        # Fix FK drift: the CREATE TABLE above is a no-op on live DBs where
+        # create_all() already built the table with no ondelete; re-align to SET NULL.
         """ALTER TABLE llm_call_log DROP CONSTRAINT IF EXISTS llm_call_log_job_id_fkey""",
         """ALTER TABLE llm_call_log ADD CONSTRAINT llm_call_log_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE SET NULL""",
         "ALTER TABLE llm_call_log ADD COLUMN IF NOT EXISTS provider VARCHAR NOT NULL DEFAULT ''",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS best_cv_score FLOAT",
         "CREATE INDEX IF NOT EXISTS ix_jobs_best_cv_score ON jobs(best_cv_score)",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cache_error TEXT",
+        # cv_scores is declared Column(JSON), so create_all() builds it as native
+        # `json` on a fresh DB and as `jsonb` on DBs predating that change. The
+        # jsonb_* functions have no `json` overload, so every reference is cast
+        # explicitly — the statement then works on both shapes.
         """UPDATE jobs SET best_cv_score = (
             SELECT MAX(CAST(value AS FLOAT))
-            FROM jsonb_each_text(cv_scores)
+            FROM jsonb_each_text(cv_scores::jsonb)
             WHERE value ~ '^[0-9]+(\\.[0-9]+)?$'
         ) WHERE cv_scores IS NOT NULL
-          AND jsonb_typeof(cv_scores) = 'object'
-          AND cv_scores != '{}'
+          AND jsonb_typeof(cv_scores::jsonb) = 'object'
+          AND cv_scores::jsonb != '{}'::jsonb
           AND best_cv_score IS NULL""",
-        # 2026-04-23: Retire screening / phone_screen / final_round statuses.
-        # Board collapses to applied / interview / offer / rejected. Existing
-        # row statuses are remapped; status_transitions history is preserved
-        # as-is so the audit trail still shows the original transitions.
+        # Retire screening/phone_screen/final_round statuses onto
+        # applied/interview/offer/rejected; status_transitions is left as-is.
         "UPDATE applications SET status = 'applied' WHERE status = 'screening'",
         "UPDATE applications SET status = 'interview' WHERE status IN ('phone_screen', 'final_round')",
         "ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS target_job_id UUID",
@@ -326,6 +641,8 @@ def run_migrations(db):
         "ALTER TABLE job_runs ADD CONSTRAINT job_runs_target_job_id_fkey FOREIGN KEY (target_job_id) REFERENCES jobs(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_job_runs_target_job_id ON job_runs(target_job_id)",
         """ALTER TABLE companies ADD COLUMN IF NOT EXISTS selected_resume_ids JSONB DEFAULT '[]'::jsonb""",
+        # ADD COLUMN is a no-op where create_all() already built the column from
+        # Column(JSON), so it can be native `json` here too. Cast every reference.
         # Translate selected_cv_ids → selected_resume_ids by matching CV.version to Resume.name.
         # Idempotent: only runs while selected_cv_ids still exists and selected_resume_ids is empty.
         """DO $$
@@ -339,13 +656,13 @@ BEGIN
         SELECT co.id AS cid,
                jsonb_agg(r.id::text) AS ids
           FROM companies co
-          CROSS JOIN LATERAL jsonb_array_elements_text(co.selected_cv_ids) AS cid_str(val)
+          CROSS JOIN LATERAL jsonb_array_elements_text(co.selected_cv_ids::jsonb) AS cid_str(val)
           JOIN cvs cv ON cv.id::text = cid_str.val
           JOIN resumes r ON r.name = cv.version AND r.is_base = TRUE
          GROUP BY co.id
       ) AS translated
      WHERE c.id = translated.cid
-       AND (c.selected_resume_ids IS NULL OR c.selected_resume_ids = '[]'::jsonb);
+       AND (c.selected_resume_ids IS NULL OR c.selected_resume_ids::jsonb = '[]'::jsonb);
   END IF;
 END $$;""",
         """ALTER TABLE companies DROP COLUMN IF EXISTS selected_cv_ids""",
@@ -368,16 +685,17 @@ END $$;""",
         # resume_id to nullable. Idempotent for existing DBs.
         "ALTER TABLE tracer_links ADD COLUMN IF NOT EXISTS cover_letter_id UUID REFERENCES cover_letters(id) ON DELETE CASCADE",
         "ALTER TABLE tracer_links ALTER COLUMN resume_id DROP NOT NULL",
-        # Task 11: drop the legacy cvs table — Resume + Persona is the new world.
-        # Idempotent: subsequent restarts no-op once the table is gone.
+        # Drop the legacy cvs table — Resume + Persona is the new world.
         "DROP TABLE IF EXISTS cvs",
+        # Per-source outcome for multi-board search runs, so a source that hard-fails
+        # (ZipRecruiter 403) stops looking like one that simply found nothing.
+        "ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS source_breakdown JSONB",
+        # Per-entity acknowledgement of a scrape warning: /health/entities stops
+        # counting it while its newest ScrapeLog row is no newer than this stamp.
+        "ALTER TABLE searches ADD COLUMN IF NOT EXISTS warning_acknowledged_at TIMESTAMPTZ",
+        "ALTER TABLE companies ADD COLUMN IF NOT EXISTS warning_acknowledged_at TIMESTAMPTZ",
     ]
-    for sql in migrations:
-        try:
-            db.execute(text(sql))
-        except Exception as e:
-            logger.warning(f"Migration skipped: {e}")
-    db.commit()
+    run_migration_statements(db, migrations)
 
     _rewrite_retired_status_transitions(db)
 
@@ -390,14 +708,7 @@ _RETIRED_STATUS_REMAP = {
 
 
 def _rewrite_retired_status_transitions(db):
-    """One-shot: rewrite Application.status_transitions JSON to match the
-    2026-04-23 status-ladder simplification. Remaps retired statuses, drops
-    self-transitions that result from the remap, and collapses consecutive
-    duplicates so the Sankey diagram no longer shows ghost `screening` /
-    `phone_screen` / `final_round` nodes.
-
-    Idempotent: scans only rows that still contain a retired label.
-    """
+    """One-shot: remap retired statuses in Application.status_transitions, drop resulting self-transitions and collapse duplicates, so Sankey shows no ghost nodes."""
     from backend.models.db import Application
     retired = tuple(_RETIRED_STATUS_REMAP)
     rows = db.query(Application).filter(
@@ -455,15 +766,20 @@ def cleanup_removed_settings(db):
         "h1b_exclusion_phrases",
         "language_exclude_phrases",
         "default_cv_id",
-        # Orphaned 2026-06: seeded but read by no code. max_jobs_per_scrape
-        # promised a per-run cap nothing enforced (sources use results_wanted /
-        # max_pages); company_domains/ats_domains were a retired Gmail-detection design.
+        # Seeded but read by no code: max_jobs_per_scrape promised a per-run cap
+        # nothing enforced; company_domains/ats_domains were a retired Gmail-detection design.
         "max_jobs_per_scrape",
         "company_domains",
         "ats_domains",
-        # 2026-07: openai_compat provider removed — these endpoints were only for it
+        # Duplicated the Persona's own decline_demographics checkbox.
+        "autofill_decline_self_id",
+        # openai_compat provider removed — these were only for it.
         "llm_base_url",
         "llm_fallback_base_url",
+        # structured-autofill on/off + trigger live in the extension popup, not
+        # server settings — they're per-browser preferences.
+        "autofill_structured_enabled",
+        "autofill_structured_trigger",
     ]
     for key in removed_keys:
         row = db.query(Setting).filter(Setting.key == key).first()
@@ -473,12 +789,7 @@ def cleanup_removed_settings(db):
 
 
 def migrate_cv_terminology(db):
-    """Rename the user-facing word 'CV'/'CVs' -> 'Resume'/'Resumes' in editable
-    prompt-text settings, preserving user edits.
-
-    Word-boundary matching leaves the functional template tokens intact
-    (CV_NAMES_HERE / best_cv / CV_NAME are not \\bCV\\b matches). Idempotent.
-    """
+    """Rename 'CV'/'CVs' -> 'Resume'/'Resumes' in editable prompt-text settings; word-boundary matching leaves template tokens like CV_NAMES_HERE intact."""
     import re
     for key in ("scoring_rubric",):
         row = db.query(Setting).filter(Setting.key == key).first()
@@ -492,39 +803,48 @@ def migrate_cv_terminology(db):
 
 
 def migrate_llm_settings(db):
-    """One-shot migrations for the 2026-07 model-list refresh + openai_compat removal.
-
-    - Refresh non-custom entries in llm_models_list to the current DEFAULT_SETTINGS
-      list (preserving user-added custom entries; openai_compat entries are dropped
-      even if custom — the provider no longer exists).
-    - Re-point any provider setting still on openai_compat to openai.
-    - Rename the dated claude-haiku-4-5-20251001 model setting values to the alias.
-    """
+    """Refresh llm_models_list to current defaults, re-point openai_compat settings to openai, and rename the dated haiku model alias."""
+    # Additive seed: default models are offered ONCE (tracked in llm_seeded_models);
+    # after that the user's list is authoritative, but genuinely-new defaults still propagate.
     row = db.query(Setting).filter(Setting.key == "llm_models_list").first()
+    seen_row = db.query(Setting).filter(Setting.key == "llm_seeded_models").first()
+    if seen_row is None:
+        seen_row = Setting(key="llm_seeded_models", value="[]",
+                           description="Internal: default model keys already offered, so user deletions persist across restarts")
+        db.add(seen_row)
     if row and row.value:
         try:
             current = json.loads(row.value)
         except (ValueError, TypeError):
             current = []
+        current = [m for m in current if m.get("provider") != "openai_compat"]
         default_list = json.loads(DEFAULT_SETTINGS["llm_models_list"][0])
-        custom = [m for m in current
-                  if m.get("custom") and m.get("provider") != "openai_compat"]
-        merged = default_list + [m for m in custom
-                                 if not any(d["provider"] == m.get("provider")
-                                            and d["model"] == m.get("model")
-                                            for d in default_list)]
-        if merged != current:
-            row.value = json.dumps(merged)
+        try:
+            seen = set(json.loads(seen_row.value or "[]"))
+        except (ValueError, TypeError):
+            seen = set()
+        mkey = lambda m: f'{m.get("provider")}|{m.get("model")}'
+        have = {mkey(m) for m in current}
+        for d in default_list:
+            dk = mkey(d)
+            if dk not in seen and dk not in have:  # new default the user never removed
+                current.append(d)
+                have.add(dk)
+            seen.add(dk)
+        seen_row.value = json.dumps(sorted(seen))
+        row.value = json.dumps(current)
 
     provider_keys = ["llm_provider", "llm_fallback_provider", "email_llm_provider",
-                     "cv_tailor_llm_provider", "cover_letter_llm_provider", "autofill_llm_provider"]
+                     "cv_tailor_llm_provider", "cover_letter_llm_provider", "autofill_llm_provider",
+                     "scoring_llm_provider"]
     for key in provider_keys:
         r = db.query(Setting).filter(Setting.key == key).first()
         if r and r.value == "openai_compat":
             r.value = "openai"
 
     model_keys = ["llm_model", "llm_fallback_model", "email_llm_model",
-                  "cv_tailor_llm_model", "cover_letter_llm_model", "autofill_llm_model"]
+                  "cv_tailor_llm_model", "cover_letter_llm_model", "autofill_llm_model",
+                  "scoring_llm_model"]
     for key in model_keys:
         r = db.query(Setting).filter(Setting.key == key).first()
         if r and r.value == "claude-haiku-4-5-20251001":
@@ -664,10 +984,8 @@ def seed_searches(db):
     for s in SEED_SEARCHES:
         if s["search_mode"] not in existing_modes:
             db.add(Search(**s))
-    # Idempotent rename: the linkedin_extension search was originally seeded as
-    # "LinkedIn Extension"; after the Extension/Extension-LI split it should read
-    # "Extension LI" so the UI labels match. Self-heal here so fresh DB clones
-    # (where the manual rename never ran) end up consistent.
+    # Idempotent rename: self-heal any linkedin_extension search still named
+    # "LinkedIn Extension" so fresh DB clones end up labeled "Extension LI".
     legacy = db.query(Search).filter(
         Search.search_mode == "linkedin_extension",
         Search.name == "LinkedIn Extension",
@@ -678,11 +996,7 @@ def seed_searches(db):
 
 
 def seed_mock_resume(db):
-    """Seed a mock base Resume for demonstration. Sets it as default Resume for all companies.
-
-    Idempotent: bails if any base Resume already exists. (Replaces the legacy
-    seed_mock_cv from before Task 11 dropped the cvs table.)
-    """
+    """Seed a mock base Resume for demonstration and set it as default for all companies; bails if any base Resume already exists."""
     if db.query(Resume).filter(Resume.is_base == True).count() > 0:
         return  # User already has a base resume
 
@@ -699,13 +1013,11 @@ def seed_mock_resume(db):
         db.commit()
         db.refresh(resume)
 
-    # Set as default Resume for scoring
     default_row = db.query(Setting).filter(Setting.key == "default_resume_id").first()
     if default_row:
         default_row.value = str(resume.id)
     db.commit()
 
-    # Pre-select this Resume for all seeded companies
     for company in db.query(Company).all():
         company.selected_resume_ids = [str(resume.id)]
     db.commit()
@@ -734,11 +1046,112 @@ def seed_persona(db):
     logger.info("Persona singleton (id=1) seeded with empty nodes")
 
 
+def migrate_h1b_to_visa_cache(db):
+    """One-time: copy legacy companies.h1b_* into visa_cache then drop those columns (Postgres only for the DROP; no-op once the columns are gone)."""
+    from backend.models.db import VisaCache
+    from sqlalchemy import text
+
+    bind = db.get_bind()
+    dialect = bind.dialect.name
+    try:
+        if dialect == "postgresql":
+            cols = {r[0] for r in db.execute(text(
+                "select column_name from information_schema.columns where table_name='companies'"))}
+        elif dialect == "sqlite":
+            cols = {r[1] for r in db.execute(text("PRAGMA table_info(companies)"))}
+        else:
+            return
+    except Exception:
+        return
+    if "h1b_lca_count" not in cols:
+        return  # already migrated, or fresh install
+
+    # 1) Seed visa_cache from the legacy columns (rows with data or a slug).
+    try:
+        rows = db.execute(text(
+            "select name, h1b_slug, h1b_lca_count, h1b_approval_rate, h1b_median_salary, "
+            "h1b_last_checked from companies")).fetchall()
+    except Exception:
+        rows = []
+    existing = {r.name_key for r in db.query(VisaCache).all()}
+    seeded = 0
+    for name, slug, lca, appr, med, checked in rows:
+        key = (name or "").strip().lower()
+        if not key or key in existing:
+            continue
+        has = bool((lca or 0) > 0 or (med or 0) > 0)
+        if not (has or slug):
+            continue
+        db.add(VisaCache(name_key=key, country="US", display_name=name, slug=slug,
+                         lca_count=lca, approval_rate=appr, median_salary=med,
+                         has_data=has, fetched_at=checked))
+        existing.add(key)
+        seeded += 1
+    db.commit()
+    logger.info("migrate_h1b_to_visa_cache: seeded %d companies into visa_cache", seeded)
+
+    # 2) Drop the legacy columns (Postgres supports IF EXISTS; SQLite skipped).
+    if dialect == "postgresql":
+        for col in ("h1b_lca_count", "h1b_approval_rate", "h1b_median_salary", "h1b_last_checked"):
+            try:
+                db.execute(text(f"ALTER TABLE companies DROP COLUMN IF EXISTS {col}"))
+            except Exception as e:
+                logger.warning("drop legacy column %s failed: %s", col, e)
+        db.commit()
+
+
+def migrate_autofill_dicts(db):
+    """Merge newly-added canonical keys into autofill_field_patterns/autofill_option_synonyms without clobbering the user's edits (only missing top-level keys are added)."""
+    for setting_key in ("autofill_field_patterns", "autofill_option_synonyms"):
+        row = db.query(Setting).filter(Setting.key == setting_key).first()
+        if not row:
+            continue
+        default_json = DEFAULT_SETTINGS.get(setting_key, ("{}", ""))[0]
+        try:
+            defaults = json.loads(default_json)
+            stored = json.loads(row.value or "{}")
+        except (ValueError, TypeError):
+            continue
+        changed = False
+        for k, v in defaults.items():
+            if k not in stored:
+                stored[k] = v
+                changed = True
+        if changed:
+            row.value = json.dumps(stored)
+    db.commit()
+
+
+def migrate_dedup_tracking_params(db):
+    """Take "jk" out of an already-stored `dedup_tracking_params`, since settings are seeded once and DEFAULT_SETTINGS alone won't fix an existing install."""
+    row = db.query(Setting).filter(Setting.key == "dedup_tracking_params").first()
+    if not row or not row.value:
+        return
+    try:
+        stored = json.loads(row.value)
+    except (ValueError, TypeError):
+        return
+    if not isinstance(stored, list):
+        return
+    kept = [p for p in stored if str(p).strip().lower() != "jk"]
+    if len(kept) == len(stored):
+        return
+    row.value = json.dumps(kept)
+    db.commit()
+    try:
+        from backend.scraper._shared.dedup import reload_tracking_params
+        reload_tracking_params()
+    except Exception:
+        pass   # the cache loads lazily anyway; a failed eager reload is not fatal
+
+
 def run_seeds():
     db = SessionLocal()
     try:
         run_migrations(db)
         seed_settings(db)
+        migrate_dedup_tracking_params(db)
+        migrate_autofill_dicts(db)
         seed_companies(db)
         seed_h1b_slugs(db)
         seed_searches(db)
@@ -747,5 +1160,6 @@ def run_seeds():
         cleanup_removed_settings(db)
         migrate_llm_settings(db)
         migrate_cv_terminology(db)
+        migrate_h1b_to_visa_cache(db)
     finally:
         db.close()

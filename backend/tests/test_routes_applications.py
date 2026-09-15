@@ -1,10 +1,14 @@
 """Tests for /api/applications endpoints + dedup + transition + company auto-create."""
 import pytest
 
+# Bound at import time, before the autouse fixture below replaces the module attribute.
+from backend.api.routes_applications import (
+    _fetch_and_store_description as real_fetch_and_store_description,
+)
+
 
 def _seed_first_run(test_db):
-    """Seed an empty dashboard_api_key row so the auth middleware allows
-    requests (first-run mode, matches seed.py default)."""
+    """Seed an empty dashboard_api_key row so the auth middleware allows requests (first-run mode)."""
     from backend.models.db import Setting
     test_db.add(Setting(key="dashboard_api_key", value=""))
     test_db.commit()
@@ -13,12 +17,17 @@ def _seed_first_run(test_db):
 @pytest.fixture(autouse=True)
 def _stub_background_tasks(monkeypatch):
     """Stub slow / network-hitting background work so tests are fast + isolated."""
-    # _cache_job_page — this is what the route actually schedules in background.
-    # Make the coroutine a no-op so it doesn't fetch URLs or touch Playwright.
+    # _cache_job_page is what the route schedules in background; no-op it so tests don't hit the network.
     async def _noop_cache(*a, **kw):
         return None
     monkeypatch.setattr(
         "backend.api.routes_applications._cache_job_page",
+        _noop_cache,
+        raising=False,
+    )
+    # _fetch_and_store_description is the second task the route schedules.
+    monkeypatch.setattr(
+        "backend.api.routes_applications._fetch_and_store_description",
         _noop_cache,
         raising=False,
     )
@@ -130,3 +139,85 @@ def test_list_applications_filters_by_status(api_client, test_db):
     titles = [a.get("title") for a in apps]
     assert "PM2" in titles, f"Expected PM2 in rejected list, got titles: {titles}"
     assert "PM1" not in titles, f"PM1 should not be in rejected list, got titles: {titles}"
+
+
+def test_create_application_twice_returns_409(api_client, test_db):
+    """A second POST for the same posting must not overwrite the first."""
+    _seed_first_run(test_db)
+    body = {"company": "Acme", "title": "PM", "url": "https://acme.example/jobs/1", "notes": "first"}
+    first = api_client.post("/api/applications", json=body)
+    assert first.status_code == 200
+    second = api_client.post("/api/applications", json={**body, "notes": "second", "status": "interview"})
+    assert second.status_code == 409
+    assert second.json()["detail"]["application_id"] == first.json()["id"]
+    apps = api_client.get("/api/applications").json()
+    apps = apps if isinstance(apps, list) else apps.get("applications", [])
+    mine = [a for a in apps if a.get("id") == first.json()["id"]]
+    assert len(mine) == 1 and mine[0]["status"] == "applied"
+    assert mine[0].get("notes", "first") == "first"
+
+
+# ── JD fetched at log time ───────────────────────────────────────────────────
+
+def test_log_schedules_a_description_fetch(api_client, test_db, monkeypatch):
+    """A hand-logged job has no description, so the route queues one fetch."""
+    import backend.api.routes_applications as ra
+    seen = []
+
+    async def _spy(job_id, url):
+        seen.append((job_id, url))
+
+    _seed_first_run(test_db)
+    monkeypatch.setattr(ra, "_fetch_and_store_description", _spy, raising=False)
+    resp = api_client.post("/api/applications", json={
+        "url": "https://acme.com/jobs/7", "title": "Senior PM", "company": "Acme"})
+    assert resp.status_code == 200
+    assert len(seen) == 1
+    assert seen[0][1] == "https://acme.com/jobs/7"
+
+
+def test_log_skips_the_fetch_when_the_job_already_has_a_description(api_client, test_db, monkeypatch):
+    """The job row exists from a scrape and carries a JD, so nothing is fetched."""
+    import uuid
+    import backend.api.routes_applications as ra
+    from backend.models.db import Job
+    from backend.scraper._shared.dedup import make_external_id
+
+    url = "https://acme.com/jobs/8"
+    test_db.add(Job(id=uuid.uuid4(), external_id=make_external_id("Acme", "Senior PM", url),
+                    company="Acme", title="Senior PM", url=url, status="saved",
+                    description="Scraped JD"))
+    test_db.commit()
+
+    seen = []
+
+    async def _spy(job_id, url):
+        seen.append(job_id)
+
+    _seed_first_run(test_db)
+    monkeypatch.setattr(ra, "_fetch_and_store_description", _spy, raising=False)
+    resp = api_client.post("/api/applications", json={
+        "url": url, "title": "Senior PM", "company": "Acme"})
+    assert resp.status_code == 200
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_store_description_writes_the_job(test_db, monkeypatch):
+    """The task delegates to the tailoring resolver, which persists the fetched text."""
+    import uuid
+    from backend.models.db import Job
+
+    job = Job(id=uuid.uuid4(), external_id=uuid.uuid4().hex, company="Acme",
+              title="Senior PM", url="https://acme.com/jobs/9", status="applied")
+    test_db.add(job)
+    test_db.commit()
+
+    async def fake_fetch(url):
+        return "Clean ATS JD for a Senior PM."
+
+    monkeypatch.setattr("backend.scraper.ats._descriptions._fetch_job_description", fake_fetch)
+    await real_fetch_and_store_description(str(job.id), job.url)
+
+    test_db.expire_all()
+    assert test_db.query(Job).filter(Job.id == job.id).first().description == "Clean ATS JD for a Senior PM."

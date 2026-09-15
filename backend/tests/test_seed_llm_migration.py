@@ -1,4 +1,4 @@
-"""Tests for migrate_llm_settings — 2026-07 model-list refresh + openai_compat removal."""
+"""Tests for migrate_llm_settings — model-list refresh + openai_compat removal."""
 import json
 import pytest
 from sqlalchemy import create_engine
@@ -22,8 +22,8 @@ def _default_list():
     return json.loads(DEFAULT_SETTINGS["llm_models_list"][0])
 
 
-def test_stale_list_replaced_with_defaults(db):
-    """A pre-refresh list (old claude models + openai_compat) becomes the new default."""
+def test_stale_list_gains_defaults_and_drops_dead_provider(db):
+    """Additive migration: openai_compat is dropped, every current default is present, and pre-existing valid entries are kept."""
     stale = [
         {"provider": "claude_api", "model": "claude-sonnet-4-6"},
         {"provider": "claude_api", "model": "claude-opus-4-6"},
@@ -35,11 +35,34 @@ def test_stale_list_replaced_with_defaults(db):
     migrate_llm_settings(db)
 
     result = json.loads(db.query(Setting).filter(Setting.key == "llm_models_list").first().value)
-    assert result == _default_list()
+    # dead provider dropped
     assert not any(m["provider"] == "openai_compat" for m in result)
+    # every default present (superset)
+    for d in _default_list():
+        assert any(m["provider"] == d["provider"] and m["model"] == d["model"] for m in result)
+    # pre-existing valid entry kept
+    assert any(m["provider"] == "claude_api" and m["model"] == "claude-sonnet-4-6" for m in result)
+    # new defaults added
     assert any(m["model"] == "claude-sonnet-5" for m in result)
     assert any(m["model"] == "claude-opus-4-8" for m in result)
     assert any(m["model"] == "claude-fable-5" for m in result)
+
+
+def test_deleted_default_not_readded_after_seeding(db):
+    """Once defaults are seeded (recorded in llm_seeded_models), deleting one keeps it gone across restarts; the migration does not resurrect it."""
+    db.add(Setting(key="llm_models_list", value=json.dumps(_default_list())))
+    db.commit()
+    migrate_llm_settings(db)  # first run records the seen-set
+
+    lst = json.loads(db.query(Setting).filter(Setting.key == "llm_models_list").first().value)
+    victim = lst[0]
+    row = db.query(Setting).filter(Setting.key == "llm_models_list").first()
+    row.value = json.dumps([m for m in lst if m != victim])
+    db.commit()
+
+    migrate_llm_settings(db)  # second run must not resurrect the deleted default
+    result = json.loads(db.query(Setting).filter(Setting.key == "llm_models_list").first().value)
+    assert victim not in result
 
 
 def test_custom_entries_preserved(db):

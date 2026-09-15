@@ -2,9 +2,80 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- The Navigator mark, the same artwork the Chrome extension ships -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="icon" type="image/png" sizes="128x128" href="/favicon-128.png" />
+    <link rel="apple-touch-icon" href="/favicon-128.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Newsreader/Public Sans/JetBrains Mono are the default theme's three faces;
+         IBM Plex Sans/Mono are SaaS's pair and Geist/Geist Mono are Cobalt's. -->
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300..600&family=Public+Sans:wght@300..700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>JobNavigator Dashboard</title>
+    <!-- No-flash boot: sets data-appearance/data-theme/.dark before the bundle paints.
+         Keep in step with theme.js's migrateKeys()/readMode()/readTheme() — same steps, same order, or the ground flashes. -->
+    <script>
+      (function () {
+        try {
+          var d = document.documentElement, s = window.localStorage;
+          /* jobnavigator_appearance holds light|dark|system; jobnavigator_theme
+             holds the palette (migrated from jobnavigator_skin). */
+          var m = s.getItem('jobnavigator_appearance');
+          var oldMode = s.getItem('jobnavigator_theme');
+          if (m !== 'light' && m !== 'dark' && m !== 'system'
+              && (oldMode === 'light' || oldMode === 'dark' || oldMode === 'system')) {
+            m = oldMode; s.setItem('jobnavigator_appearance', m);
+          }
+          var oldTheme = s.getItem('jobnavigator_skin');
+          if (oldTheme !== null) { s.setItem('jobnavigator_theme', oldTheme); s.removeItem('jobnavigator_skin'); }
+          if (m !== 'light' && m !== 'dark' && m !== 'system') {
+            /* migrates the legacy dark_mode boolean */
+            m = s.getItem('jobnavigator_dark_mode') === 'true' ? 'dark' : 'light';
+            s.setItem('jobnavigator_appearance', m);
+          }
+          var r = m === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : m;
+          d.setAttribute('data-appearance', r);
+          var themes = ['default', 'board', 'tone1', 'tone2', 'tone3', 'editorial', 'alt', 'cobalt', 'saas', 'win98'];
+          var k = s.getItem('jobnavigator_theme');
+          d.setAttribute('data-theme', themes.indexOf(k) >= 0 ? k : 'default');
+          d.classList.toggle('dark', r === 'dark');
+        } catch (e) { /* private mode / storage blocked: the default light theme paints */ }
+      })();
+    </script>
+    <!-- The only place a palette value is written outside theme.css: the --bg
+         values, so the pre-mount ground matches. `:root[...]` is (0,2,0),
+         which beats index.css's `html.dark` (0,1,1) deterministically whatever
+         order Vite emits the stylesheets in; both shells cover the viewport with
+         their own ground, so this is only ever visible before React mounts.
+         Every theme moves --bg, so every theme needs its pair of rules here —
+         tone1/tone2/tone3 are the OKLab ramp from the default ground to the
+         editorial board's, so keep them in step with theme.css's tone blocks. -->
+    <style>
+      :root[data-appearance="light"] { background: #fcfbf7 }
+      :root[data-appearance="dark"] { background: #1e1c17 }
+      :root[data-theme="board"][data-appearance="light"] { background: #faf7ef }
+      :root[data-theme="board"][data-appearance="dark"] { background: #15140f }
+      :root[data-theme="tone1"][data-appearance="light"] { background: #fbfaf6 }
+      :root[data-theme="tone1"][data-appearance="dark"] { background: #1c1a15 }
+      :root[data-theme="tone2"][data-appearance="light"] { background: #fbf9f5 }
+      :root[data-theme="tone2"][data-appearance="dark"] { background: #191813 }
+      :root[data-theme="tone3"][data-appearance="light"] { background: #faf9f4 }
+      :root[data-theme="tone3"][data-appearance="dark"] { background: #171611 }
+      :root[data-theme="editorial"][data-appearance="light"] { background: #faf8f3 }
+      :root[data-theme="editorial"][data-appearance="dark"] { background: #15140f }
+      :root[data-theme="alt"][data-appearance="light"] { background: #f7f8fa }
+      :root[data-theme="alt"][data-appearance="dark"] { background: #161a21 }
+      :root[data-theme="cobalt"][data-appearance="light"] { background: #f7f6f3 }
+      :root[data-theme="cobalt"][data-appearance="dark"] { background: #231f1c }
+      :root[data-theme="saas"][data-appearance="light"] { background: #f9fafb }
+      :root[data-theme="saas"][data-appearance="dark"] { background: #111827 }
+      :root[data-theme="win98"][data-appearance="light"] { background: #c0c0c0 }
+      :root[data-theme="win98"][data-appearance="dark"] { background: #3e4c4c }
+    </style>
   </head>
   <body>
     <div id="root"></div>

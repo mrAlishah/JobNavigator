@@ -47,7 +47,7 @@ async def test_score_job_sends_cached_prefix_with_rubric_and_cv(scorer_db, monke
     """Rubric + CV text + schema go in cached_prefix, JD goes in the suffix prompt."""
     captured = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         captured["prompt"] = prompt
         captured["cached_prefix"] = cached_prefix
         captured["system"] = system
@@ -87,7 +87,7 @@ async def test_score_job_logs_usage(scorer_db, monkeypatch):
     """log_llm_call is called with the usage dict + purpose + job_id + success=True."""
     captured_log = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         return {
             "text": '{"scores":{"PM":80},"best_cv":"PM"}',
             "usage": {"input_tokens": 500, "output_tokens": 30,
@@ -117,7 +117,7 @@ async def test_score_job_full_depth_uses_score_full_purpose(scorer_db, monkeypat
     """depth='full' → purpose='score_full' in log."""
     captured_log = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         return {
             "text": '{"scores":{"PM":80},"best_cv":"PM","summary":"good"}',
             "usage": {"input_tokens": 500, "output_tokens": 100,
@@ -147,7 +147,7 @@ async def test_score_job_respects_prompt_caching_disabled(scorer_db, monkeypatch
 
     captured = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         captured["cached_prefix"] = cached_prefix
         return {
             "text": '{"scores":{"PM":75},"best_cv":"PM"}',
@@ -171,7 +171,7 @@ async def test_score_job_caching_enabled_by_default(scorer_db, monkeypatch):
     """When prompt_caching_enabled is absent (no row) or 'true', cached_prefix is forwarded."""
     captured = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         captured["cached_prefix"] = cached_prefix
         return {
             "text": '{"scores":{"PM":75},"best_cv":"PM"}',
@@ -196,7 +196,7 @@ async def test_score_job_logs_failure_when_call_llm_raises(scorer_db, monkeypatc
     """When call_llm raises, log_llm_call still runs with success=False + error."""
     captured_log = {}
 
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         raise RuntimeError("simulated provider outage")
 
     monkeypatch.setattr("backend.analyzer.cv_scorer.call_llm", fake_call_llm)
@@ -234,7 +234,7 @@ async def test_score_job_llm_error_returns_none_without_skipped_marker(scorer_db
     This is the key contract: a transient LLM failure must NOT permanently mark the
     job as un-rescoreable. The scheduler retries None-result jobs on the next pass.
     """
-    async def broken_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def broken_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         raise RuntimeError("simulated LLM outage")
 
     monkeypatch.setattr("backend.analyzer.cv_scorer.call_llm", broken_llm)

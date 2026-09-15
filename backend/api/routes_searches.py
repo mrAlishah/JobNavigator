@@ -7,9 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from backend.models.db import get_db, Search, Setting
+from sqlalchemy.exc import IntegrityError
+from backend.models.db import get_db, Search, Setting, ScrapeLog, Job, is_acknowledged
 
 logger = logging.getLogger("jobnavigator.routes_searches")
+
+# The two seeded browser-extension searches ("Extension"/"Extension LI") have no
+# scraper and must not be deleted — jobs arrive by push; PATCH stays open for the editor.
+EXTENSION_MODES = ("extension", "linkedin_extension")
 
 router = APIRouter(prefix="/searches", tags=["searches"])
 
@@ -27,8 +32,10 @@ class SearchCreate(BaseModel):
     location: str = "United States"
     is_remote: Optional[bool] = None
     job_type: str = "fulltime"
-    hours_old: int = 24
-    results_wanted: int = 50
+    # Optional so the editor can clear the field: an explicit null falls back to
+    # the column default on insert (SQLAlchemy applies it for a None value).
+    hours_old: Optional[int] = 24
+    results_wanted: Optional[int] = 50
     title_include_keywords: list = []
     title_exclude_keywords: list = ["intern", "junior", "associate"]
     company_filter: list = []
@@ -44,7 +51,22 @@ class SearchCreate(BaseModel):
 @router.get("")
 def list_searches(db: Session = Depends(get_db)):
     searches = db.query(Search).order_by(Search.created_at).all()
-    return [_search_to_dict(s) for s in searches]
+    # Latest ScrapeLog per search → surface the most recent run's outcome so the
+    # UI can show a live summary/health line (mirrors what /companies does).
+    from sqlalchemy import func, and_
+    from backend.models.db import ScrapeLog
+    latest_sub = (
+        db.query(ScrapeLog.search_id, func.max(ScrapeLog.ran_at).label("mx"))
+        .filter(ScrapeLog.search_id.isnot(None))
+        .group_by(ScrapeLog.search_id).subquery()
+    )
+    last_log = {
+        str(l.search_id): l
+        for l in db.query(ScrapeLog).join(
+            latest_sub, and_(ScrapeLog.search_id == latest_sub.c.search_id,
+                             ScrapeLog.ran_at == latest_sub.c.mx)).all()
+    }
+    return [_search_to_dict(s, last_log.get(str(s.id))) for s in searches]
 
 
 @router.post("")
@@ -75,52 +97,99 @@ def update_search(search_id: str, updates: dict, db: Session = Depends(get_db)):
     return _search_to_dict(search)
 
 
+@router.post("/{search_id}/acknowledge")
+def acknowledge_search_warning(search_id: str, db: Session = Depends(get_db)):
+    """Mark this search's current scrape warning as seen so /api/health/entities stops counting it until a newer ScrapeLog row appears (muted, not hidden); the two seeded extension searches never scrape, so acknowledging one returns 409, the same guard /run and DELETE use."""
+    search = db.query(Search).filter(Search.id == search_id).first()
+    if not search:
+        raise HTTPException(status_code=404, detail="Search not found")
+    if search.search_mode in EXTENSION_MODES:
+        raise HTTPException(
+            status_code=409,
+            detail="Extension searches have no scrape health to acknowledge — "
+                   "jobs arrive from the browser extension",
+        )
+    from datetime import datetime, timezone
+    search.warning_acknowledged_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"id": str(search.id), "name": search.name,
+            "warning_acknowledged_at": search.warning_acknowledged_at.isoformat()}
+
+
 @router.delete("/{search_id}")
 def delete_search(search_id: str, db: Session = Depends(get_db)):
     search = db.query(Search).filter(Search.id == search_id).first()
     if not search:
         raise HTTPException(status_code=404, detail="Search not found")
+    if search.search_mode in EXTENSION_MODES:
+        raise HTTPException(
+            status_code=409,
+            detail="Built-in extension searches cannot be deleted — "
+                   "pause it instead to stop importing captured jobs",
+        )
+    # ScrapeLog.search_id and Job.search_id are plain FKs with no ON DELETE in the
+    # live schema, so orphan both instead of deleting them — jobs keep their own company/title, and run history stays readable.
+    db.query(ScrapeLog).filter(ScrapeLog.search_id == search.id).update(
+        {"search_id": None}, synchronize_session=False)
+    db.query(Job).filter(Job.search_id == search.id).update(
+        {"search_id": None}, synchronize_session=False)
     db.delete(search)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"delete_search({search_id}) blocked by a foreign key: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Could not delete this search — another record still references it",
+        ) from e
     return {"deleted": True}
 
 
-@router.post("/{search_id}/run")
+@router.post("/{search_id}/run", status_code=202)
 async def trigger_search(search_id: str, auto_score: bool = None, db: Session = Depends(get_db)):
-    """Trigger a single search immediately. auto_score: True/False override, null=use search setting."""
+    """Trigger a single search in the background; returns immediately with a run_id pollable via /api/monitor/active (scope_key = search id); auto_score overrides the search's auto_scoring_depth when set."""
     search = db.query(Search).filter(Search.id == search_id).first()
     if not search:
         raise HTTPException(status_code=404, detail="Search not found")
+    if search.search_mode in EXTENSION_MODES:
+        raise HTTPException(
+            status_code=409,
+            detail="Extension searches have no scraper to run — "
+                   "jobs arrive from the browser extension",
+        )
+    search_name = search.name
 
-    from backend.scraper.orchestrator import _run_search_by_id as run_single_search
-    result = await run_single_search(str(search.id), auto_score=auto_score)
-    # Project to an explicit whitelist of safe fields — never forward scraper exception
-    # strings to the client (CodeQL py/stack-trace-exposure).
-    if isinstance(result, dict) and result.get("error"):
-        logger.warning("Search %s finished with scrape error: %s", search.id, result.get("error"))
-    safe_result = {
-        "jobs_found": int(result.get("jobs_found", 0)) if isinstance(result, dict) else 0,
-        "new_jobs": int(result.get("new_jobs", 0)) if isinstance(result, dict) else 0,
-        "duration": result.get("duration") if isinstance(result, dict) else None,
-        "error": "Scrape failed; see server logs for details."
-                 if isinstance(result, dict) and result.get("error") else None,
-    }
-    return {"message": "Search completed", "search_id": str(search.id), "result": safe_result}
+    async def _do():
+        from backend.scraper.orchestrator import _run_search_by_id as run_single_search
+        result = await run_single_search(search_id, auto_score=auto_score)
+        # Never forward scraper exception strings to the client (py/stack-trace-exposure);
+        # the real text is already persisted on the ScrapeLog row and logged here.
+        if isinstance(result, dict) and result.get("error"):
+            logger.warning("Search %s finished with scrape error: %s", search_id, result.get("error"))
+        # Returned string becomes JobRun.result_summary (Stats -> Run history), built
+        # from the ScrapeLog row the run just wrote so the line and audit row always agree.
+        from backend.scraper.orchestrator import summarize_search_run
+        return summarize_search_run(search_name, result)
+
+    from backend.job_monitor import launch_background, JobAlreadyRunningError
+    try:
+        run_id = launch_background("search_run", _do, trigger="manual",
+                                   scope_key=search_id, meta={"search": search_name})
+        return {"run_id": run_id, "status": "running", "search_id": search_id, "search": search_name}
+    except JobAlreadyRunningError as e:
+        logger.info("Duplicate search run rejected for %s", search_id)
+        return JSONResponse(status_code=409, content={"detail": f"{e.job_type} is already running"})
 
 
 @router.post("/{search_id}/test")
 async def test_search(search_id: str, db: Session = Depends(get_db)):
-    """Launch a search test in the background. Returns run_id to poll for results.
-
-    For fast modes (keyword), runs synchronously and returns results directly.
-    For slow modes (levels_fyi, linkedin_personal), launches async and returns 202.
-    """
+    """Run a search test: keyword mode runs synchronously and returns results directly, while slow modes (levels_fyi, linkedin_personal, jobright, freehire) launch in the background and return a run_id to poll."""
     search = db.query(Search).filter(Search.id == search_id).first()
     if not search:
         raise HTTPException(status_code=404, detail="Search not found")
 
-    # Slow modes: launch in background, return run_id for polling
-    if search.search_mode in ("levels_fyi", "linkedin_personal", "jobright"):
+    if search.search_mode in ("levels_fyi", "linkedin_personal", "jobright", "freehire"):
         run_id = str(uuid.uuid4())[:8]
         _test_results[run_id] = {"status": "running", "result": None}
 
@@ -138,6 +207,9 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                 elif search.search_mode == "jobright":
                     from backend.scraper.sources.jobright import preview as test_jobright
                     result = await test_jobright(test_search_obj, test_db)
+                elif search.search_mode == "freehire":
+                    from backend.scraper.sources.freehire import preview as test_freehire
+                    result = await test_freehire(test_search_obj, test_db)
                 else:
                     from backend.scraper.sources.linkedin_personal import preview as test_linkedin_personal
                     result = await test_linkedin_personal(test_search_obj, test_db)
@@ -152,7 +224,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=202, content={"run_id": run_id, "status": "running"})
 
     if search.search_mode != "keyword":
-        raise HTTPException(status_code=400, detail="Test only supports keyword, levels_fyi, linkedin_personal, and jobright searches")
+        raise HTTPException(status_code=400, detail="Test only supports keyword, levels_fyi, linkedin_personal, jobright, and freehire searches")
 
     # ── Keyword (JobSpy) test — runs synchronously ──
     import re
@@ -212,6 +284,12 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             "duration": duration,
             "raw_count": 0,
             "after_filter": 0,
+            "after_search_filter": 0,
+            "global_excluded_count": 0,
+            "global_exclude_keyword_count": 0,
+            "body_excluded_count": 0,
+            "body_unchecked_count": 0,
+            "body_phrase_count": 0,
             "source_breakdown": {},
             "company_breakdown": {},
             "include_keywords": search.title_include_keywords or [],
@@ -233,7 +311,6 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
 
     raw_count = len(jobs_df)
 
-    # Apply title filters
     include_kw = search.title_include_keywords or []
     exclude_kw = search.title_exclude_keywords or []
 
@@ -245,13 +322,11 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         pattern = "|".join(r'\b' + re.escape(kw) + r'\b' for kw in exclude_kw)
         mask &= ~jobs_df["title"].str.contains(pattern, case=False, na=False, regex=True)
 
-    # Company filter (exact match, case-insensitive)
     company_filter = search.company_filter or []
     if company_filter:
         cf_set = {cf.lower() for cf in company_filter}
         mask &= jobs_df["company"].str.lower().isin(cf_set)
 
-    # Company exclude (global + per-search + active companies if flag on)
     import json
     from backend.scraper._shared.filters import build_search_exclude_sets
     global_exclude_set, search_exclude_set = build_search_exclude_sets(db, search)
@@ -265,7 +340,25 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         excl_mask = jobs_df["company"].apply(_kw_excl)
         mask &= ~excl_mask
 
-    # Body exclusion description check (H-1B + language phrases)
+    # The run merges title_exclude_global into the exclude list before storing (see
+    # scraper/sources/jobspy.py:285); applied after the per-search layers here too, mirroring routes_companies.py.
+    from backend.models.db import get_global_title_exclude
+    global_exclude_kw = [kw for kw in (get_global_title_exclude(db) or []) if str(kw).strip()]
+    after_search_filter = int(mask.sum())   # passes the per-search layers only
+    global_hits = {}                        # df index -> the global keywords that matched
+    if global_exclude_kw:
+        for idx in jobs_df.index:
+            if not mask[idx]:
+                continue
+            title_text = str(jobs_df.at[idx, "title"])
+            matched_global = [
+                kw for kw in global_exclude_kw
+                if re.search(r'\b' + re.escape(str(kw)) + r'\b', title_text, re.IGNORECASE)
+            ]
+            if matched_global:
+                global_hits[idx] = matched_global
+                mask[idx] = False
+
     body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
     body_phrases = []
     if body_row and body_row.value:
@@ -273,6 +366,9 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             body_phrases = json.loads(body_row.value)
         except json.JSONDecodeError:
             pass
+    # Record which phrase hit (and which rows couldn't be checked at all) so each row can report it inline.
+    body_hits = {}          # df index -> the exclusion phrase that matched
+    body_unchecked = set()  # df index -> passed the title layers, but had no description
     if body_phrases:
         from backend.analyzer.h1b_checker import scan_jd_for_h1b_flags
         for idx in jobs_df.index:
@@ -281,19 +377,19 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                 if desc and desc != "nan":
                     result = scan_jd_for_h1b_flags(desc, body_phrases)
                     if result["jd_flag"]:
+                        body_hits[idx] = result["matched_phrase"] or "matched"
                         mask[idx] = False
+                else:
+                    body_unchecked.add(idx)
 
-    # Source breakdown
     source_breakdown = {}
     if "site" in jobs_df.columns:
         source_breakdown = jobs_df["site"].value_counts().to_dict()
 
-    # Company breakdown (top 20)
     company_breakdown = {}
     if "company" in jobs_df.columns:
         company_breakdown = jobs_df["company"].value_counts().head(20).to_dict()
 
-    # Build per-job results
     results = []
     for idx, row in jobs_df.iterrows():
         kept = bool(mask[idx])
@@ -306,7 +402,6 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         min_sal = row.get("min_amount")
         max_sal = row.get("max_amount")
 
-        # Figure out rejection reason
         reason = None
         if not kept:
             title_lower = title.lower()
@@ -326,11 +421,12 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                     reason = f"Company excluded (global): {company_lower}"
                 elif company_lower in search_exclude_set:
                     reason = f"Company excluded: {company_lower}"
-            if not reason and body_phrases and desc and desc != "nan":
-                from backend.analyzer.h1b_checker import scan_jd_for_h1b_flags as _scan
-                body_res = _scan(desc, body_phrases)
-                if body_res["jd_flag"]:
-                    reason = f"Body exclusion: {body_res['jd_snippet'][:80] if body_res['jd_snippet'] else 'matched'}"
+            # The global list is its own layer, named as such — a row dropped by it
+            # is not "excluded by this search's filters".
+            if not reason and idx in global_hits:
+                reason = f"[Global] Excluded by: {', '.join(global_hits[idx])}"
+            if not reason and idx in body_hits:
+                reason = f"Body exclusion: {body_hits[idx]}"
             if not reason:
                 reason = "Filtered"
 
@@ -356,15 +452,32 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             "desc_length": len(desc) if has_desc else 0,
             "kept": kept,
             "reason": reason,
+            # The global title-exclude keywords that matched, or [].
+            "global_excluded_by": global_hits.get(idx, []),
+            # The phrase that would make the run store this row as `ignored`, or
+            # null; body_checked is false when there was no description to scan.
+            "body_excluded_by": body_hits.get(idx),
+            "body_checked": bool(body_phrases) and idx not in body_unchecked,
         })
 
     after_filter = sum(1 for j in results if j["kept"])
+    body_excluded_count = len(body_hits)
+    body_unchecked_count = len(body_unchecked)
 
     return {
         "search_name": search.name,
         "duration": duration,
         "raw_count": raw_count,
         "after_filter": after_filter,
+        # Footer arithmetic: how many survived this search's own filters, and how
+        # many of those the global list then removed.
+        "after_search_filter": after_search_filter,
+        "global_excluded_count": len(global_hits),
+        "global_exclude_keyword_count": len(global_exclude_kw),
+        # Footer arithmetic: kept · title/company-filtered · would-be-ignored
+        "body_excluded_count": body_excluded_count,
+        "body_unchecked_count": body_unchecked_count,
+        "body_phrase_count": len(body_phrases),
         "source_breakdown": source_breakdown,
         "company_breakdown": company_breakdown,
         "include_keywords": include_kw,
@@ -466,7 +579,6 @@ async def _test_levelsfyi_search(search, db):
     exclude_kw = search.title_exclude_keywords or []
     company_filter = search.company_filter or []
 
-    # Company exclude (global + per-search + active companies if flag on)
     from backend.models.db import Setting
     import json
     from backend.scraper._shared.filters import build_search_exclude_sets
@@ -474,7 +586,6 @@ async def _test_levelsfyi_search(search, db):
     search_exclude = list(search_exclude_set)
     all_exclude = list(global_exclude_set | search_exclude_set)
 
-    # Body exclusion phrases for desc check (H-1B + language)
     body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
     body_phrases = []
     if body_row and body_row.value:
@@ -483,7 +594,6 @@ async def _test_levelsfyi_search(search, db):
         except json.JSONDecodeError:
             pass
 
-    # Build per-company filter lookup
     company_filters = {}  # company_name_lower -> Company object
     company_names = {j.get("company", "") for j in raw_jobs if j.get("company")}
     for cn in company_names:
@@ -492,7 +602,6 @@ async def _test_levelsfyi_search(search, db):
         if co and (co.title_exclude_keywords or (co.title_include_expr and co.title_include_expr.strip())):
             company_filters[cn.lower()] = co
 
-    # Company breakdown
     from collections import Counter
     company_counts = Counter(j["company"] for j in raw_jobs if j.get("company"))
     company_breakdown = dict(company_counts.most_common(20))
@@ -504,7 +613,6 @@ async def _test_levelsfyi_search(search, db):
         kept = True
         reason = None
 
-        # Search-level title filters
         if include_kw and not any(kw.lower() in title_lower for kw in include_kw):
             kept = False
             reason = f"No match for: {', '.join(include_kw)}"
@@ -519,7 +627,6 @@ async def _test_levelsfyi_search(search, db):
                 kept = False
                 reason = f"Company filter: {', '.join(company_filter)}"
 
-        # Company exclude (global=full match, per-search=full match)
         if kept and (global_exclude_set or search_exclude):
             company_lower = (j.get("company") or "").lower()
             if company_lower in global_exclude_set:
@@ -529,7 +636,6 @@ async def _test_levelsfyi_search(search, db):
                 kept = False
                 reason = f"Company excluded: {company_lower}"
 
-        # Body exclusion description check (H-1B + language)
         if kept and body_phrases:
             desc = j.get("description") or ""
             if desc:
@@ -539,7 +645,6 @@ async def _test_levelsfyi_search(search, db):
                     kept = False
                     reason = f"Body exclusion: {body_result['jd_snippet'][:80] if body_result['jd_snippet'] else 'matched'}"
 
-        # Per-company title filters
         if kept:
             co_name = (j.get("company") or "").lower()
             co_obj = company_filters.get(co_name)
@@ -547,7 +652,6 @@ async def _test_levelsfyi_search(search, db):
                 co_kept, co_rej = _apply_company_filters([j], co_obj)
                 if not co_kept:
                     kept = False
-                    # Build descriptive reason
                     if co_obj.title_exclude_keywords:
                         matched_kw = [kw for kw in co_obj.title_exclude_keywords if re.search(r'\b' + re.escape(kw.lower()) + r'\b', title_lower)]
                         if matched_kw:
@@ -563,7 +667,6 @@ async def _test_levelsfyi_search(search, db):
             if j.get("salary_max"):
                 salary += f" – ${j['salary_max']:,}"
 
-        # Show application_url if available, fallback to levels.fyi URL
         display_url = j.get("application_url") or j.get("url", "")
         desc = j.get("description") or ""
         has_desc = bool(desc and len(desc) > 50)
@@ -585,7 +688,6 @@ async def _test_levelsfyi_search(search, db):
 
     after_filter = sum(1 for r in results if r["kept"])
 
-    # Stats on enrichment
     with_apply_url = sum(1 for j in raw_jobs if j.get("application_url"))
     with_desc = sum(1 for j in raw_jobs if j.get("description") and len(j["description"]) > 50)
     with_salary = sum(1 for j in raw_jobs if j.get("salary_min"))
@@ -612,7 +714,18 @@ async def _test_levelsfyi_search(search, db):
     }
 
 
-def _search_to_dict(s: Search) -> dict:
+def _last_source_errors(last_log) -> list:
+    """Per-board failures from a search's most recent ScrapeLog row."""
+    if last_log is None:
+        return []
+    from backend.scraper.orchestrator import source_errors, source_label
+    return [
+        {"source": key, "label": source_label(key), "error": err}
+        for key, err in source_errors(getattr(last_log, "source_breakdown", None))
+    ]
+
+
+def _search_to_dict(s: Search, last_log=None) -> dict:
     return {
         "id": str(s.id),
         "name": s.name,
@@ -637,5 +750,19 @@ def _search_to_dict(s: Search) -> dict:
         "auto_scoring_depth": s.auto_scoring_depth,
         "run_interval_minutes": s.run_interval_minutes,
         "last_run_at": s.last_run_at.isoformat() if s.last_run_at else None,
+        "warning_acknowledged_at": s.warning_acknowledged_at.isoformat() if s.warning_acknowledged_at else None,
+        # True while the acknowledgement still covers the newest run — the UI
+        # mutes the warning instead of hiding it, so the history stays readable.
+        "warning_acknowledged": is_acknowledged(
+            getattr(last_log, "ran_at", None), s.warning_acknowledged_at),
         "created_at": s.created_at.isoformat() if s.created_at else None,
+        # most recent ScrapeLog for this search (None until it has run once)
+        "last_error": (last_log.error if last_log else None),
+        "last_run_warning": (bool(last_log.is_warning) if last_log else False),
+        # Boards that hard-failed on the last run, e.g.
+        # [{"source": "zip_recruiter", "label": "ZipRecruiter", "error": "403"}]
+        "last_source_errors": _last_source_errors(last_log),
+        "last_jobs_found": (last_log.jobs_found if last_log else None),
+        "last_new_jobs": (last_log.new_jobs if last_log else None),
+        "last_duration": (last_log.duration_seconds if last_log else None),
     }

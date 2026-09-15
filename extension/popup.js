@@ -1,509 +1,382 @@
-// Hostname-safe URL matching helper. Avoids "substring of URL" pitfalls where
-// e.g. "evil-rippling.com" would match a naive `hostname.includes('rippling.com')`.
-function hostMatches(url, ...domains) {
-  let host
-  try { host = new URL(url).hostname.toLowerCase() } catch { return false }
-  return domains.some(raw => {
-    const d = (raw || '').toLowerCase().replace(/\/$/, '')
-    return d && (host === d || host.endsWith('.' + d))
-  })
+// ===== The Navigator popup — capture + settings =====
+// Theme: 'system' leaves the attribute off so the prefers-color-scheme rule
+// decides; an explicit choice pins it and wins over the OS.
+function applyTheme(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  else document.documentElement.removeAttribute('data-theme');
 }
 
-// Known company domains for auto-detection
+const $ = (id) => document.getElementById(id);
+const VERSION = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '';
+
+// ---- URL / company detection (ported) ----
+function hostMatches(url, ...domains) {
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return false; }
+  return domains.some(raw => {
+    const d = (raw || '').toLowerCase().replace(/\/$/, '');
+    return d && (host === d || host.endsWith('.' + d));
+  });
+}
 const COMPANY_DOMAINS = {
-  'microsoft.com': 'Microsoft', 'salesforce.com': 'Salesforce',
-  'servicenow.com': 'ServiceNow', 'workday.com': 'Workday',
-  'paypal.com': 'PayPal', 'jpmorgan.com': 'JPMorgan Chase',
-  'jpmorganchase.com': 'JPMorgan Chase', 'blackrock.com': 'BlackRock',
-  'addepar.com': 'Addepar', 'oracle.com': 'Oracle',
-  'intuit.com': 'Intuit', 'google.com': 'Google',
-  'amazon.com': 'Amazon', 'amazon.jobs': 'Amazon',
-  'stripe.com': 'Stripe', 'visa.com': 'Visa',
-  'mastercard.com': 'Mastercard', 'uber.com': 'Uber',
-  'block.xyz': 'Block', 'plaid.com': 'Plaid',
-  'clearstreet.io': 'Clear Street', 'simcorp.com': 'SimCorp',
-  'cisco.com': 'Cisco', 'ibm.com': 'IBM',
-  'meta.com': 'Meta', 'metacareers.com': 'Meta',
-  'apple.com': 'Apple', 'databricks.com': 'Databricks',
-  'coinbase.com': 'Coinbase', 'ubs.com': 'UBS',
-  'robinhood.com': 'Robinhood', 'affirm.com': 'Affirm',
-  'kraken.com': 'Kraken', 'chime.com': 'Chime',
-  'ramp.com': 'Ramp', 'brex.com': 'Brex',
-  'rippling.com': 'Rippling',
-  // ATS domains
-  'greenhouse.io': '', 'lever.co': '', 'myworkdayjobs.com': '',
-  'taleo.net': '', 'icims.com': '', 'eightfold.ai': '',
-  // Job boards
-  'linkedin.com': '', 'indeed.com': '', 'ziprecruiter.com': '',
+  'microsoft.com': 'Microsoft', 'salesforce.com': 'Salesforce', 'servicenow.com': 'ServiceNow',
+  'workday.com': 'Workday', 'paypal.com': 'PayPal', 'jpmorgan.com': 'JPMorgan Chase',
+  'jpmorganchase.com': 'JPMorgan Chase', 'blackrock.com': 'BlackRock', 'addepar.com': 'Addepar',
+  'oracle.com': 'Oracle', 'intuit.com': 'Intuit', 'google.com': 'Google', 'amazon.com': 'Amazon',
+  'amazon.jobs': 'Amazon', 'stripe.com': 'Stripe', 'visa.com': 'Visa', 'mastercard.com': 'Mastercard',
+  'uber.com': 'Uber', 'block.xyz': 'Block', 'plaid.com': 'Plaid', 'clearstreet.io': 'Clear Street',
+  'simcorp.com': 'SimCorp', 'cisco.com': 'Cisco', 'ibm.com': 'IBM', 'meta.com': 'Meta',
+  'metacareers.com': 'Meta', 'apple.com': 'Apple', 'databricks.com': 'Databricks', 'coinbase.com': 'Coinbase',
+  'ubs.com': 'UBS', 'robinhood.com': 'Robinhood', 'affirm.com': 'Affirm', 'kraken.com': 'Kraken',
+  'chime.com': 'Chime', 'ramp.com': 'Ramp', 'brex.com': 'Brex', 'rippling.com': 'Rippling',
+  'greenhouse.io': '', 'lever.co': '', 'myworkdayjobs.com': '', 'taleo.net': '', 'icims.com': '',
+  'eightfold.ai': '', 'linkedin.com': '', 'indeed.com': '', 'ziprecruiter.com': '',
 };
-
-document.addEventListener('DOMContentLoaded', async () => {
-  const mainPage = document.getElementById('mainPage');
-  const settingsPage = document.getElementById('settingsPage');
-
-  // Load settings
-  const settings = await chrome.storage.sync.get(['serverUrl', 'apiKey']);
-  document.getElementById('serverUrl').value = settings.serverUrl || 'http://localhost';
-  document.getElementById('apiKey').value = settings.apiKey || '';
-
-  // Pre-fill from current tab
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab) {
-    document.getElementById('url').value = tab.url || '';
-
-    // Auto-detect company from URL — 3 layers
-    try {
-      const parsed = new URL(tab.url);
-      const hostname = parsed.hostname.toLowerCase();
-      const pathParts = parsed.pathname.replace(/^\//, '').split('/').filter(Boolean);
-      let detected = '';
-
-      // Layer 1: hardcoded domain map
-      for (const [domain, company] of Object.entries(COMPANY_DOMAINS)) {
-        if (hostname.includes(domain)) {
-          detected = company;
+function detectCompany(url) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const pathParts = parsed.pathname.replace(/^\//, '').split('/').filter(Boolean);
+    let detected = '';
+    for (const [domain, company] of Object.entries(COMPANY_DOMAINS)) {
+      if (hostname.includes(domain)) { detected = company; break; }
+    }
+    const titleCase = (s) => s.split(/[-_\s]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    if (!detected) {
+      for (const ats of ['eightfold.ai', 'myworkdayjobs.com', 'taleo.net', 'icims.com']) {
+        if (hostname.endsWith(ats)) {
+          const sub = hostname.replace(`.${ats}`, '').replace(/\./g, ' ').trim();
+          if (sub && !['www', 'jobs', 'careers', 'apply'].includes(sub)) detected = titleCase(sub);
           break;
         }
       }
-
-      // Layer 2: ATS URL pattern detection
-      if (!detected) {
-        const titleCase = (s) => s.split(/[-_\s]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-
-        // Subdomain-based: {company}.eightfold.ai, {company}.myworkdayjobs.com, {company}.taleo.net, {company}.icims.com
-        const subdomainAts = ['eightfold.ai', 'myworkdayjobs.com', 'taleo.net', 'icims.com'];
-        for (const ats of subdomainAts) {
-          if (hostname.endsWith(ats)) {
-            const sub = hostname.replace(`.${ats}`, '').replace(/\./g, ' ').trim();
-            if (sub && !['www', 'jobs', 'careers', 'apply'].includes(sub)) {
-              detected = titleCase(sub);
-            }
-            break;
-          }
-        }
-
-        // Path-based: boards.greenhouse.io/{company}, jobs.lever.co/{company}, jobs.ashbyhq.com/{company}
-        if (!detected) {
-          const pathAts = {
-            'greenhouse.io': true,    // boards.greenhouse.io/{company} or job-boards.greenhouse.io/{company}
-            'lever.co': true,         // jobs.lever.co/{company}
-            'ashbyhq.com': true,      // jobs.ashbyhq.com/{company}
-          };
-          for (const [ats] of Object.entries(pathAts)) {
-            if (hostname.endsWith(ats) && pathParts.length >= 1) {
-              const slug = pathParts[0];
-              if (slug && !['jobs', 'job', 'embed', 'api'].includes(slug)) {
-                detected = titleCase(slug);
-              }
-              break;
-            }
-          }
-        }
-
-        // Rippling: ats.rippling.com/{company} or rippling.com/careers/{company}
-        if (!detected && hostMatches(tab.url, 'rippling.com') && pathParts.length >= 1) {
-          const slug = hostname === 'ats.rippling.com' || hostname.endsWith('.ats.rippling.com')
-            ? pathParts[0]
-            : (pathParts[0] === 'careers' && pathParts[1] ? pathParts[1] : '');
-          if (slug) detected = titleCase(slug);
-        }
-
-        // Apple: jobs.apple.com
-        if (!detected && hostname === 'jobs.apple.com') detected = 'Apple';
-
-        // Meta: metacareers.com
-        if (!detected && hostMatches(tab.url, 'metacareers.com')) detected = 'Meta';
-
-        // Google: google.com/about/careers
-        if (!detected && hostMatches(tab.url, 'google.com') && parsed.pathname.includes('/careers')) detected = 'Google';
-      }
-
-      // Layer 3: fallback — extract from core domain
-      if (!detected) {
-        const parts = hostname.split('.');
-        // Strip common prefixes: www, jobs, careers, apply, boards, hire
-        const skip = ['www', 'jobs', 'careers', 'apply', 'boards', 'hire', 'recruiting', 'talent'];
-        // Strip TLDs: com, org, net, co, io, ai, etc. and country codes
-        const tlds = ['com', 'org', 'net', 'co', 'io', 'ai', 'dev', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'au', 'jobs'];
-        const meaningful = parts.filter(p => !skip.includes(p) && !tlds.includes(p) && p.length > 1);
-        if (meaningful.length > 0) {
-          // Take the most likely company part (usually the main domain)
-          const core = meaningful.length === 1 ? meaningful[0] : meaningful[meaningful.length - 1];
-          detected = core.charAt(0).toUpperCase() + core.slice(1);
+    }
+    if (!detected) {
+      for (const ats of ['greenhouse.io', 'lever.co', 'ashbyhq.com']) {
+        if (hostname.endsWith(ats) && pathParts.length >= 1) {
+          const slug = pathParts[0];
+          if (slug && !['jobs', 'job', 'embed', 'api'].includes(slug)) detected = titleCase(slug);
+          break;
         }
       }
-
-      if (detected) {
-        document.getElementById('company').value = detected;
-      }
-    } catch (e) {}
-
-    // Try to extract title from page
-    try {
-      const [result] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: async () => {
-          const log = [];
-          const skipPatterns = /^(careers|jobs|job search|open positions|work with|join)\b/i;
-
-          function cleanTitle(text) {
-            return text.trim().split('\n')[0].trim().substring(0, 200);
-          }
-
-          function isGoodTitle(text) {
-            const t = text.trim();
-            return t.length > 3 && !skipPatterns.test(t);
-          }
-
-          // 1. Try JSON-LD schema first
-          try {
-            const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-            log.push(`[1] JSON-LD scripts found: ${ldScripts.length}`);
-            for (const s of ldScripts) {
-              const data = JSON.parse(s.textContent);
-              log.push(`[1] JSON-LD @type=${data['@type']}, title=${data.title || 'N/A'}`);
-              if (data['@type'] === 'JobPosting' && data.title) {
-                log.push(`[1] MATCH: ${data.title}`);
-                return cleanTitle(data.title);
-              }
-            }
-          } catch (e) {
-            log.push(`[1] JSON-LD error: ${e.message}`);
-          }
-
-          const selectors = [
-            'h1.job-title', 'h1.posting-headline', '.job-title h1',
-            'h1[data-job-title]', '.top-card-layout__title',
-            'h2[class*="position-title"]', '[class*="position-title"]',
-            'h1.t-24', '.jobsearch-JobInfoHeader-title',
-            '.job-details h1', '.job-header h1', '.job-info h1',
-            '[data-automation-id="jobPostingHeader"]',
-          ];
-
-          // 2. Try CSS selectors immediately
-          for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el) {
-              log.push(`[2] Selector "${sel}" => "${el.textContent.trim().substring(0, 80)}" good=${isGoodTitle(el.textContent)}`);
-              if (isGoodTitle(el.textContent)) {
-                return cleanTitle(el.textContent);
-              }
-            }
-          }
-          log.push('[2] No CSS selector matched');
-
-          // 3. Try meta tags
-          const ogTitle = document.querySelector('meta[property="og:title"]');
-          log.push(`[3] og:title = ${ogTitle ? ogTitle.content : 'NOT FOUND'}`);
-          if (ogTitle && isGoodTitle(ogTitle.content)) {
-            return cleanTitle(ogTitle.content);
-          }
-
-          // 4. Wait up to 3s for dynamic content
-          for (let i = 0; i < 6; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            for (const sel of selectors) {
-              const el = document.querySelector(sel);
-              if (el && isGoodTitle(el.textContent)) {
-                log.push(`[4] After ${(i+1)*500}ms, selector "${sel}" => "${el.textContent.trim().substring(0, 80)}"`);
-                return cleanTitle(el.textContent);
-              }
-            }
-          }
-          log.push('[4] No match after 3s wait');
-
-          // 5. Try generic h1
-          const h1 = document.querySelector('h1');
-          log.push(`[5] h1 = "${h1 ? h1.textContent.trim().substring(0, 80) : 'NOT FOUND'}" good=${h1 ? isGoodTitle(h1.textContent) : false}`);
-          if (h1 && isGoodTitle(h1.textContent)) {
-            return cleanTitle(h1.textContent);
-          }
-
-          // 6. Fallback to document.title
-          const title = document.title.split(' - ')[0].split(' | ')[0].trim();
-          log.push(`[6] document.title = "${document.title}", cleaned = "${title}", good=${isGoodTitle(title)}`);
-          if (isGoodTitle(title)) return title;
-          return document.title;
-        },
-      });
-      if (result && result.result) {
-        document.getElementById('title').value = result.result;
-      }
-    } catch (e) {
-      // If scripting fails, use page title
-      if (tab.title) {
-        document.getElementById('title').value = tab.title.split(' - ')[0].split(' | ')[0].trim();
+    }
+    if (!detected && hostMatches(url, 'rippling.com') && pathParts.length >= 1) {
+      const slug = hostname === 'ats.rippling.com' || hostname.endsWith('.ats.rippling.com')
+        ? pathParts[0] : (pathParts[0] === 'careers' && pathParts[1] ? pathParts[1] : '');
+      if (slug) detected = titleCase(slug);
+    }
+    if (!detected && hostname === 'jobs.apple.com') detected = 'Apple';
+    if (!detected && hostMatches(url, 'metacareers.com')) detected = 'Meta';
+    if (!detected && hostMatches(url, 'google.com') && parsed.pathname.includes('/careers')) detected = 'Google';
+    if (!detected) {
+      const parts = hostname.split('.');
+      const skip = ['www', 'jobs', 'careers', 'apply', 'boards', 'hire', 'recruiting', 'talent'];
+      const tlds = ['com', 'org', 'net', 'co', 'io', 'ai', 'dev', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'au', 'jobs'];
+      const meaningful = parts.filter(p => !skip.includes(p) && !tlds.includes(p) && p.length > 1);
+      if (meaningful.length) {
+        const core = meaningful.length === 1 ? meaningful[0] : meaningful[meaningful.length - 1];
+        detected = core.charAt(0).toUpperCase() + core.slice(1);
       }
     }
-  }
-
-  // Save application
-  document.getElementById('saveBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('saveBtn');
-    const status = document.getElementById('status');
-
-    const title = document.getElementById('title').value.trim();
-    const company = document.getElementById('company').value.trim();
-    const url = document.getElementById('url').value.trim();
-
-    if (!title || !company || !url) {
-      status.textContent = 'Please fill in title, company, and URL';
-      status.className = 'status error';
-      return;
-    }
-
-    const serverUrl = (await chrome.storage.sync.get('serverUrl')).serverUrl || 'http://localhost';
-    const apiKey = (await chrome.storage.sync.get('apiKey')).apiKey || '';
-
-    btn.disabled = true;
-    btn.textContent = 'Saving...';
-
-    try {
-      const resp = await fetch(`${serverUrl}/api/applications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: JSON.stringify({ title, company, url }),
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        status.textContent = `Application logged for ${data.company}`;
-        status.className = 'status success';
-        btn.textContent = 'Saved!';
-      } else {
-        const err = await resp.text();
-        status.textContent = `Error: ${err}`;
-        status.className = 'status error';
-        btn.disabled = false;
-        btn.textContent = 'Save Application';
-      }
-    } catch (e) {
-      status.textContent = `Connection failed: ${e.message}. Check Settings.`;
-      status.className = 'status error';
-      btn.disabled = false;
-      btn.textContent = 'Save Application';
-    }
-  });
-
-  // Save to Job Feed (no application)
-  document.getElementById('saveJobBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('saveJobBtn');
-    const status = document.getElementById('status');
-
-    const title = document.getElementById('title').value.trim();
-    const company = document.getElementById('company').value.trim();
-    const url = document.getElementById('url').value.trim();
-
-    if (!title || !company || !url) {
-      status.textContent = 'Please fill in title, company, and URL';
-      status.className = 'status error';
-      return;
-    }
-
-    const serverUrl = (await chrome.storage.sync.get('serverUrl')).serverUrl || 'http://localhost';
-    const apiKey = (await chrome.storage.sync.get('apiKey')).apiKey || '';
-
-    btn.disabled = true;
-    btn.textContent = 'Extracting...';
-
-    // Try to extract job description from the current page
-    let description = '';
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        const [result] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            // Try common job description selectors
-            const selectors = [
-              '[class*="jobs-description-content__text"]', '[class*="job-description"]',
-              '[class*="jobDescription"]', '[class*="job_description"]',
-              '[data-automation-id="jobPostingDescription"]',
-              '.posting-page .content', '.job-details', '.description',
-              'article', '[role="article"]', 'main',
-            ];
-            for (const sel of selectors) {
-              const el = document.querySelector(sel);
-              if (el && el.innerText.trim().length > 100) {
-                return el.innerText.trim().substring(0, 15000);
-              }
-            }
-            // Fallback: try JSON-LD
-            const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-            for (const s of ldScripts) {
-              try {
-                const data = JSON.parse(s.textContent);
-                if (data['@type'] === 'JobPosting' && data.description) {
-                  const div = document.createElement('div');
-                  div.innerHTML = data.description;
-                  return div.innerText.trim().substring(0, 15000);
-                }
-              } catch {}
-            }
-            return '';
-          },
-        });
-        if (result && result.result) description = result.result;
-      }
-    } catch {}
-
-    btn.textContent = 'Saving...';
-
-    try {
-      const resp = await fetch(`${serverUrl}/api/jobs/save-from-extension`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-        body: JSON.stringify({ title, company, url, description }),
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        status.textContent = `${data.new ? 'Saved' : 'Already exists'}: ${data.title} at ${data.company}`;
-        status.className = 'status success';
-        btn.textContent = 'Saved!';
-      } else {
-        const err = await resp.text();
-        status.textContent = `Error: ${err}`;
-        status.className = 'status error';
-        btn.disabled = false;
-        btn.textContent = 'Save to Job Feed';
-      }
-    } catch (e) {
-      status.textContent = `Connection failed: ${e.message}. Check Settings.`;
-      status.className = 'status error';
-      btn.disabled = false;
-      btn.textContent = 'Save to Job Feed';
-    }
-  });
-
-  // Settings navigation
-  document.getElementById('settingsBtn').addEventListener('click', () => {
-    mainPage.className = 'main-page';
-    settingsPage.className = 'settings-page active';
-  });
-
-  document.getElementById('backBtn').addEventListener('click', () => {
-    settingsPage.className = 'settings-page';
-    mainPage.className = 'main-page active';
-  });
-
-  // Save settings
-  document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
-    const serverUrl = document.getElementById('serverUrl').value.trim();
-    const apiKey = document.getElementById('apiKey').value.trim();
-    const settingsStatus = document.getElementById('settingsStatus');
-
-    await chrome.storage.sync.set({ serverUrl, apiKey });
-    settingsStatus.textContent = 'Settings saved!';
-    settingsStatus.className = 'status success';
-
-    setTimeout(() => {
-      settingsPage.className = 'settings-page';
-      mainPage.className = 'main-page active';
-    }, 800);
-  });
-});
-
-// --- LinkedIn Capture UI ---
-
-const linkedinToggle = document.getElementById('linkedin-toggle');
-const linkedinCount = document.getElementById('linkedin-count');
-const linkedinSend = document.getElementById('linkedin-send');
-const linkedinClear = document.getElementById('linkedin-clear');
-const linkedinStatus = document.getElementById('linkedin-status');
-
-function showLinkedinStatus(msg, isError) {
-  linkedinStatus.textContent = msg;
-  linkedinStatus.style.color = isError ? '#dc2626' : '#16a34a';
-  linkedinStatus.style.display = 'block';
-  setTimeout(() => { linkedinStatus.style.display = 'none'; }, 4000);
+    return detected;
+  } catch { return ''; }
 }
 
-function updateLinkedinCount(count) {
-  linkedinCount.textContent = `${count} job${count !== 1 ? 's' : ''} captured`;
-  linkedinSend.disabled = count === 0;
-  linkedinClear.disabled = count === 0;
+// in-page extractors (executed in the tab)
+function _extractTitleFn() {
+  const skip = /^(careers|jobs|job search|open positions|work with|join)\b/i;
+  const clean = (t) => t.trim().split('\n')[0].trim().substring(0, 200);
+  const good = (t) => { t = (t || '').trim(); return t.length > 3 && !skip.test(t); };
+  try {
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+      const d = JSON.parse(s.textContent);
+      if (d['@type'] === 'JobPosting' && d.title) return clean(d.title);
+    }
+  } catch {}
+  const sels = ['h1.job-title', 'h1.posting-headline', '.job-title h1', 'h1[data-job-title]',
+    '.top-card-layout__title', 'h2[class*="position-title"]', '[class*="position-title"]', 'h1.t-24',
+    '.jobsearch-JobInfoHeader-title', '.job-details h1', '.job-header h1', '.job-info h1',
+    '[data-automation-id="jobPostingHeader"]'];
+  for (const sel of sels) { const el = document.querySelector(sel); if (el && good(el.textContent)) return clean(el.textContent); }
+  const og = document.querySelector('meta[property="og:title"]');
+  if (og && good(og.content)) return clean(og.content);
+  const h1 = document.querySelector('h1'); if (h1 && good(h1.textContent)) return clean(h1.textContent);
+  const t = document.title.split(' - ')[0].split(' | ')[0].trim();
+  return good(t) ? t : document.title;
+}
+function _extractDescFn() {
+  const sels = ['[class*="jobs-description-content__text"]', '[class*="job-description"]', '[class*="jobDescription"]',
+    '[class*="job_description"]', '[data-automation-id="jobPostingDescription"]', '.posting-page .content',
+    '.job-details', '.description', 'article', '[role="article"]', 'main'];
+  for (const sel of sels) { const el = document.querySelector(sel); if (el && el.innerText.trim().length > 100) return el.innerText.trim().substring(0, 15000); }
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try { const d = JSON.parse(s.textContent); if (d['@type'] === 'JobPosting' && d.description) { const div = document.createElement('div'); div.innerHTML = d.description; return div.innerText.trim().substring(0, 15000); } } catch {}
+  }
+  return '';
 }
 
-// Load toggle state
-chrome.storage.sync.get('linkedinCapture', (data) => {
-  linkedinToggle.checked = !!data.linkedinCapture;
-});
+// ---- state ----
+const state = {
+  screen: 'capture', url: '', host: '', path: '',
+  send: 'idle', applied: 'idle', lastError: '', filterReason: '',
+  li: false, af: false, atsMode: 'off', len: 250, captured: 0,
+  theme: 'system',
+  liInfo: false, afInfo: false, charsOpen: false, urlOpen: false,
+  serverUrl: 'http://localhost', apiKey: '',
+};
+let _sendT, _saveT;
 
-// Get current count from background
-chrome.runtime.sendMessage({ type: 'linkedin_get_count' }, (resp) => {
-  if (resp && resp.count !== undefined) {
-    updateLinkedinCount(resp.count);
+async function cfg() {
+  const s = await chrome.storage.sync.get(['serverUrl', 'apiKey']);
+  state.serverUrl = s.serverUrl || 'http://localhost';
+  state.apiKey = s.apiKey || '';
+  return { serverUrl: state.serverUrl, apiKey: state.apiKey };
+}
+
+// ---- render ----
+function render() {
+  const cap = state.screen === 'capture';
+  $('hdrCapture').classList.toggle('hide', !cap);
+  $('hdrSettings').classList.toggle('hide', cap);
+  $('screenCapture').classList.toggle('hide', !cap);
+  $('screenSettings').classList.toggle('hide', cap);
+
+  // source
+  $('srcHost').textContent = state.host;
+  $('srcPath').textContent = state.path;
+  const detected = !!($('title').value.trim() && $('company').value.trim());
+  $('chipDetected').classList.toggle('hide', !detected);
+  $('chipNot').classList.toggle('hide', detected);
+
+  // send states — 'filtered' is a 200 the server refused to feed (OPEN-12), so
+  // the primary button stays available rather than leaving the popup stuck.
+  $('btnSend').classList.toggle('hide', state.send !== 'idle' && state.send !== 'filtered');
+  $('btnSending').classList.toggle('hide', state.send !== 'sending');
+  $('btnSent').classList.toggle('hide', state.send !== 'sent');
+  $('btnRetry').classList.toggle('hide', state.send !== 'error');
+
+  // applied button
+  const ab = $('btnApplied');
+  ab.classList.remove('saved', 'err-btn');
+  if (state.applied === 'saving') ab.innerHTML = '<div class="spin" style="border-color:rgba(0,0,0,.18); border-top-color:#57534C"></div>';
+  else if (state.applied === 'saved') { ab.classList.add('saved'); ab.innerHTML = '<div class="check-sm"></div>Saved'; }
+  else if (state.applied === 'exists') { ab.classList.add('saved'); ab.innerHTML = '<div class="check-sm"></div>Already logged'; }
+  else if (state.applied === 'error') { ab.classList.add('err-btn'); ab.innerHTML = 'Retry'; }
+  else ab.innerHTML = 'Save as applied';
+
+  // error card (send or applied) — text depends on which action failed
+  // OPEN-12: it also carries the "saved but filtered out" case, which used to be
+  // completely silent — the job went to the DB as `ignored` and never showed up.
+  const showErr = state.send === 'error' || state.applied === 'error' || state.send === 'filtered';
+  $('errCard').classList.toggle('hide', !showErr);
+  if (state.send === 'filtered') {
+    $('errHd').textContent = 'Not added to the job feed';
+    $('errBo').textContent = `${state.filterReason || 'Filtered out by your Extension search rules'}. Edit the rules in Searches › Extension.`;
+  } else if (showErr) {
+    $('errHd').textContent = state.lastError === 'applied' ? "Couldn't reach the Application Board" : "Couldn't reach the Job Feed";
+    $('errBo').textContent = 'Not saved. Check your connection, then retry.';
   }
-});
 
-// Toggle handler
-linkedinToggle.addEventListener('change', () => {
-  chrome.storage.sync.set({ linkedinCapture: linkedinToggle.checked });
-});
+  // captured strip + LinkedIn count
+  $('capturedStrip').classList.toggle('hide', state.captured <= 0);
+  $('capturedCount').textContent = String(state.captured);
+  $('liCount').classList.toggle('hide', state.captured > 0);
+  $('liCount').textContent = `${state.captured} jobs`;
 
-// Send button
-linkedinSend.addEventListener('click', () => {
-  linkedinSend.disabled = true;
-  linkedinSend.textContent = 'Sending...';
+  // toggles
+  $('liToggle').dataset.on = String(state.li);
+  $('afToggle').dataset.on = String(state.af);
+  $('pvToggle').dataset.on = String(state.pv);
+  $('liInfoCard').classList.toggle('hide', !state.liInfo);
+  $('afInfoCard').classList.toggle('hide', !state.afInfo);
+  $('pvInfoCard').classList.toggle('hide', !state.pvInfo);
 
-  chrome.runtime.sendMessage({ type: 'linkedin_send' }, (resp) => {
-    linkedinSend.textContent = 'Send to JobNavigator';
-    if (resp && resp.error) {
-      showLinkedinStatus(resp.error, true);
-      linkedinSend.disabled = false;
-    } else if (resp) {
-      // Show detailed count: new vs already imported
-      let msg;
-      if (resp.new !== undefined) {
-        if (resp.already_imported > 0) {
-          msg = `Processing ${resp.new} new job${resp.new !== 1 ? 's' : ''} (${resp.already_imported} already imported)`;
-        } else {
-          msg = `Processing ${resp.new} new job${resp.new !== 1 ? 's' : ''}`;
-        }
-      } else {
-        msg = resp.message || `Sent ${resp.accepted} jobs for processing`;
-      }
-      showLinkedinStatus(msg, false);
-      updateLinkedinCount(0);
+  // chars
+  $('lenChip').textContent = `${state.len} chars`;
+  $('charsPanel').style.display = state.charsOpen ? 'flex' : 'none';
+  document.querySelectorAll('.preset').forEach(p => p.classList.toggle('active', Number(p.dataset.len) === state.len));
+
+  // ats segmented
+  document.querySelectorAll('.seg-opt[data-mode]').forEach(o => o.classList.toggle('active', o.dataset.mode === state.atsMode));
+  document.querySelectorAll('[data-theme-opt]').forEach(o => o.classList.toggle('active', o.dataset.themeOpt === state.theme));
+
+  // url sheet
+  $('urlSheet').classList.toggle('hide', !state.urlOpen);
+}
+
+// ---- actions ----
+async function doSend() {
+  if (state.send === 'sending') return;
+  const title = $('title').value.trim(), company = $('company').value.trim(), url = state.url.trim();
+  if (!title || !company || !url) return;
+  state.send = 'sending'; render();
+  let description = '';
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) { const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: _extractDescFn }); if (r && r.result) description = r.result; }
+  } catch {}
+  try {
+    const resp = await fetch(`${state.serverUrl}/api/jobs/save-from-extension`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': state.apiKey },
+      body: JSON.stringify({ title, company, url, description }),
+    });
+    if (!resp.ok) throw new Error(String(resp.status));
+    // OPEN-12: a 200 does not mean it reached the feed — the Extension search's
+    // title/company filters (merged with the global title-exclude list) store the
+    // job as `ignored` so the dedup keys stick. The server now says so; say it too.
+    const data = await resp.json().catch(() => ({}));
+    if (data && data.saved === false) {
+      state.send = 'filtered'; state.filterReason = data.reason || ''; render();
+      return;
     }
+    state.filterReason = '';
+    state.send = 'sent'; render();
+    clearTimeout(_sendT); _sendT = setTimeout(() => { state.send = 'idle'; render(); }, 1800);
+  } catch { state.send = 'error'; state.lastError = 'send'; render(); }
+}
+async function doApplied() {
+  if (state.applied === 'saving') return;
+  const title = $('title').value.trim(), company = $('company').value.trim(), url = state.url.trim();
+  if (!title || !company || !url) return;
+  state.applied = 'saving'; render();
+  try {
+    const resp = await fetch(`${state.serverUrl}/api/applications`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': state.apiKey },
+      body: JSON.stringify({ title, company, url }),
+    });
+    if (resp.status === 409) { state.applied = 'exists'; render(); clearTimeout(_saveT); _saveT = setTimeout(() => { state.applied = 'idle'; render(); }, 2200); return; }   // already logged for this posting
+    if (!resp.ok) throw new Error(String(resp.status));
+    state.applied = 'saved'; render();
+    clearTimeout(_saveT); _saveT = setTimeout(() => { state.applied = 'idle'; render(); }, 1800);
+  } catch { state.applied = 'error'; state.lastError = 'applied'; render(); }
+}
+
+async function checkConnection() {
+  $('connDot').classList.remove('bad'); $('connTx').textContent = 'Checking…';
+  try {
+    const resp = await fetch(`${$('serverUrl').value.trim() || state.serverUrl}/api/autofill/config`,
+      { headers: { 'X-API-Key': $('apiKey').value.trim() || state.apiKey } });
+    if (resp.status === 401) { $('connDot').classList.add('bad'); $('connTx').textContent = 'API key rejected'; }
+    else if (resp.ok) { $('connDot').classList.remove('bad'); $('connTx').textContent = `Connected · v${VERSION}`; }
+    else { $('connDot').classList.add('bad'); $('connTx').textContent = `Server error ${resp.status}`; }
+  } catch { $('connDot').classList.add('bad'); $('connTx').textContent = 'Cannot reach server'; }
+}
+
+// ---- init ----
+document.addEventListener('DOMContentLoaded', async () => {
+  await cfg();
+  $('serverUrl').value = state.serverUrl;
+  $('apiKey').value = state.apiKey;
+
+  // storage-backed feature state
+  const st = await chrome.storage.sync.get(['linkedinCapture', 'autofillEnabled', 'autofillDefaultLength', 'structuredAutofillEnabled', 'structuredAutofillTrigger', 'theme', 'previewUnblock']);
+  state.li = !!st.linkedinCapture;
+  state.af = !!st.autofillEnabled;
+  state.pv = st.previewUnblock !== false;   // on until switched off
+  state.len = Number(st.autofillDefaultLength) > 0 ? Number(st.autofillDefaultLength) : 250;
+  state.atsMode = !st.structuredAutofillEnabled ? 'off' : (st.structuredAutofillTrigger === 'auto' ? 'auto' : 'click');
+  state.theme = ['light', 'dark', 'system'].includes(st.theme) ? st.theme : 'system';
+  applyTheme(state.theme);
+  $('lenCustom').value = String(state.len);
+
+  // captured count
+  chrome.runtime.sendMessage({ type: 'linkedin_get_count' }, (resp) => { if (resp && resp.count !== undefined) { state.captured = resp.count; render(); } });
+
+  // current tab → source + parse
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab) {
+    state.url = tab.url || '';
+    try { const u = new URL(state.url); state.host = u.hostname.replace(/^www\./, ''); state.path = (u.pathname + u.search).slice(0, 40); } catch { state.host = state.url.slice(0, 40); }
+    if (tab.favIconUrl) { $('favicon').src = tab.favIconUrl; } else { $('favicon').style.background = '#DCE7F3'; }
+    const co = detectCompany(state.url); if (co) $('company').value = co;
+    render();
+    try {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: _extractTitleFn });
+      if (r && r.result) $('title').value = r.result;
+    } catch { if (tab.title) $('title').value = tab.title.split(' - ')[0].split(' | ')[0].trim(); }
+  }
+  render();
+
+  // header nav
+  $('toSettings').onclick = () => { state.screen = 'settings'; render(); checkConnection(); };
+  $('hdrSettings').onclick = () => { state.screen = 'capture'; render(); };
+
+  // capture actions
+  $('btnSend').onclick = doSend;
+  $('btnRetry').onclick = doSend;
+  $('btnApplied').onclick = doApplied;
+  $('title').oninput = render;
+  $('company').oninput = render;
+
+  // edit url sheet
+  $('btnEditUrl').onclick = () => { $('urlText').value = state.url; state.urlOpen = true; render(); };
+  $('urlCancel').onclick = () => { state.urlOpen = false; render(); };
+  $('urlSheet').onclick = (e) => { if (e.target === $('urlSheet')) { state.urlOpen = false; render(); } };
+  $('urlUpdate').onclick = () => {
+    state.url = $('urlText').value.trim();
+    try { const u = new URL(state.url); state.host = u.hostname.replace(/^www\./, ''); state.path = (u.pathname + u.search).slice(0, 40); } catch {}
+    state.urlOpen = false; render();
+  };
+
+  // captured strip → send LinkedIn
+  $('capturedStrip').onclick = () => {
+    chrome.runtime.sendMessage({ type: 'linkedin_send' }, (resp) => { if (resp && !resp.error) { state.captured = 0; render(); } });
+  };
+
+  // footer: LinkedIn
+  $('liToggle').onclick = () => { state.li = !state.li; chrome.storage.sync.set({ linkedinCapture: state.li }); render(); };
+  $('liInfo').onclick = () => { state.liInfo = !state.liInfo; render(); };
+  $('liClear').onclick = () => { chrome.runtime.sendMessage({ type: 'linkedin_clear' }, () => { state.captured = 0; render(); }); };
+
+  // footer: AI-drafted
+  $('afToggle').onclick = () => { state.af = !state.af; chrome.storage.sync.set({ autofillEnabled: state.af }); render(); };
+  $('afInfo').onclick = () => { state.afInfo = !state.afInfo; render(); };
+
+  // footer: posting preview (frame header rules live in background.js and follow this key)
+  $('pvToggle').onclick = () => { state.pv = !state.pv; chrome.storage.sync.set({ previewUnblock: state.pv }); render(); };
+  $('pvInfo').onclick = () => { state.pvInfo = !state.pvInfo; render(); };
+  $('lenChip').onclick = () => { state.charsOpen = !state.charsOpen; render(); };
+  document.querySelectorAll('.preset').forEach(p => p.onclick = () => {
+    state.len = Number(p.dataset.len); $('lenCustom').value = String(state.len);
+    chrome.storage.sync.set({ autofillDefaultLength: state.len }); render();
   });
+  $('lenCustom').onchange = () => {
+    const n = parseInt($('lenCustom').value, 10);
+    if (n > 0) { state.len = n; chrome.storage.sync.set({ autofillDefaultLength: n }); render(); }
+  };
+
+  // footer: Fill ATS forms segmented
+  document.querySelectorAll('[data-theme-opt]').forEach(o => o.onclick = () => {
+    state.theme = o.dataset.themeOpt;
+    chrome.storage.sync.set({ theme: state.theme });
+    applyTheme(state.theme);
+    render();
+  });
+  document.querySelectorAll('.seg-opt[data-mode]').forEach(o => o.onclick = () => {
+    state.atsMode = o.dataset.mode;
+    if (state.atsMode === 'off') chrome.storage.sync.set({ structuredAutofillEnabled: false });
+    else chrome.storage.sync.set({ structuredAutofillEnabled: true, structuredAutofillTrigger: state.atsMode });
+    render();
+  });
+
+  // settings
+  $('showKey').onclick = () => {
+    const on = $('apiKey').type === 'password';
+    $('apiKey').type = on ? 'text' : 'password'; $('showKey').textContent = on ? 'Hide' : 'Show';
+  };
+  $('apiKey').onchange = checkConnection;
+  $('serverUrl').onchange = checkConnection;
+  $('saveSettings').onclick = async () => {
+    state.serverUrl = $('serverUrl').value.trim(); state.apiKey = $('apiKey').value.trim();
+    await chrome.storage.sync.set({ serverUrl: state.serverUrl, apiKey: state.apiKey });
+    await checkConnection();
+    state.screen = 'capture'; render();
+  };
+
+  render();
 });
 
-// Clear button
-linkedinClear.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'linkedin_clear' }, () => {
-    updateLinkedinCount(0);
-  });
-});
-
-// Listen for count updates while popup is open
+// live LinkedIn count updates
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'linkedin_count_update') {
-    updateLinkedinCount(msg.count);
-  }
-});
-
-// --- Application Autofill UI ---
-
-const autofillToggle = document.getElementById('autofillToggle');
-
-// Load toggle state
-chrome.storage.sync.get('autofillEnabled', (data) => {
-  autofillToggle.checked = !!data.autofillEnabled;
-});
-
-// Toggle handler
-autofillToggle.addEventListener('change', () => {
-  chrome.storage.sync.set({ autofillEnabled: autofillToggle.checked });
-});
-
-// Default answer length (used by the content script when a field has no maxlength)
-const autofillDefaultLength = document.getElementById('autofillDefaultLength');
-chrome.storage.sync.get('autofillDefaultLength', (data) => {
-  if (data.autofillDefaultLength) autofillDefaultLength.value = data.autofillDefaultLength;
-});
-autofillDefaultLength.addEventListener('change', () => {
-  const v = parseInt(autofillDefaultLength.value, 10);
-  if (v > 0) chrome.storage.sync.set({ autofillDefaultLength: v });
+  if (msg.type === 'linkedin_count_update') { state.captured = msg.count; render(); }
 });

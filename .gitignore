@@ -150,7 +150,12 @@ backend/cover_letter_templates/garamond/
 .claude/
 CLAUDE.md
 docs/*
-!docs/jobnavigator.gif
+!docs/default.png
+!docs/demo.gif
+!docs/win98.png
+!docs/v1like.png
+!docs/slate.png
+!docs/board.png
 docker-compose.test.yml
 
 # git worktrees (isolated feature branches)
@@ -160,4 +165,25 @@ resumes-example/
 
 # SDD / superpowers scratch (dev process artifacts)
 .superpowers/
-misc
+
+# Extension source lib is NOT a build dir — keep it tracked
+!extension/lib/
+instance2/
+docker-compose.instance2.yml
+
+# testing pass: decoded design boards stay local
+tests/design/
+tests/artifacts/
+
+# Design workbench: the lab pages (/ui gallery, /toasts lab) are local-only.
+# App.jsx registers them through import.meta.glob, so the app builds without them.
+frontend/src/design-base/
+
+# internal decision log (removed from the public tree in the 2.0 cleanup)
+DECISIONS.md
+
+# Local-only compose port override (see the file header)
+docker-compose.override.yml
+
+# local backlog
+BACKLOG.md

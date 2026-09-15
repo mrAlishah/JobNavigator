@@ -1,16 +1,9 @@
-"""Greenhouse ATS handler — GET boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true.
-
-Detection: hostname-based match on greenhouse.io (covers boards.greenhouse.io,
-job-boards.greenhouse.io, boards-api.greenhouse.io, etc.).
-Public interface: is_greenhouse(url), scrape(url, debug=False).
-
-The API ignores department[]/offices[] query params, so filtering is done client-side.
-Department and office IDs in the URL may be parents — children are expanded by
-scanning parent_id across all postings. Office dedup uses location.name to avoid
-multi-location duplicate postings.
-"""
+"""Greenhouse ATS handler: GET boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true; the
+API ignores department[]/offices[] query params, so filtering (including parent-ID expansion
+to children) happens client-side, with office dedup keyed on location.name."""
 import json
 import logging
+import re
 from urllib.parse import urlparse, parse_qs
 
 import httpx
@@ -27,11 +20,8 @@ def is_greenhouse(url: str) -> bool:
 
 
 def _parse_greenhouse_url(url: str) -> tuple[str, set[int], set[int]]:
-    """Parse Greenhouse URL into (company_slug, department_ids, office_ids).
-
-    URL format: https://job-boards.greenhouse.io/{company}/?departments[]=ID&offices[]=ID
-    or: https://boards.greenhouse.io/{company}/?...
-    """
+    """Parse Greenhouse URL into (company_slug, department_ids, office_ids); URL format:
+    https://job-boards.greenhouse.io/{company}/?departments[]=ID&offices[]=ID (or boards.greenhouse.io)."""
     parsed = urlparse(url)
     path_parts = [p for p in parsed.path.strip("/").split("/") if p]
     company_slug = path_parts[0] if path_parts else ""
@@ -39,29 +29,67 @@ def _parse_greenhouse_url(url: str) -> tuple[str, set[int], set[int]]:
     qs = parse_qs(parsed.query)
     dept_ids = set()
     office_ids = set()
-    for key in ("departments[]", "departments%5B%5D"):
-        for v in qs.get(key, []):
-            try:
-                dept_ids.add(int(v))
-            except ValueError:
-                pass
-    for key in ("offices[]", "offices%5B%5D"):
-        for v in qs.get(key, []):
-            try:
-                office_ids.add(int(v))
-            except ValueError:
-                pass
+    discarded: list[str] = []
+
+    def _collect(keys: tuple[str, ...], into: set[int]) -> None:
+        for key in keys:
+            for v in qs.get(key, []):
+                # A stored URL sometimes carries a stray space inside the id
+                # ("4030 094003"); the id itself is still readable, so read it
+                # rather than dropping the whole filter.
+                squeezed = re.sub(r"\s+", "", v)
+                try:
+                    into.add(int(squeezed))
+                except ValueError:
+                    discarded.append(v)
+
+    _collect(("departments[]", "departments%5B%5D"), dept_ids)
+    _collect(("offices[]", "offices%5B%5D"), office_ids)
+
+    # One line per URL, not one per value: a board URL with a broken filter has
+    # every id broken the same way.
+    if discarded:
+        logger.warning(
+            f"Greenhouse: ignored {len(discarded)} unreadable filter id(s) "
+            f"{discarded} in URL {url}"
+        )
 
     return company_slug, dept_ids, office_ids
 
 
-async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
-    """Fetch jobs from Greenhouse's public JSON API.
+# `location.name` carries several places on the boards that use them:
+# "New York City, NY; San Francisco, CA | New York City, NY" is one posting open
+# in three places, not a city with a long name.
+_PLACE_LIST = re.compile(r"[;|]")
 
-    The API ignores department/office query params, so we filter client-side.
-    Department IDs in the URL may be parents — we expand to include children.
-    Office filtering uses location.name to avoid multi-office duplicates.
+
+def _locations_of(posting: dict) -> list[str]:
+    """Every place one Greenhouse posting names, primary first.
+
+    Two fields carry them. `location.name` is the board's own line and may list
+    several places; `offices[].location` is the office address Greenhouse keeps
+    beside it ("New York, New York, United States"). A posting has to answer the
+    filter for each of them, so both are returned, de-duplicated, in the order
+    the board wrote them.
     """
+    out: list[str] = []
+    name = (posting.get("location") or {}).get("name") or ""
+    for part in _PLACE_LIST.split(name):
+        part = part.strip()
+        if part and part not in out:
+            out.append(part)
+    for office in posting.get("offices") or []:
+        if not isinstance(office, dict):
+            continue
+        loc = (office.get("location") or "").strip()
+        if loc and loc not in out:
+            out.append(loc)
+    return out
+
+
+async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
+    """Fetch jobs from Greenhouse's public JSON API; department/office filtering (including
+    parent-ID expansion) happens client-side since the API ignores those query params."""
     company_slug, filter_dept_ids, filter_office_ids = _parse_greenhouse_url(url)
 
     if not company_slug:
@@ -118,9 +146,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
             if not match_office_ids:
                 logger.warning(f"Greenhouse: office IDs {filter_office_ids} not found in API data — URL may use stale IDs. Visit the board page, re-select filters, and copy the new URL.")
 
-        # Build set of ALL known office names across every posting — used to detect
-        # when a location.name is itself an office (like "Remote Canada") vs. a city
-        # under a matching parent office (like "New York, NY" under "United States").
+        # All known office names across every posting — distinguishes a location.name that's itself
+        # an office (e.g. "Remote Canada") from a city under a matching parent office ("New York, NY" under "United States").
         all_known_office_names = set()
         for posting in all_postings:
             for o in posting.get("offices", []):
@@ -140,11 +167,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
                         rejected.append({"title": title, "url": job_url, "selector": "greenhouse_api", "reason": "Department not in filter"})
                     continue
 
-            # Office filter — Greenhouse creates separate postings per location but
-            # may assign the same office IDs to all of them. Use location.name as
-            # primary match against expanded office names; fall back to office ID
-            # intersection only for jobs where location.name is a child (e.g.
-            # "New York, NY" under parent office "United States").
+            # Office filter: Greenhouse may assign the same office IDs to every location's posting, so
+            # match location.name against expanded office names first, falling back to office-ID intersection.
             if match_office_ids:
                 loc_name = posting.get("location", {}).get("name", "")
                 if loc_name in match_office_names:
@@ -155,9 +179,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
                         if debug:
                             rejected.append({"title": title, "url": job_url, "selector": "greenhouse_api", "reason": "Office not in filter"})
                         continue
-                    # Office matches but location.name doesn't — only keep if
-                    # location.name isn't a known office name (meaning it's a
-                    # city under a matching parent like "United States")
+                    # Office matches but location.name doesn't — keep only if location.name isn't itself
+                    # a known office name (i.e. it's a city under a matching parent office).
                     if loc_name in all_known_office_names:
                         if debug:
                             rejected.append({"title": title, "url": job_url, "selector": "greenhouse_api", "reason": f"Location '{loc_name}' is a non-matching office"})
@@ -165,7 +188,11 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
 
             reason = _validate_job(title, job_url)
             if reason is None:
-                jobs.append({"title": title, "url": job_url})
+                # Greenhouse carries no arrangement field; "Remote - US" arrives
+                # inside location.name and the cascade reads it from there.
+                jobs.append({"title": title, "url": job_url,
+                             "location": (posting.get("location") or {}).get("name") or None,
+                             "locations": _locations_of(posting)})
             elif debug:
                 rejected.append({"title": title, "url": job_url, "selector": "greenhouse_api", "reason": reason})
 

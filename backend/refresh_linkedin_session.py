@@ -1,21 +1,7 @@
-"""Establish / refresh the logged-in LinkedIn browser session used by the
-Chrome-extension import (`scraper/sources/linkedin_extension.enrich`).
-
-Why this is separate from the import: LinkedIn's password login is gated behind
-an email-PIN checkpoint, which needs a human to relay the code. So we do the
-interactive login here, once, and persist the browser cookies to the mounted
-file. The import then just loads those cookies into a headless browser and
-fetches Voyager job data (no login, no PIN) until the session expires.
-
-Run it (inside the backend container):
-
-    docker compose exec backend python -m backend.refresh_linkedin_session
-
-It logs in as the mock account (linkedin_mock_email / linkedin_mock_password),
-handles the email-PIN checkpoint by polling /tmp/li_pin.txt (drop the 6 digits
-there), verifies the session against Voyager /me, and writes the cookies to
-/root/.linkedin_api/li_cookies.json (host: backend/.linkedin_api/li_cookies.json).
-"""
+"""Establish/refresh the logged-in LinkedIn browser session used by the Chrome-extension import
+(`scraper/sources/linkedin_extension.enrich`), separately from the import since password login is
+gated behind an email-PIN checkpoint that needs a human to relay the code; persists cookies to
+/root/.linkedin_api/li_cookies.json so the import can load them headlessly until they expire."""
 import asyncio
 import json
 import os
@@ -24,6 +10,15 @@ import sys
 from backend.scraper.sources.linkedin_extension import _SESSION_PATH
 
 PIN_FILE = "/tmp/li_pin.txt"
+
+# Phase of the current refresh (idle | running | awaiting_pin | ok | failed), read by
+# GET /api/linkedin/session so the Settings row can prompt for the PIN.
+STATE = {"phase": "idle", "detail": ""}
+
+
+def _phase(phase: str, detail: str = "") -> None:
+    STATE["phase"] = phase
+    STATE["detail"] = detail
 
 
 def _creds():
@@ -48,9 +43,8 @@ async def _login_and_save(email, password) -> int:
         await asyncio.sleep(2)
 
         if "/feed" not in page.url and "/jobs" not in page.url:
-            # Redesigned login form: fields expose only autocomplete=username /
-            # current-password, no <form>, localized submit button — so fill by
-            # autocomplete attr and submit with Enter.
+            # Login form fields expose only autocomplete=username/current-password (no <form>,
+            # localized submit button) — fill by autocomplete attr and submit with Enter.
             await page.locator('input[autocomplete="username"]:visible').first.fill(email)
             await asyncio.sleep(0.4)
             await page.locator('input[autocomplete="current-password"]:visible').first.fill(password)
@@ -109,6 +103,7 @@ async def _solve_pin(page) -> bool:
         os.remove(PIN_FILE)
     print(f"CHECKPOINT: LinkedIn emailed a PIN to the mock account. Drop the 6 "
           f"digits into {PIN_FILE} (waiting up to 300s)...", flush=True)
+    _phase("awaiting_pin", "LinkedIn emailed a PIN to the mock account.")
     pin = None
     for _ in range(100):
         if os.path.exists(PIN_FILE):
@@ -120,6 +115,7 @@ async def _solve_pin(page) -> bool:
         print("No PIN provided within 300s.")
         return False
     print(f"Got PIN ({len(pin)} digits), submitting...", flush=True)
+    _phase("running", "Submitting the PIN…")
     await pin_box.fill(pin)
     await page.locator("#email-pin-submit-button").click()
     try:
@@ -133,6 +129,23 @@ async def _solve_pin(page) -> bool:
     except OSError:
         pass
     return True
+
+
+async def run_refresh() -> int:
+    """Entry point for the Settings row: same flow as the CLI, but keeps STATE updated so the UI can follow along."""
+    email, password = _creds()
+    if not email or not password:
+        _phase("failed", "Mock account email/password are not set.")
+        return 2
+    _phase("running", "Signing in as " + email)
+    try:
+        code = await _login_and_save(email, password)
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI verbatim
+        _phase("failed", str(e)[:200])
+        return 1
+    _phase("ok" if code == 0 else "failed",
+           "Session refreshed." if code == 0 else "Login did not complete — see backend logs.")
+    return code
 
 
 def main() -> int:

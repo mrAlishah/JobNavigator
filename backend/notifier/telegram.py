@@ -13,6 +13,15 @@ logger = logging.getLogger("jobnavigator.telegram")
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 
+# Highest numeric value in jobs.cv_scores, compared against :threshold.
+# cv_scores is Column(JSON) -> native `json` in Postgres, and the jsonb_*
+# functions have no `json` overload, so every reference carries an explicit
+# cast. seed.py casts the same column for the same reason.
+STRONG_MATCH_SQL = (
+    "(SELECT COALESCE(MAX(v::numeric), 0) FROM jsonb_each_text(CASE WHEN jsonb_typeof(cv_scores::jsonb) = 'object' THEN cv_scores::jsonb ELSE '{}'::jsonb END) AS t(k, v) WHERE v ~ '^[0-9]+(\\.[0-9]+)?$') >= :threshold"
+)
+
+
 def _get_chat_id() -> str:
     """Read chat_id from settings table."""
     db = SessionLocal()
@@ -34,11 +43,7 @@ def _is_enabled() -> bool:
 
 
 async def _send_message(chat_id: str, text: str, reply_markup: dict = None, parse_mode: str = "HTML") -> bool:
-    """Send a Telegram message.
-
-    Returns True on HTTP 200, False on any failure (missing config, network error,
-    non-200 response). Callers that care about delivery can check the return value.
-    """
+    """Send a Telegram message; returns True on HTTP 200, False on any failure (missing config, network error, non-200)."""
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         logger.warning("Telegram not configured (missing token or chat_id)")
         return False
@@ -74,12 +79,8 @@ def _get_webhook_secret() -> str:
 
 
 async def register_webhook(public_url: str) -> dict:
-    """Register the Telegram webhook with Telegram's API, passing `secret_token`.
-
-    `public_url` must be the externally reachable URL that ends at
-    `/api/telegram/webhook` (https only — Telegram refuses http).
-    Returns the Telegram API response dict.
-    """
+    """Register the Telegram webhook; `public_url` must be the externally reachable https URL
+    ending at `/api/telegram/webhook` (Telegram refuses http). Returns the Telegram API response."""
     if not TELEGRAM_BOT_TOKEN:
         return {"ok": False, "error": "TELEGRAM_BOT_TOKEN not set"}
     secret = _get_webhook_secret()
@@ -100,11 +101,8 @@ async def register_webhook(public_url: str) -> dict:
 
 
 def rotate_webhook_secret() -> str:
-    """Regenerate the webhook secret. Returns the new value.
-
-    Callers should re-register the webhook with Telegram after rotation so the
-    next callback carries the new header value.
-    """
+    """Regenerate the webhook secret and return the new value; callers should re-register the
+    webhook with Telegram after rotation so the next callback carries the new header value."""
     import secrets as _secrets
     new_value = _secrets.token_urlsafe(32)
     db = SessionLocal()
@@ -165,7 +163,6 @@ async def send_job_alert(data: dict):
 
     best_score = data.get("best_score", 0)
 
-    # Build message
     salary_str = _format_salary(job.salary_min, job.salary_max)
     h1b_str = _format_h1b(
         job.h1b_verdict,
@@ -193,7 +190,6 @@ async def send_job_alert(data: dict):
     if jd_flag_str:
         text += f"{jd_flag_str}\n"
 
-    # Inline keyboard buttons
     job_id = str(job.id)
     reply_markup = {
         "inline_keyboard": [
@@ -255,8 +251,12 @@ async def send_digest():
         yesterday = today - timedelta(days=1)
         yesterday_start = datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc)
 
-        # Count new jobs since yesterday
-        new_jobs = db.query(Job).filter(Job.discovered_at >= yesterday_start).count()
+        # Count genuinely-new jobs: discovered in the window AND still untriaged
+        # (status='new') — excludes ones already saved/skipped/applied.
+        new_jobs = db.query(Job).filter(
+            Job.discovered_at >= yesterday_start,
+            Job.status == "new",
+        ).count()
 
         # Strong matches (score >= threshold)
         threshold_row = db.query(Setting).filter(Setting.key == "fit_score_threshold").first()
@@ -265,15 +265,11 @@ async def send_digest():
         from sqlalchemy import text as sa_text
         strong = db.query(Job).filter(
             Job.discovered_at >= yesterday_start,
-        ).filter(sa_text(
-            "(SELECT COALESCE(MAX(v::numeric), 0) FROM jsonb_each_text(CASE WHEN jsonb_typeof(COALESCE(cv_scores, '{}'::jsonb)) = 'object' THEN cv_scores ELSE '{}'::jsonb END) AS t(k, v) WHERE v ~ '^[0-9]+(\\.[0-9]+)?$') >= :threshold"
-        ).bindparams(threshold=threshold)).count()
+        ).filter(sa_text(STRONG_MATCH_SQL).bindparams(threshold=threshold)).count()
 
-        # Active applications
         active_statuses = ["applied", "interview"]
         active_apps = db.query(Application).filter(Application.status.in_(active_statuses)).count()
 
-        # Responses (email updates) in last 24h
         responses = db.query(Application).filter(
             Application.last_email_received >= yesterday_start,
         ).count()
@@ -335,7 +331,6 @@ async def handle_callback(callback_data: str, message_id: int = None):
             job = db.query(Job).filter(Job.id == job_id).first()
             if job:
                 job.status = "applied"
-                # Create application record only if one doesn't already exist
                 existing = db.query(Application).filter(Application.job_id == job.id).first()
                 if not existing:
                     app = Application(job_id=job.id, status="applied",

@@ -27,11 +27,12 @@ def test_sonnet_pricing_with_cache_write():
     assert cost == pytest.approx(0.0105, rel=0.01)
 
 
-def test_sonnet_5_same_rate_card_as_4_6():
-    """Sonnet 5 sticker price matches Sonnet 4.6: $3/$15."""
-    p = get_pricing("claude_api", "claude-sonnet-5")
-    assert p["input_per_mtok"] == 3.0
-    assert p["output_per_mtok"] == 15.0
+def test_sonnet_5_is_2_10_distinct_from_4_6():
+    """Sonnet 5 is now $2/$10 (standard); Sonnet 4.6 stays $3/$15."""
+    p5 = get_pricing("claude_api", "claude-sonnet-5")
+    assert p5["input_per_mtok"] == 2.0 and p5["output_per_mtok"] == 10.0
+    p46 = get_pricing("claude_api", "claude-sonnet-4-6")
+    assert p46["input_per_mtok"] == 3.0 and p46["output_per_mtok"] == 15.0
 
 
 @pytest.mark.parametrize("model", ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"])
@@ -63,6 +64,14 @@ def test_claude_code_is_free():
     cost = calc_cost("claude_code", "claude-sonnet-5",
                      input_tokens=10000, output_tokens=5000,
                      cache_read_tokens=2000, cache_write_tokens=3000)
+    assert cost == 0.0
+
+
+def test_codex_cli_is_free():
+    """codex_cli uses a ChatGPT subscription — always $0 in API-cost stats."""
+    cost = calc_cost("codex_cli", "gpt-5.6-sol",
+                     input_tokens=10000, output_tokens=5000,
+                     cache_read_tokens=2000, cache_write_tokens=0)
     assert cost == 0.0
 
 
@@ -108,4 +117,5 @@ def test_get_pricing_unknown_provider():
 
 def test_free_providers_set():
     assert "claude_code" in FREE_PROVIDERS
+    assert "codex_cli" in FREE_PROVIDERS
     assert "ollama" in FREE_PROVIDERS

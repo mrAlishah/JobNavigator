@@ -1,206 +1,359 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      width: 360px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 13px;
-      color: #1a1a1a;
-      background: #f8f9fa;
+<meta charset="utf-8">
+<style>
+  @keyframes navspin { to { transform: rotate(360deg); } }
+  :root {
+    --ink: #1A1917; --ink2: #57534C; --muted: #8A857C; --disabled: #A8A29A;
+    --footer: #FAF9F7; --fill: #FDFDFC; --hover: #F7F5F1; --hover2: #F5F3EF;
+    --track: #F2F0EC; --divider: #ECE9E3; --border: #E4E1DB; --border-h: #C6C1B8;
+    --toggle-off: #CFCAC2;
+    --bg: #fff; --paper: #fff; --on-accent: #fff; --on-accent-dim: rgba(255,255,255,0.35);
+    --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+    --favicon-bg: #DCE7F3; --scrim: rgba(26,25,23,0.28);
+    --shadow-sheet: 0 -8px 24px rgba(26,25,23,0.16);
+    --shadow-knob: 0 1px 2px rgba(0,0,0,.2); --shadow-seg: 0 0 2px rgba(0,0,0,.08);
+    --accent: oklch(0.52 0.15 255); --accent-h: oklch(0.46 0.15 255);
+    --accent-tint: oklch(0.97 0.015 255); --accent-tint-bd: oklch(0.92 0.03 255); --accent-tint-tx: oklch(0.42 0.14 255);
+    --accent-chip: oklch(0.96 0.02 255); --accent-soft: oklch(0.62 0.09 255);
+    --accent-hover-tint: oklch(0.95 0.025 255); --accent-strip-tx: oklch(0.38 0.1 255);
+    --green: oklch(0.52 0.13 150); --green-tint: oklch(0.97 0.02 150); --green-bd: oklch(0.86 0.06 150); --green-tx: oklch(0.42 0.11 150); --green-dot: oklch(0.55 0.13 150);
+    --red-dot: oklch(0.58 0.2 25); --red-tint: oklch(0.97 0.02 25); --red-bd: oklch(0.88 0.06 25); --red-hd: oklch(0.42 0.14 25); --red-bo: oklch(0.48 0.08 25); --red-obd: oklch(0.7 0.15 25); --red-otx: oklch(0.5 0.18 25);
+    --red-hover: oklch(0.98 0.015 25);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--bg); }   /* else a short popup shows the browser's own light ground in dark mode */
+  body { width: 360px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; font-size: 13px; color: var(--ink); background: var(--bg); }
+  .mono { font-family: var(--mono); }
+  .app { position: relative; overflow: hidden; }
+  .hide { display: none !important; }
+
+  /* header */
+  .hdr { height: 44px; display: flex; align-items: center; gap: 9px; padding: 0 14px; border-bottom: 1px solid var(--divider); }
+  .hdr-title { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+  .hdr-link { font-size: 11px; color: var(--muted); cursor: pointer; padding: 5px 7px; border-radius: 6px; }
+  .hdr-link:hover { background: var(--hover2); }
+  .back { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-left: -6px; padding: 5px 7px; border-radius: 6px; }
+  .back:hover { background: var(--hover2); }
+  .chev { width: 7px; height: 7px; border-left: 1.5px solid var(--ink2); border-bottom: 1.5px solid var(--ink2); transform: rotate(45deg); }
+  .icon { width: 20px; height: 20px; border-radius: 999px; display: block; }
+  .grow { flex: 1; }
+
+  /* body */
+  .body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .src { display: flex; align-items: center; gap: 8px; }
+  .favicon { width: 16px; height: 16px; border-radius: 4px; background: var(--favicon-bg); object-fit: cover; flex: 0 0 16px; }
+  .src-url { font-size: 12px; color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .src-url .path { color: var(--disabled); }
+  .chip { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; }
+  .chip-blue { color: var(--accent); background: var(--accent-chip); }
+  .chip-neutral { color: var(--muted); background: var(--track); }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .in { width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; font-size: 14px; color: var(--ink); outline: none; background: var(--fill); font-family: inherit; }
+  .in:focus { border-color: var(--accent); background: var(--paper); }
+  .in.mono { font-size: 13.5px; }
+
+  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .btn { height: 38px; border-radius: 7px; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; border: none; width: 100%; transition: background .16s; }
+  .btn-blue { background: var(--accent); color: var(--on-accent); }
+  .btn-blue:hover { background: var(--accent-h); }
+  .btn-sending { background: var(--accent-soft); color: var(--on-accent); cursor: default; }
+  .btn-green { background: var(--green); color: var(--on-accent); cursor: default; }
+  .btn-retry { background: var(--paper); border: 1px solid var(--red-obd); color: var(--red-otx); }
+  .btn-retry:hover { background: var(--red-hover); }
+  .spin { width: 12px; height: 12px; border-radius: 999px; border: 2px solid var(--on-accent-dim); border-top-color: var(--on-accent); animation: navspin .7s linear infinite; }
+  .check { width: 10px; height: 6px; border-left: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); margin-top: -3px; }
+  .row2 { display: flex; gap: 8px; }
+  .btn-sm { flex: 1; height: 34px; border-radius: 7px; border: 1px solid var(--border); font-size: 13px; color: var(--ink2); display: flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; background: var(--paper); transition: background .16s; }
+  .btn-sm:hover { background: var(--hover); }
+  .btn-sm.saved { border-color: var(--green-bd); background: var(--green-tint); color: var(--green-tx); font-weight: 600; }
+  .btn-sm.err-btn { border-color: var(--red-obd); color: var(--red-otx); font-weight: 600; }
+  .check-sm { width: 9px; height: 5px; border-left: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: rotate(-45deg); margin-top: -3px; }
+
+  .err { display: flex; align-items: flex-start; gap: 8px; background: var(--red-tint); border: 1px solid var(--red-bd); border-radius: 7px; padding: 9px 10px; }
+  .err-dot { width: 14px; height: 14px; flex: 0 0 14px; border-radius: 999px; background: var(--red-dot); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .err-hd { font-size: 12.5px; font-weight: 600; color: var(--red-hd); }
+  .err-bo { font-size: 12px; line-height: 1.45; color: var(--red-bo); margin-top: 1px; }
+
+  /* captured strip */
+  .strip { display: flex; align-items: center; gap: 9px; padding: 10px 14px; background: var(--accent-tint); border-top: 1px solid var(--accent-tint-bd); cursor: pointer; }
+  .strip:hover { background: var(--accent-hover-tint); }
+  .strip-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+  .strip-tx { font-size: 12.5px; color: var(--accent-strip-tx); flex: 1; }
+  .strip-cta { display: flex; align-items: center; gap: 6px; color: var(--accent-tint-tx); font-size: 12.5px; font-weight: 600; }
+  .strip-arw { width: 5px; height: 5px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; transform: rotate(45deg); }
+
+  /* footer */
+  .footer { border-top: 1px solid var(--divider); background: var(--footer); padding: 4px 14px 8px; }
+  .frow { display: flex; align-items: center; gap: 9px; padding: 9px 0; }
+  .fname { font-size: 12.5px; color: var(--ink); }
+  .info { width: 15px; height: 15px; border-radius: 999px; border: 1px solid var(--border-h); color: var(--muted); font-size: 10px; line-height: 1; font-weight: 700; font-family: Georgia, serif; display: flex; align-items: center; justify-content: center; padding-top: 1px; cursor: pointer; position: relative; top: 0.5px; }
+  .info:hover { border-color: var(--ink2); color: var(--ink); }
+  .cnt { font-size: 11px; color: var(--muted); }
+  .hair { height: 1px; background: var(--divider); }
+  .card { background: var(--paper); border: 1px solid var(--border); border-radius: 7px; padding: 10px 11px; margin-bottom: 9px; font-size: 12px; line-height: 1.5; color: var(--ink2); }
+  .card .link { cursor: pointer; margin-top: 8px; }
+  .card .link:hover { color: var(--ink); }
+  .chipbtn { font-size: 11px; color: var(--ink2); cursor: pointer; padding: 3px 7px; border-radius: 5px; border: 1px solid var(--border); background: var(--paper); }
+  .chipbtn:hover { border-color: var(--border-h); color: var(--ink); }
+
+  /* toggle */
+  .tgl { width: 32px; height: 19px; border-radius: 999px; padding: 2px; cursor: pointer; background: var(--toggle-off); transition: background .16s; flex: 0 0 32px; }
+  .tgl[data-on="true"] { background: var(--accent); }
+  .tgl .knob { width: 15px; height: 15px; border-radius: 999px; background: var(--on-accent); box-shadow: var(--shadow-knob); transition: margin-left .16s; margin-left: 0; }
+  .tgl[data-on="true"] .knob { margin-left: 13px; }
+
+  /* segmented */
+  .seg { display: flex; background: var(--track); border-radius: 6px; padding: 2px; gap: 2px; }
+  .seg-opt { font-size: 11.5px; line-height: 14px; padding: 4px 9px; border-radius: 4px; cursor: pointer; color: var(--ink2); }
+  .seg-opt.active { background: var(--paper); color: var(--ink); box-shadow: var(--shadow-seg); font-weight: 600; }
+  /* On click / Auto are ON states and read as accent; Off is merely selected */
+  .seg-opt.active[data-mode]:not([data-mode="off"]) { background: var(--accent-tint); color: var(--accent-tint-tx); }
+
+  /* chars panel */
+  .presets { display: flex; gap: 6px; }
+  .preset { flex: 1; text-align: center; font-size: 12px; padding: 7px 0; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); background: var(--paper); color: var(--ink2); }
+  .preset.active { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-tint-tx); }
+  .custom-row { display: flex; align-items: center; gap: 8px; }
+  .custom-in { width: 70px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 12.5px; color: var(--ink); outline: none; text-align: right; background: var(--fill); }
+  .custom-in:focus { border-color: var(--accent); background: var(--paper); }
+
+  /* settings */
+  .conn { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .conn-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--green-dot); }
+  .conn-dot.bad { background: var(--red-dot); }
+  .conn-tx { font-size: 11px; color: var(--muted); }
+  .show-btn { padding: 0 12px; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--ink2); cursor: pointer; }
+  .show-btn:hover { background: var(--hover); }
+
+  /* url sheet */
+  .scrim { position: absolute; inset: 0; background: var(--scrim); display: flex; align-items: flex-end; }
+  .sheet { width: 100%; background: var(--paper); border-top-left-radius: 12px; border-top-right-radius: 12px; box-shadow: var(--shadow-sheet); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .sheet-ta { width: 100%; height: 64px; resize: none; border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; font-family: var(--mono); font-size: 12px; line-height: 1.55; color: var(--ink); outline: none; background: var(--fill); }
+  .sheet-ta:focus { border-color: var(--accent); background: var(--paper); }
+  /* Chrome renders popups on a lifted grey, not near-black. --muted is a step
+     brighter than a straight flip: at 11px it fails AA against the footer. */
+  /* Two selectors, one palette — keep them in step. The media query is the
+     default so a system-themed popup paints correctly before popup.js runs;
+     the attribute is how an explicit Light/Dark choice overrides the OS. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ece9e0; --ink2: #b8b3a8; --muted: #918c81; --disabled: #736f64;
+      --bg: #2a2925; --paper: #34322d; --footer: #302e29; --fill: #34322d;
+      --hover: #3a3833; --hover2: #3a3833; --track: #3a3833;
+      --divider: #403d37; --border: #4a473f; --border-h: #5f5b51;
+      --toggle-off: #55524a; --favicon-bg: #35414f;
+      --accent: oklch(0.62 0.14 255); --accent-h: oklch(0.68 0.14 255);
+      --accent-tint: oklch(0.33 0.045 255); --accent-tint-bd: oklch(0.42 0.06 255);
+      --accent-tint-tx: oklch(0.84 0.07 255);
+      --accent-chip: oklch(0.33 0.045 255); --accent-soft: oklch(0.45 0.09 255);
+      --accent-hover-tint: oklch(0.38 0.055 255); --accent-strip-tx: oklch(0.84 0.07 255);
+      --green: oklch(0.62 0.13 150); --green-tint: oklch(0.30 0.04 150);
+      --green-bd: oklch(0.42 0.06 150); --green-tx: oklch(0.82 0.09 150); --green-dot: oklch(0.62 0.13 150);
+      --red-dot: oklch(0.62 0.18 25); --red-tint: oklch(0.30 0.05 25); --red-bd: oklch(0.42 0.07 25);
+      --red-hd: oklch(0.84 0.10 25); --red-bo: oklch(0.75 0.08 25);
+      --red-obd: oklch(0.55 0.14 25); --red-otx: oklch(0.80 0.12 25); --red-hover: oklch(0.34 0.05 25);
+      --scrim: rgba(0,0,0,0.5); --shadow-sheet: 0 -8px 24px rgba(0,0,0,.4);
+      --shadow-knob: 0 1px 2px rgba(0,0,0,.4); --shadow-seg: 0 0 2px rgba(0,0,0,.3);
     }
-    .header {
-      background: #1e40af;
-      color: white;
-      padding: 12px 16px;
-      font-size: 15px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .header span { font-size: 18px; }
-    .container { padding: 12px 16px; }
-    .form-group { margin-bottom: 10px; }
-    label {
-      display: block;
-      font-weight: 500;
-      margin-bottom: 3px;
-      color: #374151;
-      font-size: 12px;
-    }
-    input, select, textarea {
-      width: 100%;
-      padding: 7px 10px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      font-size: 13px;
-      background: white;
-    }
-    input:focus, select:focus, textarea:focus {
-      outline: none;
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-    }
-    textarea { resize: vertical; min-height: 50px; }
-    .btn {
-      width: 100%;
-      padding: 9px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      margin-top: 6px;
-    }
-    .btn-primary {
-      background: #1e40af;
-      color: white;
-    }
-    .btn-primary:hover { background: #1e3a8a; }
-    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
-    .btn-settings {
-      background: #e5e7eb;
-      color: #374151;
-      font-size: 12px;
-      margin-top: 8px;
-    }
-    .btn-settings:hover { background: #d1d5db; }
-    .status {
-      text-align: center;
-      padding: 8px;
-      border-radius: 6px;
-      margin-top: 8px;
-      font-size: 12px;
-      display: none;
-    }
-    .status.success { display: block; background: #dcfce7; color: #166534; }
-    .status.error { display: block; background: #fef2f2; color: #991b1b; }
-    .settings-page { display: none; }
-    .settings-page.active { display: block; }
-    .main-page.active { display: block; }
-    .main-page { display: none; }
-    .row { display: flex; gap: 8px; }
-    .row .form-group { flex: 1; }
-  </style>
-    <style>
-      #linkedin-toggle:checked + #toggle-slider {
-        background: #16a34a !important;
-      }
-      #linkedin-toggle:checked + #toggle-slider::before {
-        transform: translateX(18px) !important;
-      }
-      #toggle-slider::before {
-        content: '';
-        position: absolute;
-        height: 16px;
-        width: 16px;
-        left: 3px;
-        bottom: 3px;
-        background: white;
-        border-radius: 50%;
-        transition: 0.2s;
-      }
-      #autofillToggle:checked + #autofillToggleSlider {
-        background: #7c3aed !important;
-      }
-      #autofillToggle:checked + #autofillToggleSlider::before {
-        transform: translateX(18px) !important;
-      }
-      #autofillToggleSlider::before {
-        content: '';
-        position: absolute;
-        height: 16px;
-        width: 16px;
-        left: 3px;
-        bottom: 3px;
-        background: white;
-        border-radius: 50%;
-        transition: 0.2s;
-      }
-    </style>
+  }
+  :root[data-theme="dark"] {
+      --ink: #ece9e0; --ink2: #b8b3a8; --muted: #918c81; --disabled: #736f64;
+      --bg: #2a2925; --paper: #34322d; --footer: #302e29; --fill: #34322d;
+      --hover: #3a3833; --hover2: #3a3833; --track: #3a3833;
+      --divider: #403d37; --border: #4a473f; --border-h: #5f5b51;
+      --toggle-off: #55524a; --favicon-bg: #35414f;
+      --accent: oklch(0.62 0.14 255); --accent-h: oklch(0.68 0.14 255);
+      --accent-tint: oklch(0.33 0.045 255); --accent-tint-bd: oklch(0.42 0.06 255);
+      --accent-tint-tx: oklch(0.84 0.07 255);
+      --accent-chip: oklch(0.33 0.045 255); --accent-soft: oklch(0.45 0.09 255);
+      --accent-hover-tint: oklch(0.38 0.055 255); --accent-strip-tx: oklch(0.84 0.07 255);
+      --green: oklch(0.62 0.13 150); --green-tint: oklch(0.30 0.04 150);
+      --green-bd: oklch(0.42 0.06 150); --green-tx: oklch(0.82 0.09 150); --green-dot: oklch(0.62 0.13 150);
+      --red-dot: oklch(0.62 0.18 25); --red-tint: oklch(0.30 0.05 25); --red-bd: oklch(0.42 0.07 25);
+      --red-hd: oklch(0.84 0.10 25); --red-bo: oklch(0.75 0.08 25);
+      --red-obd: oklch(0.55 0.14 25); --red-otx: oklch(0.80 0.12 25); --red-hover: oklch(0.34 0.05 25);
+      --scrim: rgba(0,0,0,0.5); --shadow-sheet: 0 -8px 24px rgba(0,0,0,.4);
+      --shadow-knob: 0 1px 2px rgba(0,0,0,.4); --shadow-seg: 0 0 2px rgba(0,0,0,.3);
+  }
+</style>
 </head>
 <body>
-  <div class="header">
-    <span>&#129517;</span> The Navigator
+<div class="app" id="app">
+
+  <!-- ===== HEADER ===== -->
+  <div class="hdr">
+    <div id="hdrCapture" style="display:flex; align-items:center; gap:9px; flex:1">
+      <img src="icons/icon128.png" alt="Navigator" class="icon">
+      <div class="hdr-title">The Navigator</div>
+      <div class="grow"></div>
+      <div class="hdr-link" id="toSettings" style="margin-right:-7px">Settings</div>
+    </div>
+    <div id="hdrSettings" class="back hide" style="flex:1">
+      <div class="chev"></div>
+      <div class="hdr-title">Settings</div>
+    </div>
   </div>
 
-  <div class="main-page active" id="mainPage">
-    <div class="container">
-    <!-- LinkedIn Capture Section -->
-    <div id="linkedin-section" style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-        <span style="font-weight: 600; font-size: 13px; color: #0369a1;">LinkedIn Capture</span>
-        <label style="position: relative; display: inline-block; width: 40px; height: 22px;">
-          <input type="checkbox" id="linkedin-toggle" style="opacity: 0; width: 0; height: 0;">
-          <span id="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #cbd5e1; border-radius: 22px; transition: 0.2s;"></span>
-        </label>
+  <!-- ===== CAPTURE SCREEN ===== -->
+  <div id="screenCapture">
+    <div class="body">
+      <div class="src">
+        <img id="favicon" class="favicon" alt="">
+        <div class="src-url" id="srcUrl"><span id="srcHost"></span><span class="path" id="srcPath"></span></div>
+        <div class="chip chip-blue" id="chipDetected">Detected</div>
+        <div class="chip chip-neutral hide" id="chipNot">Not detected</div>
       </div>
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <span id="linkedin-count" style="font-size: 12px; color: #64748b;">0 jobs captured</span>
-        <div style="display: flex; gap: 6px;">
-          <button id="linkedin-clear" style="background: none; border: 1px solid #e2e8f0; color: #94a3b8; font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer;" disabled>Clear</button>
-          <button id="linkedin-send" style="background: #2563eb; color: white; border: none; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-weight: 500;" disabled>Send to JobNavigator</button>
+
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <div class="field">
+          <div class="lbl">Job title</div>
+          <input id="title" class="in" placeholder="Job title">
+        </div>
+        <div class="field">
+          <div class="lbl">Company</div>
+          <input id="company" class="in" placeholder="Company">
         </div>
       </div>
-      <div id="linkedin-status" style="font-size: 11px; margin-top: 6px; display: none;"></div>
+
+      <div class="actions">
+        <!-- error card -->
+        <div class="err hide" id="errCard">
+          <div class="err-dot">!</div>
+          <div>
+            <div class="err-hd" id="errHd">Couldn't reach the Job Feed</div>
+            <div class="err-bo" id="errBo">Not saved. Check your connection, then retry.</div>
+          </div>
+        </div>
+
+        <!-- primary send states -->
+        <button class="btn btn-blue" id="btnSend">Send to job feed</button>
+        <div class="btn btn-sending hide" id="btnSending"><div class="spin"></div><div>Sending…</div></div>
+        <div class="btn btn-green hide" id="btnSent"><div class="check"></div><div>Sent to job feed</div></div>
+        <button class="btn btn-retry hide" id="btnRetry">Retry send</button>
+
+        <div class="row2">
+          <button class="btn-sm" id="btnApplied">Save as applied</button>
+          <button class="btn-sm" id="btnEditUrl">Edit URL</button>
+        </div>
+      </div>
     </div>
-    <!-- Application Autofill Section -->
-    <div id="autofill-section" style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <span style="font-weight: 600; font-size: 13px; color: #7e22ce;">Application Autofill</span>
-        <label style="position: relative; display: inline-block; width: 40px; height: 22px;">
-          <input type="checkbox" id="autofillToggle" style="opacity: 0; width: 0; height: 0;">
-          <span id="autofillToggleSlider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #cbd5e1; border-radius: 22px; transition: 0.2s;"></span>
-        </label>
-      </div>
-      <div style="font-size: 11px; color: #64748b; margin-top: 6px;">Show the Navigator button on job-application answer fields.</div>
-      <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
-        <label style="font-size: 11px; color: #64748b;">Default length</label>
-        <input type="number" id="autofillDefaultLength" min="50" max="4000" step="50" value="250"
-               style="width: 60px; padding: 3px 5px; border: 1px solid #e9d5ff; border-radius: 5px; font-size: 12px;">
-        <span style="font-size: 11px; color: #64748b;">chars (when a field has no limit)</span>
-      </div>
+
+    <!-- captured strip -->
+    <div class="strip hide" id="capturedStrip">
+      <div class="strip-dot"></div>
+      <div class="strip-tx"><b id="capturedCount">0</b> jobs captured from LinkedIn</div>
+      <div class="strip-cta"><div>Send to job feed</div><div class="strip-arw"></div></div>
     </div>
-      <div class="form-group">
-        <label>Job Title</label>
-        <input type="text" id="title" placeholder="e.g. Senior Technical Program Manager">
+
+    <!-- footer -->
+    <div class="footer">
+      <!-- LinkedIn -->
+      <div class="frow">
+        <div class="fname">LinkedIn capture</div>
+        <div class="info" id="liInfo">i</div>
+        <div class="grow"></div>
+        <div class="cnt mono hide" id="liCount">0 jobs</div>
+        <div class="tgl" id="liToggle" data-on="false"><div class="knob"></div></div>
       </div>
-      <div class="form-group">
-        <label>Company</label>
-        <input type="text" id="company" placeholder="e.g. Microsoft">
+      <div class="card hide" id="liInfoCard">
+        <div>Reads the jobs you have saved in your personal LinkedIn Collections and sends them to the Job Feed.</div>
+        <div class="link" id="liClear">Clear captured</div>
       </div>
-      <div class="form-group">
-        <label>Job URL</label>
-        <input type="text" id="url" placeholder="https://..." readonly>
+      <div class="hair"></div>
+
+      <!-- AI-drafted answers -->
+      <div class="frow">
+        <div class="fname">AI-drafted answers</div>
+        <div class="info" id="afInfo">i</div>
+        <div class="grow"></div>
+        <div class="chipbtn mono" id="lenChip">250 chars</div>
+        <div class="tgl" id="afToggle" data-on="false"><div class="knob"></div></div>
       </div>
-      <div style="display: flex; gap: 8px; margin-top: 6px;">
-        <button class="btn" id="saveJobBtn" style="flex: 1; margin-top: 0; background: #0d9488; color: white;">Save to Job Feed</button>
-        <button class="btn btn-primary" id="saveBtn" style="flex: 1; margin-top: 0;">Save Application</button>
+      <div class="card hide" id="afInfoCard">Writes a draft for open questions using your Persona. You review before it's submitted.</div>
+      <div class="card" id="charsPanel" style="display:none; flex-direction:column; gap:10px; padding:11px">
+        <div class="lbl mono">Default draft length</div>
+        <div class="presets">
+          <div class="preset" data-len="120">120</div>
+          <div class="preset" data-len="250">250</div>
+          <div class="preset" data-len="500">500</div>
+        </div>
+        <div class="custom-row">
+          <div style="font-size:12.5px; color:var(--ink2); flex:1">Custom</div>
+          <input id="lenCustom" class="custom-in" inputmode="numeric">
+          <div class="mono" style="font-size:11px; color:var(--muted); width:32px">chars</div>
+        </div>
       </div>
-      <div class="status" id="status"></div>
-      <button class="btn btn-settings" id="settingsBtn">Settings</button>
+      <div class="hair"></div>
+
+      <!-- Fill ATS forms -->
+      <div class="frow" style="padding-bottom:4px">
+        <div class="fname" style="flex:1">Fill ATS forms</div>
+        <div class="seg">
+          <div class="seg-opt" data-mode="click">On click</div>
+          <div class="seg-opt" data-mode="auto">Auto</div>
+          <div class="seg-opt" data-mode="off">Off</div>
+        </div>
+      </div>
+      <div class="hair"></div>
+
+      <!-- Posting preview -->
+      <div class="frow">
+        <div class="fname">Posting preview</div>
+        <div class="info" id="pvInfo">i</div>
+        <div class="grow"></div>
+        <div class="tgl" id="pvToggle" data-on="true"><div class="knob"></div></div>
+      </div>
+      <div class="card hide" id="pvInfoCard">Lets the Job Feed show postings inside the dashboard by lifting the frame-blocking headers on frames the dashboard opens. Only those frames; every other page keeps its headers. Off: the feed falls back to "Open" and cached snapshots.</div>
     </div>
   </div>
 
-  <div class="settings-page" id="settingsPage">
-    <div class="container">
-      <div class="form-group">
-        <label>Server URL</label>
-        <input type="text" id="serverUrl" placeholder="http://localhost or https://your-vps.com">
+  <!-- ===== SETTINGS SCREEN ===== -->
+  <div id="screenSettings" class="hide">
+    <div class="body">
+      <div class="field">
+        <div class="lbl">Theme</div>
+        <div class="seg" id="themeSeg">
+          <div class="seg-opt" data-theme-opt="light" style="flex:1; text-align:center">Light</div>
+          <div class="seg-opt" data-theme-opt="dark" style="flex:1; text-align:center">Dark</div>
+          <div class="seg-opt" data-theme-opt="system" style="flex:1; text-align:center">System</div>
+        </div>
       </div>
-      <div class="form-group">
-        <label>API Key</label>
-        <input type="password" id="apiKey" placeholder="Your dashboard API key">
+      <div class="field">
+        <div class="lbl">Server URL</div>
+        <input id="serverUrl" class="in mono" spellcheck="false">
       </div>
-      <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
-      <button class="btn btn-settings" id="backBtn">Back</button>
-      <div class="status" id="settingsStatus"></div>
+      <div class="field">
+        <div class="lbl">API key</div>
+        <div style="display:flex; gap:8px">
+          <input id="apiKey" type="password" class="in mono" style="flex:1; min-width:0" spellcheck="false">
+          <div class="show-btn" id="showKey">Show</div>
+        </div>
+        <div class="conn">
+          <div class="conn-dot" id="connDot"></div>
+          <div class="conn-tx mono" id="connTx">Checking…</div>
+        </div>
+      </div>
+      <button class="btn btn-blue" id="saveSettings" style="margin-top:2px">Save settings</button>
     </div>
   </div>
 
-  <script src="popup.js"></script>
+  <!-- ===== EDIT URL SHEET ===== -->
+  <div id="urlSheet" class="scrim hide">
+    <div class="sheet" id="sheetInner">
+      <div style="display:flex; align-items:center; gap:8px">
+        <div style="font-size:14px; font-weight:600; flex:1">Edit job URL</div>
+        <div id="urlCancel" style="font-size:12px; color:var(--muted); cursor:pointer">Cancel</div>
+      </div>
+      <textarea id="urlText" class="sheet-ta"></textarea>
+      <button class="btn btn-blue" id="urlUpdate" style="height:36px; font-size:13px">Update URL</button>
+    </div>
+  </div>
+
+</div>
+<script src="popup.js"></script>
 </body>
 </html>

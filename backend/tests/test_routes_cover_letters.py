@@ -94,8 +94,7 @@ def test_templates_endpoint(api_client, test_db):
     resp = api_client.get("/api/cover-letters/templates")
     assert resp.status_code == 200
     ids = {t["id"] for t in resp.json()}
-    # Assert tracked templates only — `garamond` is gitignored (licensed fonts)
-    # and absent on fresh clones / CI.
+    # tracked templates only — `garamond` is gitignored (licensed fonts), absent on fresh clones / CI
     assert {"garamond_alt", "inter", "traditional"} <= ids
 
 
@@ -115,19 +114,35 @@ def test_generate_404_on_missing_resume(api_client, test_db):
     assert resp.status_code == 404
 
 
-def test_generate_400_on_job_without_description(api_client, test_db):
+def test_generate_400_when_no_jd_source(api_client, test_db):
+    """400 only when all three JD sources are empty: description, URL, cached page."""
     _seed_first_run(test_db)
     resume = _make_resume(test_db)
     job = _make_job(test_db, description="")
+    job.url = ""
+    test_db.commit()
     resp = api_client.post("/api/cover-letters/generate",
                            json={"resume_id": str(resume.id), "job_id": str(job.id)})
     assert resp.status_code == 400
 
 
+def test_generate_202_on_url_only_job(api_client, test_db, monkeypatch):
+    """A hand-logged job (Log application) carries a URL and no description; the
+    worker resolves the text later, so the endpoint must not refuse it."""
+    _seed_first_run(test_db)
+    resume = _make_resume(test_db)
+    job = _make_job(test_db, description="")
+
+    import backend.api.routes_cover_letters as rcl
+    monkeypatch.setattr(rcl, "launch_background", lambda *a, **kw: "run-124")
+
+    resp = api_client.post("/api/cover-letters/generate",
+                           json={"resume_id": str(resume.id), "job_id": str(job.id)})
+    assert resp.status_code == 202
+
+
 def test_generate_happy_path_returns_202(api_client, test_db, monkeypatch):
-    """Valid (resume, job) returns 202 + run_id. launch_background is stubbed so no
-    real LLM call / asyncio task runs — generation itself is covered by the
-    generator unit tests."""
+    """Valid (resume, job) returns 202 + run_id; launch_background is stubbed so no real LLM call runs."""
     _seed_first_run(test_db)
     resume = _make_resume(test_db)
     job = _make_job(test_db)
@@ -183,12 +198,10 @@ def test_generate_persona_base_validates_content(api_client, test_db, monkeypatc
     assert resp.status_code == 202
 
 
-# ── Tracer cross-owner isolation (guards the repoint bug) ────────────────────
+# ── Tracer cross-owner sharing ───────────────────────────────────────────────
 
-def test_tracer_repoint_clears_other_owner(test_db):
-    """A resume and a cover letter for the same job derive the same {short_id}{stub}
-    token. After rewriting both, the shared link must be owned by exactly one —
-    never both — so click attribution stays correct."""
+def test_tracer_link_is_shared_by_both_owners(test_db):
+    """A resume and a cover letter for the same job derive the same {short_id}{stub} token, owned by both (see test_tracer_shared_owner.py for stats-level assertions)."""
     import uuid
     from backend.models.db import Setting, Resume, Job, CoverLetter, TracerLink
     from backend.api.routes_resumes import _rewrite_urls_with_tracers
@@ -209,21 +222,19 @@ def test_tracer_repoint_clears_other_owner(test_db):
 
     # Rewrite resume → creates link owned by resume, token "7777l"
     _rewrite_urls_with_tracers(resume.json_data, str(resume.id), test_db)
-    # Rewrite CL → same token; must repoint to CL and clear resume_id
+    # Rewrite CL → same token; it claims the row without releasing the résumé's
     _rewrite_urls_with_tracers(cl.json_data, None, test_db, cover_letter_id=str(cl.id), job_id=cl.job_id)
 
     link = test_db.query(TracerLink).filter(TracerLink.token == "7777l").first()
     assert link is not None
-    # Exactly one owner set
-    assert (link.resume_id is None) != (link.cover_letter_id is None)
+    # one row, one token, both owners — not a hand-off
+    assert test_db.query(TracerLink).count() == 1
     assert str(link.cover_letter_id) == str(cl.id)
-    assert link.resume_id is None
+    assert str(link.resume_id) == str(resume.id)
 
 
 def test_base_resume_stub_uses_zero_prefix(test_db):
-    """A base resume has no job_id, so there's no job short_id to namespace the token.
-    In a *_jobid style, when the contact item provides an explicit stub, the token is
-    '0{stub}' instead of a random string."""
+    """A base resume has no job_id to namespace the token; in a *_jobid style with an explicit stub, the token is '0{stub}'."""
     import uuid
     from backend.models.db import Setting, Resume, TracerLink
     from backend.api.routes_resumes import _rewrite_urls_with_tracers
@@ -246,7 +257,8 @@ def test_base_resume_stub_uses_zero_prefix(test_db):
 
 
 def test_base_resume_without_stub_stays_random(test_db):
-    """No stub and no job short_id → fall back to a random 6-char token (not '0…')."""
+    """No stub and no job short_id → fall back to a random token (not '0…'); it comes from
+    `secrets.token_urlsafe(8)` since R4-T5-07, so ≥ 8 chars rather than the old 6."""
     import uuid
     from backend.models.db import Setting, Resume, TracerLink
     from backend.api.routes_resumes import _rewrite_urls_with_tracers
@@ -264,4 +276,43 @@ def test_base_resume_without_stub_stays_random(test_db):
 
     link = test_db.query(TracerLink).filter(TracerLink.resume_id == resume.id).first()
     assert link is not None
-    assert len(link.token) == 6
+    assert len(link.token) >= 8
+    assert link.token != "0li"        # not the deterministic 0{stub} shape
+
+
+def test_generate_inner_resolves_jd_from_url(test_db, monkeypatch):
+    """The worker writes from a live fetch when the job has only a URL, and keeps
+    the fetched text on the job — the same order tailoring uses."""
+    import asyncio
+    from contextlib import asynccontextmanager
+    from unittest.mock import MagicMock
+    import backend.api.routes_cover_letters as rcl
+
+    _seed_first_run(test_db)
+    resume = _make_resume(test_db)
+    job = _make_job(test_db, description="")
+
+    async def fake_fetch(url):
+        return "Fetched JD: fintech PM, roadmapping."
+
+    monkeypatch.setattr("backend.scraper.ats._descriptions._fetch_job_description", fake_fetch)
+
+    seen = {}
+
+    async def fake_body(resume_data, preferences, jd, voice_instruction, length, prompt_template):
+        seen["jd"] = jd
+        return {"greeting": "Dear Acme,", "body_paragraphs": ["p"], "closing": "Regards,",
+                "signature": "Viktor"}
+
+    @asynccontextmanager
+    async def fake_track(*a, **kw):
+        yield MagicMock()
+
+    asyncio.run(rcl._generate_inner(
+        str(resume.id), str(job.id), None, "concise", None, None,
+        lambda db, voice: (None, ""), fake_body, fake_track,
+    ))
+
+    assert seen["jd"] == "Fetched JD: fintech PM, roadmapping."
+    test_db.expire_all()
+    assert test_db.query(Job).filter(Job.id == job.id).first().description == seen["jd"]

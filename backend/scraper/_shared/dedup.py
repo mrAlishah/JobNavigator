@@ -2,7 +2,8 @@
 import hashlib
 import json
 import logging
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import re
+from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, urlunparse
 
 logger = logging.getLogger("jobnavigator.dedup")
 
@@ -28,10 +29,39 @@ _DEFAULT_TRACKING_PARAMS = {
     "__jvsd", "__jvst", "jobpipeline", "cmpid", "codes", "feedid",
     "partnerid", "siteid", "bid", "customredirect",
     "chnlid", "v", "ccd", "frd", "r", "a",
-    "jk",
+    # "jk" is gone from this list — it is Indeed's entire job identity, not
+    # tracking. _IDENTITY_PARAMS below is the real guard, protecting it even if
+    # an operator's editable `dedup_tracking_params` setting still contains it.
     # Search-context noise (career page filters that leak into job hrefs):
     "categories", "cities", "locations", "departments", "teams", "regions", "country", "category",
 }
+
+# A query param can be pure tracking on one board and the posting's whole identity
+# on another (Indeed's `/viewjob?jk=<key>` carries nothing in the path) — these
+# params are kept for their host regardless of the user-editable tracking list.
+# Keys match the host and any subdomain of it, lowercased.
+_IDENTITY_PARAMS = {
+    "indeed.com": {"jk", "vjk"},
+    "glassdoor.com": {"jl", "joblistingid"},
+    "linkedin.com": {"currentjobid"},
+    "dice.com": {"jobid"},
+    "monster.com": {"jobid"},
+}
+# LinkedIn is the exception: on /jobs/view/<id> the identity is already in the
+# path, so `currentJobId` is noise there — it's an identity only on search shapes.
+_LINKEDIN_ID_IN_PATH = re.compile(r"/jobs/view/\d+")
+
+
+def _identity_params_for(parsed) -> set:
+    """Query params that must survive normalization for this host."""
+    host = (parsed.netloc or "").lower().split(":")[0]
+    for domain, keys in _IDENTITY_PARAMS.items():
+        if host == domain or host.endswith("." + domain):
+            if domain == "linkedin.com" and _LINKEDIN_ID_IN_PATH.search(parsed.path or ""):
+                return set()
+            return keys
+    return set()
+
 
 # Module-level cache — loaded from DB on first use or reload
 _tracking_params_cache: set | None = None
@@ -68,13 +98,7 @@ def reload_tracking_params():
 
 
 def _normalize_url(url: str) -> str:
-    """Strip tracking/referral query params, apply/thanks suffixes, and fragment.
-
-    Case is PRESERVED — Oracle HCM, Salesforce Workday and others use case-sensitive
-    path segments (`/hcmUI/CandidateExperience/`, `/External_Career_Site/`) whose
-    WAFs return 403 on lowercased paths. Callers that store this value get the
-    original casing; case-insensitive dedup happens in make_external_id below.
-    """
+    """Strip tracking/referral query params, apply/thanks suffixes, and fragment; case is PRESERVED since some ATS WAFs (Oracle HCM, Workday) 403 on lowercased paths."""
     if not url:
         return ""
     try:
@@ -87,10 +111,16 @@ def _normalize_url(url: str) -> str:
             if path.lower().endswith(suffix):
                 path = path[:-len(suffix)]
         qs = parse_qs(parsed.query, keep_blank_values=False)
-        # Remove tracking params (case-insensitive key match) + all utm_* params
+        # Remove tracking params + utm_* except the ones that ARE the posting's
+        # identity on this host — stripping those merges unrelated jobs onto one id.
+        keep = _identity_params_for(parsed)
         cleaned = {k: v for k, v in qs.items()
-                   if k.lower() not in params and not k.lower().startswith("utm_")}
-        # Sort params for stable hashing
+                   if k.lower() in keep
+                   or (k.lower() not in params and not k.lower().startswith("utm_"))}
+        # Param ORDER is deliberately preserved here: this value is stored as
+        # Job.url by the company-page scraper, and a board can be picky about the
+        # URL it handed out. Order-independence belongs to the hash, and is done
+        # in _canonical_for_hash() below.
         new_query = urlencode(cleaned, doseq=True)
         # Remove fragment (anchors are display-only)
         return urlunparse(parsed._replace(path=path, query=new_query, fragment=""))
@@ -98,31 +128,61 @@ def _normalize_url(url: str) -> str:
         return url
 
 
-def _canonical_for_hash(url: str) -> str:
-    """Hash-only canonical form: stripped URL with host+path lowercased.
+_ATS_SUFFIXES = ("/application", "/apply", "/thanks")
 
-    Splitting this from _normalize_url means the stored URL keeps its original case
-    (so click-through still works for Oracle/Workday WAFs) while dedup hashes
-    converge across case-divergent slugs (Distyl/distyl, JR338690/jr338690, etc.).
-    Query values are NOT lowercased — some carry case-sensitive tokens.
+
+def _fold_path(path: str) -> str:
+    """Drop a trailing slash and any ATS apply/thanks suffix it was hiding.
+
+    `_normalize_url` only strips a suffix that ends the path, so
+    `…/4012345/apply/` keeps its `/apply`. Folding the slash first, then the
+    suffix, then the slash the suffix exposed, collapses both spellings.
+    """
+    for _ in range(2):
+        before = path
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
+        for suffix in _ATS_SUFFIXES:
+            if path.endswith(suffix):
+                path = path[:-len(suffix)]
+                break
+        if path == before:
+            break
+    return path
+
+
+def _canonical_for_hash(url: str) -> str:
+    """Hash-only canonical form.
+
+    Folds everything that spells the same posting two ways — scheme (http vs
+    https), a leading `www.`, host/path case, a trailing slash, and query-param
+    order — so twenty spellings of one job collapse onto one `external_id`. The
+    stored `Job.url` is untouched by this: it keeps the bytes the board handed us
+    (some ATS WAFs 403 without the exact path they linked).
     """
     if not url:
         return ""
     stripped = _normalize_url(url)
     try:
         parsed = urlparse(stripped)
-        return urlunparse(parsed._replace(
-            netloc=(parsed.netloc or "").lower(),
-            path=(parsed.path or "").lower(),
-        ))
+        # http and https serve the same posting; a board upgrading its scheme
+        # must not re-import its whole catalogue.
+        scheme = (parsed.scheme or "").lower()
+        if scheme in ("http", "https"):
+            scheme = "https"
+        netloc = (parsed.netloc or "").lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = _fold_path((parsed.path or "").lower())
+        # Sorted so ?a=1&b=2 and ?b=2&a=1 hash alike.
+        query = urlencode(sorted(parse_qsl(parsed.query, keep_blank_values=False)))
+        return urlunparse((scheme, netloc, path, parsed.params, query, ""))
     except Exception:
         return stripped
 
 
 def make_external_id(company: str, title: str, url: str) -> str:
-    """Generate SHA256 hash for deduplication. Uses canonical (lowercased) URL —
-    case-divergent slugs on the same posting hash identically.
-    Falls back to company+title if URL is empty."""
+    """Generate a SHA256 dedup hash from the canonical (lowercased) URL, falling back to company+title if URL is empty."""
     canonical = _canonical_for_hash(url)
     if canonical:
         return hashlib.sha256(canonical.encode()).hexdigest()

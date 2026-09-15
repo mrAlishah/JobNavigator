@@ -1,13 +1,5 @@
-"""Scraper orchestrator — single entry point for all scraping.
-
-Public API:
-  - run_all(force=False)           scheduled fan-out over all active searches + companies
-  - run_search(search)             dispatch one search by search.search_mode
-  - run_company(company, ...)      scrape one company's scrape_urls (delegates to sources.company_pages)
-
-Scheduler + API triggers should import from here; internal sources/ modules are
-implementation details.
-"""
+"""Scraper orchestrator: single entry point (run_all/run_search/run_company) that
+scheduler + API triggers import from; internal sources/ modules are implementation details."""
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,19 +19,12 @@ logger = logging.getLogger("jobnavigator.scraper.orchestrator")
 # ── Per-search dispatch ─────────────────────────────────────────────────────
 
 async def run_search(search: Search, proxy_url: Optional[str] = None) -> dict:
-    """Dispatch one search to its source module by search.search_mode.
-
-    Returns the source module's result dict (jobs_found, new_jobs, error, duration).
-    Raises ValueError on unknown search_mode.
-    """
+    """Dispatch one search to its source module by search.search_mode; returns the module's result dict, or raises ValueError on an unknown mode."""
     mode = search.search_mode
 
     if mode == "keyword":
         from backend.scraper.sources.jobspy import run
         return await run(search, proxy_url=proxy_url)
-    if mode == "url":
-        from backend.scraper.sources.company_pages import scrape_url_mode
-        return await scrape_url_mode(search)
     if mode == "levels_fyi":
         from backend.scraper.sources.levelsfyi import run
         return await run(search)
@@ -48,6 +33,9 @@ async def run_search(search: Search, proxy_url: Optional[str] = None) -> dict:
         return await run(search)
     if mode == "jobright":
         from backend.scraper.sources.jobright import run
+        return await run(search)
+    if mode == "freehire":
+        from backend.scraper.sources.freehire import run
         return await run(search)
     if mode == "linkedin_extension":
         # No scraper — jobs come via POST /api/jobs/linkedin-import (Chrome extension push)
@@ -84,61 +72,115 @@ def _get_setting_value(db, key: str, default: str = "") -> str:
     return row.value if row else default
 
 
+# ── Per-source outcome helpers ───────────────────────────────────────────────
+# A multi-board search stores {"indeed": {"seen": 9, "new": 0}, "zip_recruiter":
+# {"error": "403"}} on ScrapeLog; these three helpers are the only readers.
+
+SOURCE_LABELS = {
+    "indeed": "Indeed",
+    "linkedin": "LinkedIn",
+    "zip_recruiter": "ZipRecruiter",
+    "google": "Google",
+    "glassdoor": "Glassdoor",
+    "bayt": "Bayt",
+    "naukri": "Naukri",
+    "bdjobs": "BDJobs",
+}
+
+
+def source_label(key: str) -> str:
+    """"zip_recruiter" -> "ZipRecruiter"; unknown boards keep their raw key."""
+    return SOURCE_LABELS.get(str(key or "").lower(), str(key or ""))
+
+
+def source_errors(breakdown) -> list:
+    """[(source_key, error), ...] for every board that reported a failure."""
+    if not isinstance(breakdown, dict):
+        return []
+    out = []
+    for key, val in breakdown.items():
+        if isinstance(val, dict) and val.get("error"):
+            out.append((str(key), str(val["error"])))
+    return out
+
+
+def describe_source_errors(breakdown) -> str:
+    """"zip_recruiter: 403 · google: initial cursor not found" (empty when clean)."""
+    return " · ".join(f"{key}: {err}" for key, err in source_errors(breakdown))
+
+
+def filtered_count(breakdown) -> int:
+    """Postings the title filters rejected, summed across boards; rejected postings are still written as `ignored` for dedup, so a run's stored rows can exceed its "N seen" count."""
+    if not isinstance(breakdown, dict):
+        return 0
+    return sum(int(v.get("filtered") or 0) for v in breakdown.values()
+               if isinstance(v, dict))
+
+
+def summarize_search_run(label: str, result: dict) -> str:
+    """The Run-history line for one search run, read back from the ScrapeLog row it wrote (same convention as scheduler._scrape_summary) so the summary can't disagree with the log."""
+    if not isinstance(result, dict):
+        return f"{label} - nothing ran"
+
+    found = result.get("jobs_found", 0)
+    new = result.get("new_jobs", 0)
+    breakdown = result.get("source_breakdown")
+    log_id = result.get("scrape_log_id")
+    if log_id:
+        db = SessionLocal()
+        try:
+            row = db.query(ScrapeLog).filter(ScrapeLog.id == log_id).first()
+            if row:
+                found = row.jobs_found or 0
+                new = row.new_jobs or 0
+                breakdown = row.source_breakdown
+        except Exception as e:          # a summary must never break the run
+            logger.warning(f"Could not read back ScrapeLog {log_id}: {e}")
+        finally:
+            db.close()
+
+    summary = f"{label} - {found} seen, +{new} new"
+    filtered = filtered_count(breakdown)
+    if filtered:
+        summary += f", {filtered} filtered out"
+    # Name the boards that hard-failed, so "9 seen, +0 new" can't be mistaken
+    # for a quiet day on every configured source.
+    failed = describe_source_errors(breakdown)
+    return f"{summary} · {failed}" if failed else summary
+
+
 def _source_for_search(search: Search) -> str:
-    """Source string used for ScrapeLog.source — matches old jobspy_scraper behavior."""
+    """Source string used for ScrapeLog.source."""
     source_map = {
         "keyword": "jobspy",
-        "url": "playwright_url",
         "levels_fyi": "levels_fyi",
         "linkedin_personal": "linkedin_personal",
         "jobright": "jobright",
+        "freehire": "freehire",
     }
     return source_map.get(search.search_mode, search.search_mode)
 
 
 def _search_mode_is_valid(search: Search) -> bool:
-    """Check if a search has a runnable configuration — preserves old behavior of
-    skipping invalid searches rather than raising.
-
-    URL / levels_fyi modes require direct_url; linkedin_extension has no scraper
-    (passive capture only); other known modes are always runnable.
-    """
+    """True if a search has a runnable configuration (levels_fyi requires direct_url; other known modes are always runnable); invalid configs are skipped, not raised."""
     mode = search.search_mode
     if mode == "keyword":
         return True
-    if mode == "url":
-        return bool(search.direct_url)
     if mode == "levels_fyi":
         return bool(search.direct_url)
     if mode in ("linkedin_personal", "jobright"):
         return True
+    if mode == "freehire":
+        return bool(search.direct_url or search.search_term)
     return False
 
 
 # ── Fan-out: all active searches + companies ────────────────────────────────
 
 async def run_all(force: bool = False):
-    """Scheduled fan-out: dispatch all active searches + all active companies.
-
-    Preserves the semantics of the original `jobspy_scraper.run_all_searches`:
-    - First-run check: if no ScrapeLog rows exist, all existing jobs are marked
-      as seen after the run so only truly new jobs trigger alerts.
-    - Per-search interval check (skipped if force=True): skip searches whose
-      `last_run_at + run_interval_minutes` is still in the future.
-    - Invalid-config searches (e.g. url mode without direct_url) are logged
-      and skipped.
-    - linkedin_extension is not scheduler-driven; skipped silently here (those
-      searches should be filtered out, but if one sneaks through we treat it
-      the same as any other non-runnable config).
-    - After each search, a ScrapeLog row is written and (if the search has
-      auto_scoring_depth set and new jobs were found) `analyze_unscored_jobs`
-      runs.
-    - At the end, the Playwright career-pages batch runs via
-      `scrape_career_pages(force=force)`.
-    """
+    """Scheduled fan-out over all active searches + companies: marks existing jobs seen on a first run, skips due/invalid/extension-mode searches, logs + optionally scores each search, then runs the Playwright company sweep."""
     db = SessionLocal()
     try:
-        # First-run check: if no scrape logs exist yet, mark all existing jobs as seen
         first_run = db.query(ScrapeLog).count() == 0
 
         searches = db.query(Search).filter(Search.active == True).all()
@@ -164,7 +206,7 @@ async def run_all(force: bool = False):
                         )
                         continue
 
-            # Skip invalid configs (matches old behavior — logged + continue, no raise)
+            # Skip invalid configs — logged and skipped rather than raising.
             if not _search_mode_is_valid(search):
                 logger.warning(f"Search '{search.name}' has invalid config, skipping")
                 continue
@@ -179,17 +221,32 @@ async def run_all(force: bool = False):
                 logger.exception(f"Search '{search.name}' failed: {e}")
                 result = {"jobs_found": 0, "new_jobs": 0, "error": str(e), "duration": 0}
 
-            # Log the scrape
+            # A clean run that found nothing is a warning (same rule company scrapes
+            # use) so /health/entities can flag a search that quietly stopped returning results.
+            breakdown = result.get("source_breakdown") or None
+            failed_sources = source_errors(breakdown)
             log = ScrapeLog(
                 search_id=search.id,
                 source=_source_for_search(search),
                 jobs_found=result.get("jobs_found", 0),
                 new_jobs=result.get("new_jobs", 0),
                 error=result.get("error"),
+                # A board that refused the request is a warning even when the
+                # other boards returned rows.
+                is_warning=bool(
+                    failed_sources
+                    or (result.get("jobs_found", 0) == 0 and not result.get("error"))
+                ),
+                source_breakdown=breakdown,
                 duration_seconds=result.get("duration", 0),
             )
             db.add(log)
             db.commit()
+
+            if failed_sources:
+                logger.warning(
+                    f"Search '{search.name}': {describe_source_errors(breakdown)}"
+                )
 
             logger.info(
                 f"Search '{search.name}': found={result.get('jobs_found', 0)}, "
@@ -210,9 +267,8 @@ async def run_all(force: bool = False):
             except Exception as e:
                 logger.exception(f"Post-search scoring sweep failed (scrape continues): {e}")
 
-        # Also run Playwright career page scrapes
         from backend.scraper.sources.company_pages import scrape_career_pages
-        await scrape_career_pages(force=force)
+        company_summary = await scrape_career_pages(force=force) or {}
 
         # First-run: mark all jobs as seen so only truly new ones trigger alerts
         if first_run:
@@ -222,6 +278,9 @@ async def run_all(force: bool = False):
             db.commit()
             logger.info(f"First run: marked {len(unseen)} existing jobs as seen")
 
+        # Handed to the caller so a manual run's summary can say what did not run
+        # (companies with no URLs, or — scheduler only — companies not yet due).
+        return {"companies": company_summary}
     finally:
         db.close()
 
@@ -229,16 +288,7 @@ async def run_all(force: bool = False):
 # ── Single-search trigger (API) ─────────────────────────────────────────────
 
 async def _run_search_by_id(search_id: str, auto_score: Optional[bool] = None) -> dict:
-    """Fetch one search by ID and dispatch — used by the API trigger endpoint.
-
-    Preserves semantics of the original `jobspy_scraper.run_single_search`:
-    - auto_score override: if None, use search.auto_scoring_depth setting.
-    - Writes a ScrapeLog row with the result.
-    - Runs analyze_unscored_jobs(status="new") if scoring is enabled and new
-      jobs were found.
-    - Returns the result dict (or None if search not found — matches old
-      behavior which returned None via `return`).
-    """
+    """Fetch one search by ID and dispatch (used by the API trigger endpoint); writes a ScrapeLog row and runs analyze_unscored_jobs if scoring is enabled and new jobs were found. Returns None if the search isn't found."""
     db = SessionLocal()
     try:
         search = db.query(Search).filter(Search.id == search_id).first()
@@ -259,19 +309,33 @@ async def _run_search_by_id(search_id: str, auto_score: Optional[bool] = None) -
         try:
             result = await run_search(search, proxy_url=proxy_url)
         except ValueError:
-            # Unknown mode — match old behavior (silent return)
-            return
+            return  # unknown mode: silent return
 
+        breakdown = result.get("source_breakdown") or None
+        failed_sources = source_errors(breakdown)
         log = ScrapeLog(
             search_id=search.id,
             source=_source_for_search(search),
             jobs_found=result.get("jobs_found", 0),
             new_jobs=result.get("new_jobs", 0),
             error=result.get("error"),
+            # R3-A-03: a board that refused the request is a warning even when
+            # the other boards returned rows.
+            is_warning=bool(
+                failed_sources
+                or (result.get("jobs_found", 0) == 0 and not result.get("error"))
+            ),
+            source_breakdown=breakdown,
             duration_seconds=result.get("duration", 0),
         )
         db.add(log)
         db.commit()
+        # Hand the caller the row it should summarise, so the Run-history line
+        # and the audit row are read from the same place.
+        result["scrape_log_id"] = str(log.id)
+
+        if failed_sources:
+            logger.warning(f"Search '{search.name}': {describe_source_errors(breakdown)}")
 
         if should_score and result and result.get("new_jobs", 0) > 0:
             from backend.analyzer.cv_scorer import analyze_unscored_jobs

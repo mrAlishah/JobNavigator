@@ -1,10 +1,11 @@
 """All SQLAlchemy models for JobNavigator."""
+import re
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Integer, Float, Boolean, Text, DateTime, Date,
-    ForeignKey, JSON, Index, create_engine, text
+    ForeignKey, JSON, Index, UniqueConstraint, create_engine, text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import backref, column_property, declarative_base, deferred, relationship, sessionmaker
@@ -13,9 +14,22 @@ from backend.config import DATABASE_URL
 
 # Pool args are Postgres-specific; SQLite (used in CI tests via DATABASE_URL=sqlite:///:memory:)
 # rejects pool_size/max_overflow.
+#
+# The ceiling stays 30 connections: with background work bounded (job_monitor's
+# limiters) nothing holds a connection across an LLM call or a page fetch any
+# more, so the pool is no longer the binding constraint and raising the ceiling
+# would only hide a regression. What did change:
+#   pool_size 10 -> 20  the Feed's bulk actions fire one HTTP request per job,
+#                       and each takes a short session in the auth middleware
+#                       and again in the handler; 20 persistent connections
+#                       serve that burst without churning overflow connects.
+#   pool_timeout 5      a saturated pool must fail fast. The default is 30 s, so
+#                       every request piled up behind the drain and /health went
+#                       unanswerable; 5 s turns that into a quick 503.
+#   pool_recycle 1800   drop connections Postgres or a proxy may have killed.
 _engine_kwargs = {"pool_pre_ping": True}
 if not DATABASE_URL.startswith("sqlite"):
-    _engine_kwargs.update(pool_size=10, max_overflow=20)
+    _engine_kwargs.update(pool_size=20, max_overflow=10, pool_timeout=5, pool_recycle=1800)
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -50,7 +64,7 @@ class Search(Base):
     name = Column(String, nullable=False)
     active = Column(Boolean, default=True)
     sources = Column(JSON, default=["linkedin", "indeed", "zip_recruiter", "google", "direct"])
-    search_mode = Column(String, default="keyword")  # keyword | url
+    search_mode = Column(String, default="keyword")  # keyword | levels_fyi | linkedin_personal | jobright | freehire | extension | linkedin_extension
     search_term = Column(String, nullable=True)
     direct_url = Column(String, nullable=True)
     location = Column(String, default="United States")
@@ -67,11 +81,13 @@ class Search(Base):
     require_salary = Column(Boolean, default=False)  # Filter out jobs without salary info
     auto_scoring_depth = Column(String, default="off")  # off | light | full
     run_interval_minutes = Column(Integer, default=0)
-    # When true, treat every active Company's name + aliases as additional company_exclude
-    # entries at scrape time so a keyword/URL search won't surface jobs we already get
-    # from a company-specific scrape.
+    # When true, treat every active Company's name + aliases as additional
+    # company_exclude entries so a keyword/URL search doesn't overlap a company scrape.
     exclude_active_companies = Column(Boolean, default=False)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
+    # /health/entities treats the entity as healthy while the newest ScrapeLog row
+    # is no newer than this stamp. NULL = never acknowledged.
+    warning_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
@@ -94,13 +110,32 @@ class Company(Base):
     jobspy_search_term = Column(String, nullable=True)
     aliases = Column(JSON, default=[])               # alternative company names for matching
     auto_scoring_depth = Column(String, default="off")  # off | light | full
-    h1b_slug = Column(String, nullable=True)
-    h1b_lca_count = Column(Integer, nullable=True)
-    h1b_approval_rate = Column(Float, nullable=True)
-    h1b_median_salary = Column(Integer, nullable=True)
-    h1b_last_checked = Column(DateTime(timezone=True), nullable=True)
+    h1b_slug = Column(String, nullable=True)  # per-company MyVisaJobs slug override
+    # H-1B metrics moved to the VisaCache table (single source of truth, keyed by
+    # company name + country) so search-sourced companies not in this table are covered.
     last_scraped_at = Column(DateTime(timezone=True), nullable=True)
+    # See Search.warning_acknowledged_at — same contract, per company.
+    warning_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+
+
+class VisaCache(Base):
+    """Cached work-visa/immigration data per company name, independent of the companies table, so jobs from any source can show H-1B info."""
+    __tablename__ = "visa_cache"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name_key = Column(String, nullable=False, index=True)   # lowercased company name
+    country = Column(String, nullable=False, default="US")
+    display_name = Column(String, nullable=True)
+    slug = Column(String, nullable=True)
+    lca_count = Column(Integer, nullable=True)
+    approval_rate = Column(Float, nullable=True)
+    median_salary = Column(Integer, nullable=True)
+    has_data = Column(Boolean, default=False)
+    fetched_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(String, nullable=True)
+
+    __table_args__ = (UniqueConstraint("name_key", "country", name="uq_visa_cache_name_country"),)
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -116,9 +151,24 @@ class Job(Base):
     title = Column(String, nullable=True)
     url = Column(String, nullable=True)
     source = Column(String, nullable=True)  # jobspy_linkedin | jobspy_indeed | etc.
-    search_id = Column(UUID(as_uuid=True), ForeignKey("searches.id"), nullable=True)
+    # SET NULL so deleting a search never orphans a stored job. No Alembic, so the
+    # delete handlers null this column themselves on existing databases.
+    search_id = Column(UUID(as_uuid=True), ForeignKey("searches.id", ondelete="SET NULL"), nullable=True)
     description = Column(Text, nullable=True)
-    location = Column(String, nullable=True)
+    location = Column(String, nullable=True)   # as the board wrote it; never rewritten
+    # Parsed out of `location` for territorial search. `loc_city` holds the folded
+    # ascii form ("quebec"), so a filter matches regardless of accent or case.
+    loc_country = Column(String(2), nullable=True, index=True)
+    loc_region = Column(String(64), nullable=True, index=True)   # US/CA code, or a region name elsewhere ("Hesse")
+    loc_city = Column(String(120), nullable=True, index=True)   # bounded: indexed, and a btree entry caps near 2704 bytes
+    # Work arrangement is a set, not one value: a posting may be offered both
+    # remote and hybrid, and it must answer either filter. All three NULL means
+    # no source resolved it - the fourth state, "unknown".
+    arr_remote = Column(Boolean, nullable=True, index=True)
+    arr_hybrid = Column(Boolean, nullable=True, index=True)
+    arr_onsite = Column(Boolean, nullable=True, index=True)
+    # Derived from arr_remote and written with it. Kept because the API exposes
+    # `remote` as a filter; never set it on its own.
     remote = Column(Boolean, nullable=True)
     salary_min = Column(Integer, nullable=True)
     salary_max = Column(Integer, nullable=True)
@@ -133,9 +183,7 @@ class Job(Base):
     best_cv = Column(String, nullable=True)
     scoring_report = Column(JSON, nullable=True)  # Structured report: summary, keywords, requirement mapping
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
-    # compute one boolean. They lazy-load on attribute access (single-row contexts:
-    # /cached-page endpoint, _get_job_text fallback). Use `has_cached_page` (SQL
-    # expression, no blob load) for the boolean.
+    # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))
     cached_page_text = deferred(Column(Text, nullable=True))
     page_cached_at = Column(DateTime(timezone=True), nullable=True)
@@ -145,10 +193,8 @@ class Job(Base):
     status = Column(String, default="new")  # new | saved | applied | skip
     discovered_at = Column(DateTime(timezone=True), default=utcnow)
 
-    # Computed in SQL at query time — answers "is a page cached?" without ever
-    # loading the deferred blob columns. (.columns[0] reaches the raw Column
-    # inside the deferred() ColumnProperty — calling .isnot on the property
-    # itself yields NotImplemented, not a SQL expression.)
+    # Computed in SQL without loading the deferred blob columns; .columns[0] reaches
+    # the raw Column since .isnot on the deferred() property itself yields NotImplemented.
     has_cached_page = column_property(cached_page_html.columns[0].isnot(None))
 
     search = relationship("Search", backref="jobs")
@@ -165,11 +211,81 @@ class Job(Base):
                 url = base[:-len(suffix)] + ("?" + qs[0] if qs else "")
         return url
 
+class JobLocation(Base):
+    """Every place one posting names.
+
+    A job stored only under its primary place answers one filter when the board
+    listed twenty-two: levels.fyi writes "Vancouver ... + 21 More", and Lever
+    and Ashby carry the full list. The primary place also stays on `Job` itself,
+    denormalised, so the feed can show and sort it without a join.
+    """
+
+    __tablename__ = "job_locations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    country = Column(String(2), nullable=True, index=True)
+    region = Column(String(64), nullable=True, index=True)
+    city = Column(String(120), nullable=True, index=True)   # folded ascii, as on Job
+    is_primary = Column(Boolean, default=False, nullable=False)
+
+    # The ORM deletes these rows itself. `passive_deletes` would hand that to the
+    # database, and SQLite does not enforce foreign keys unless asked, so the
+    # rows would outlive their job there. The FK still carries ON DELETE CASCADE
+    # as a backstop for a bulk delete that never loads the ORM objects.
+    job = relationship("Job", backref=backref("locations", cascade="all, delete-orphan"))
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "country", "region", "city",
+                         name="uq_job_location"),
+    )
+
+
 from sqlalchemy import event
+
+# Postgres rejects any text value containing a NUL (0x00) byte with
+# "A string literal cannot contain NUL (0x00) characters" and aborts the
+# whole transaction — one poisoned title/description from a scraper (seen
+# from Jobright's API, but any source's HTML/JSON can carry one) sinks the
+# entire batch. Every source builds rows via `Job(...)`/attribute assignment,
+# so sanitising here — once, on the model — covers all of them (scrapers,
+# the Chrome-extension save/import endpoints, everything) without each
+# source having to remember to do it.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def sanitize_text(value):
+    """Strip NUL and other C0 control chars (keeping \\n \\t \\r) from a
+    string value; non-strings pass through unchanged."""
+    if not isinstance(value, str) or not value:
+        return value
+    return _CONTROL_CHARS_RE.sub("", value)
+
 
 @event.listens_for(Job.url, "set", retval=True)
 def _clean_job_url(target, value, oldvalue, initiator):
-    return Job.clean_url(value)
+    return Job.clean_url(sanitize_text(value))
+
+
+def _make_job_field_sanitizer():
+    def _sanitize_job_field(target, value, oldvalue, initiator):
+        return sanitize_text(value)
+    return _sanitize_job_field
+
+
+# Attach the same sanitiser to every other String/Text column on Job (title,
+# company, source, description, location, salary_source, h1b_jd_snippet,
+# h1b_verdict, best_cv, cache_error, external_id, content_hash,
+# linkedin_job_id, status, ...) so it applies generically, including to
+# columns added later — `url` is skipped since it already has its own
+# listener above (which also sanitises).
+for _col in Job.__table__.columns:
+    if _col.name == "url":
+        continue
+    if isinstance(_col.type, String):
+        event.listen(getattr(Job, _col.name), "set", _make_job_field_sanitizer(), retval=True)
+del _col
 
 
 # ── Applications ─────────────────────────────────────────────────────────────
@@ -179,10 +295,8 @@ class Application(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
     status = Column(String, default="applied")
-    # applied|interview|offer|rejected — simplified 2026-04-23. The retired
-    # screening/phone_screen/final_round values are backfilled to applied or
-    # interview in seed.run_migrations; historical status_transitions rows
-    # are preserved unchanged.
+    # applied|interview|offer|rejected. Retired screening/phone_screen/final_round
+    # values are backfilled by seed.run_migrations; status_transitions is left unchanged.
     applied_at = Column(DateTime(timezone=True), default=utcnow)
     cv_version_used = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
@@ -190,10 +304,29 @@ class Application(Base):
     next_action_date = Column(Date, nullable=True)
     last_email_received = Column(DateTime(timezone=True), nullable=True)
     last_email_snippet = Column(Text, nullable=True)
-    status_transitions = Column(JSON, default=[])  # [{status, changed_at, source}]
+    status_transitions = Column(JSON, default=[])  # [{from, to, at, source}]
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     job = relationship("Job", back_populates="applications")
+    interviews = relationship("Interview", back_populates="application",
+                              cascade="all, delete-orphan", order_by="Interview.created_at")
+
+
+class Interview(Base):
+    """One interview round on an application: what it is, when, where/how, and a free-text prep note."""
+    __tablename__ = "interviews"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    what = Column(String, nullable=False)
+    when_at = Column(DateTime(timezone=True), nullable=True)   # calendar-picked
+    where_text = Column(String, nullable=True)                 # "Zoom", "Onsite — London"
+    status = Column(String, default="scheduled")   # scheduled | done
+    prep = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    application = relationship("Application", back_populates="interviews")
 
 
 def record_transition(app, new_status: str, source: str):
@@ -217,13 +350,18 @@ class ScrapeLog(Base):
     __tablename__ = "scrape_log"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    search_id = Column(UUID(as_uuid=True), ForeignKey("searches.id"), nullable=True)
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
+    # The audit trail outlives the entity it describes; SET NULL keeps the row
+    # readable instead of blocking the delete with a ForeignKeyViolation (500).
+    search_id = Column(UUID(as_uuid=True), ForeignKey("searches.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
     source = Column(String, nullable=True)
     jobs_found = Column(Integer, default=0)
     new_jobs = Column(Integer, default=0)
     error = Column(Text, nullable=True)
     is_warning = Column(Boolean, default=False)
+    # Per-source outcome for multi-board runs, e.g. {"indeed": {"seen": 9, "new": 0},
+    # "zip_recruiter": {"error": "403"}}. Single-source scrapes leave this NULL.
+    source_breakdown = Column(JSON, nullable=True)
     duration_seconds = Column(Float, nullable=True)
     ran_at = Column(DateTime(timezone=True), default=utcnow)
 
@@ -263,7 +401,7 @@ class LlmCallLog(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     purpose = Column(String, nullable=False)  # score_light, score_full, tailor, email, pdf
-    provider = Column(String, nullable=False, default="")  # claude_api, claude_code, openai, ollama
+    provider = Column(String, nullable=False, default="")  # claude_api, claude_code, codex_cli, openai, ollama
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     model = Column(String, nullable=False, default="")
     input_tokens = Column(Integer, default=0, nullable=False)
@@ -289,6 +427,17 @@ class ActivityLog(Base):
 
 
 # ── Resumes ─────────────────────────────────────────────────────────────────
+
+def first_template(kind: str) -> str:
+    """First template folder shipped under backend/<kind>/ (alphabetical): the model default, so a fresh install never points at a template it does not have."""
+    from pathlib import Path
+    base = Path(__file__).resolve().parents[1] / kind
+    try:
+        names = sorted(p.name for p in base.iterdir() if (p / "template.html.j2").is_file())
+    except OSError:
+        names = []
+    return names[0] if names else "traditional"
+
 class Resume(Base):
     __tablename__ = "resumes"
 
@@ -297,7 +446,7 @@ class Resume(Base):
     is_base = Column(Boolean, default=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
-    template = Column(String, default="garamond")
+    template = Column(String, default=lambda: first_template("resume_templates"))
     page_format = Column(String, default="letter")
     json_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -308,13 +457,8 @@ class Resume(Base):
 
 
 # ── Cover Letter ──────────────────────────────────────────────────────────────
-# Job-specific (no is_base — every cover letter is generated for a job). Mirrors
-# Resume's storage so the PDF render + tracer-rewrite helpers are reused as-is.
-#   json_data shape:
-#     header{name, contact_items[{text,url}]}, recipient{company, manager, address},
-#     date, greeting, body_paragraphs[], closing, signature
-#   resume_id → the resume this letter pairs with (its evidence source)
-#   parent_id → previous version when regenerated
+# Job-specific (no is_base). Mirrors Resume's storage so the PDF render + tracer-
+# rewrite helpers are reused as-is; json_data holds header/recipient/date/greeting/body_paragraphs/closing/signature.
 class CoverLetter(Base):
     __tablename__ = "cover_letters"
 
@@ -325,15 +469,21 @@ class CoverLetter(Base):
     parent_id = Column(UUID(as_uuid=True), ForeignKey("cover_letters.id", ondelete="SET NULL"), nullable=True)
     # garamond_alt (not garamond) — the garamond template dir is gitignored
     # (licensed fonts), so it may be absent on a fresh clone.
-    template = Column(String, default="garamond_alt")
+    template = Column(String, default=lambda: first_template("cover_letter_templates"))
     page_format = Column(String, default="letter")
     json_data = Column(JSON, default={})
+    # How this draft was written; lets the list/editor show it and Regenerate
+    # preselect the same settings.
+    voice = Column(String, nullable=True)          # voice preset id
+    length = Column(String, nullable=True)         # concise | standard | detailed
+    # NULL resume_id + from_persona=True means the evidence came from the
+    # Persona's resume_content rather than a Resume row.
+    from_persona = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    # passive_deletes lets the DB's ON DELETE SET NULL fire without the ORM
-    # eagerly loading + null-ing related cover letters when a Job/Resume/parent
-    # is deleted (matches the FK ondelete on job_id/resume_id/parent_id above).
+    # passive_deletes lets the DB's ON DELETE SET NULL fire without the ORM eagerly
+    # loading + null-ing related cover letters (matches the FK ondelete above).
     parent = relationship("CoverLetter", remote_side=[id],
                           backref=backref("revisions", passive_deletes=True))
     job = relationship("Job", backref=backref("cover_letters", passive_deletes=True))
@@ -341,14 +491,8 @@ class CoverLetter(Base):
 
 
 # ── Persona ──────────────────────────────────────────────────────────────────
-# Singleton row (id=1). Each column is a JSON node consumed by a specific feature:
-#   contact          → tailoring, cover letter, autofill
-#   work_auth        → autofill
-#   demographics     → autofill (default to "decline")
-#   compensation     → autofill
-#   preferences      → autofill, cover letter (the "why this role/company" beat)
-#   resume_content   → tailoring (rich pool of bullets, skills, etc.)
-#   qa_bank          → autofill (reusable Q&A library for application questions)
+# Singleton row (id=1). contact/preferences feed tailoring + cover letter + autofill;
+# work_auth/demographics/compensation/qa_bank feed autofill; resume_content feeds tailoring.
 class Persona(Base):
     __tablename__ = "personas"
 
@@ -370,7 +514,8 @@ class TracerLink(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token = Column(String(10), unique=True, nullable=False, index=True)
-    # A tracer link belongs to exactly one of a resume OR a cover letter.
+    # A tracer link belongs to a resume, a cover letter, or — when the two share the
+    # same job and token — both at once; each document's /tracer-stats filters on its own FK.
     resume_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="CASCADE"), nullable=True)
     cover_letter_id = Column(UUID(as_uuid=True), ForeignKey("cover_letters.id", ondelete="CASCADE"), nullable=True)
     destination_url = Column(String, nullable=False)
@@ -398,17 +543,26 @@ class TracerClickEvent(Base):
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+def is_acknowledged(last_run_at, acknowledged_at) -> bool:
+    """True when the entity's newest run is not newer than the acknowledgement stamp; both sides are normalised to UTC since SQLite drops the offset Postgres keeps."""
+    if acknowledged_at is None or last_run_at is None:
+        return False
+
+    def _utc(dt):
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+    return _utc(last_run_at) <= _utc(acknowledged_at)
+
+
 def find_company_by_name(db, name: str):
     """Find a Company by name or alias (case-insensitive)."""
     if not name:
         return None
     from sqlalchemy import func
     nl = name.strip().lower()
-    # Try exact name match first
     co = db.query(Company).filter(func.lower(Company.name) == nl).first()
     if co:
         return co
-    # Check aliases
     for co in db.query(Company).filter(Company.aliases.isnot(None)).all():
         if any(a.lower() == nl for a in (co.aliases or [])):
             return co

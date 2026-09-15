@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "The Navigator",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Job navigation automation - application tracking & LinkedIn capture",
   "permissions": ["activeTab", "storage", "scripting", "declarativeNetRequest"],
+  "externally_connectable": { "ids": [] },
   "host_permissions": ["http://*/*", "https://*/*", "<all_urls>"],
   "action": {
     "default_popup": "popup.html",
@@ -29,11 +30,20 @@
       "js": ["content_autofill.js"],
       "run_at": "document_idle",
       "all_frames": true
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["lib/autofill_match.js", "lib/ats_combobox.js", "content_autofill_fill.js"],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    { "resources": ["icons/icon128.png", "icons/icon16.png"], "matches": ["<all_urls>"] }
+  ]
 }

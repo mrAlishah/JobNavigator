@@ -1,0 +1,286 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import {
+  Newspaper, Search, Building2, Send, FileUser, Mail,
+  Fingerprint, ChartLine, Settings as SettingsIcon,
+} from 'lucide-react'
+import api from './api'
+import { useTheme, themeAttrs, appearanceTitle, MODE_ICON } from './theme'
+import './theme.css'
+
+// App shell: dark grouped rail, 206 <-> 50px.
+//
+// Expanded rail is pure text; icons exist only collapsed and cross-fade as
+// labels fade, so both never show at once. Warnings survive collapse as an
+// amber dot beside the icon since the label/count are gone.
+const GROUPS = [
+  { label: 'Find', items: [
+    { to: '/feed', label: 'Jobs', ready: true, countKey: 'jobs', Icon: Newspaper },
+    { to: '/searches', label: 'Searches', ready: true, countKey: 'searches', Icon: Search, warnKey: 'searches' },
+    { to: '/companies', label: 'Companies', ready: true, countKey: 'companies', Icon: Building2, warnKey: 'companies' },
+  ]},
+  { label: 'Apply', items: [
+    { to: '/applications', label: 'Applications', ready: true, countKey: 'apps', Icon: Send },
+    { to: '/resumes', label: 'Résumés', ready: true, countKey: 'resumes', Icon: FileUser },
+    { to: '/cover-letters', label: 'Cover Letters', ready: true, countKey: 'letters', Icon: Mail },
+  ]},
+  { label: 'You', items: [
+    { to: '/persona', label: 'Persona', ready: true, Icon: Fingerprint },
+    { to: '/stats', label: 'Stats', ready: true, Icon: ChartLine },
+    { to: '/settings', label: 'Settings', ready: true, Icon: SettingsIcon },
+    // API docs link lives in the Settings footer instead
+  ]},
+]
+
+const ago = (iso) => {
+  if (!iso) return null
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
+}
+
+// Badges and health are cached and read back synchronously on init so the
+// rail paints with numbers instead of popping them in one endpoint at a time.
+// NB `jobnavigator_v2_rail` is taken: it holds the expanded/collapsed state.
+const CACHE_KEY = 'jobnavigator_v2_railcache'
+const COUNT_KEYS = ['jobs', 'searches', 'companies', 'apps', 'resumes', 'letters']
+// only the three fields the rail reads — keeps the equality check honest
+const slimHealth = (h) => (h ? { status: h.status, started_at: h.started_at, finished_at: h.finished_at } : null)
+const readCache = () => {
+  try {
+    const v = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')
+    return v && typeof v === 'object' ? v : {}
+  } catch { return {} }
+}
+const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
+const sameCounts = (a, b) => COUNT_KEYS.every((k) => a[k] === b[k])
+const sameWarn = (a, b) => (a.companies || 0) === (b.companies || 0) && (a.searches || 0) === (b.searches || 0)
+const sameHealth = (a, b) => (!a && !b) || !!(a && b && a.status === b.status && a.started_at === b.started_at && a.finished_at === b.finished_at)
+
+export default function Shell() {
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('jobnavigator_v2_rail') !== 'collapsed' } catch { return true } })
+  // one read of the warm-start snapshot, before the first paint
+  const [boot] = useState(readCache)
+  const [counts, setCounts] = useState(() => obj(boot.counts))
+  const [warn, setWarn] = useState(() => obj(boot.warn))
+  const [health, setHealth] = useState(() => slimHealth(boot.health))
+  // "unknown", the third state the dot used to be missing: an unreachable
+  // backend read as green, indistinguishable from a healthy fresh install.
+  const [down, setDown] = useState(false)
+  // a badge that changes from its cached value fades in (renders at .6 for one
+  // frame, then transitions to 1); unchanged badges never dim.
+  const [fade, setFade] = useState(false)
+  const countsRef = useRef(counts)
+  const warnRef = useRef(warn)
+  const healthRef = useRef(health)
+  const rafRef = useRef([])
+  const flash = useCallback(() => {
+    rafRef.current.forEach((id) => cancelAnimationFrame(id)); rafRef.current = []
+    setFade(true)
+    // two frames: first guarantees a painted frame at .6, second starts the
+    // transition back up (one frame alone can be coalesced away)
+    rafRef.current = [requestAnimationFrame(() => { rafRef.current = [requestAnimationFrame(() => setFade(false))] })]
+  }, [])
+  useEffect(() => () => { rafRef.current.forEach((id) => cancelAnimationFrame(id)) }, [])
+  // theme.js is the one store for both axes: rail, global overlays and classic
+  // shell all read it, so a click here moves every one without a reload.
+  const look = useTheme()
+  const appearanceTip = appearanceTitle(look.mode)
+  const toggleRail = () => setOpen((v) => { const n = !v; try { localStorage.setItem('jobnavigator_v2_rail', n ? 'expanded' : 'collapsed') } catch {} return n })
+
+  const loadCounts = useCallback(() => {
+    const len = (d) => (Array.isArray(d) ? d.length : undefined)
+    // One settle, not six: every badge lands in a single setCounts, and a
+    // failed request leaves its cached number in place rather than blanking.
+    Promise.allSettled([
+      api.get('/jobs', { params: { status: 'new', limit: 1 } }),
+      api.get('/resumes', { params: { is_base: true } }),
+      // /applications returns {applications, total} — ask for one row, read total
+      api.get('/applications', { params: { limit: 1 } }),
+      api.get('/companies'),
+      api.get('/searches'),
+      api.get('/cover-letters'),
+    ]).then((r) => {
+      const data = (i) => (r[i].status === 'fulfilled' ? r[i].value?.data : undefined)
+      const prev = countsRef.current
+      const next = { ...prev }
+      if (r[0].status === 'fulfilled') next.jobs = data(0)?.total
+      if (r[1].status === 'fulfilled') next.resumes = len(data(1))
+      if (r[2].status === 'fulfilled') { const d = data(2); next.apps = Array.isArray(d) ? d.length : d?.total }
+      if (r[3].status === 'fulfilled') next.companies = len(data(3))
+      if (r[4].status === 'fulfilled') next.searches = len(data(4))
+      if (r[5].status === 'fulfilled') next.letters = len(data(5))
+      if (sameCounts(next, prev)) return  // cache was right: no render, no fade
+      const warmed = COUNT_KEYS.some((k) => prev[k] != null)
+      countsRef.current = next
+      setCounts(next)
+      if (warmed) flash()  // first ever load has nothing to cross-fade from
+    }).catch(() => { /* silent: a nav badge — the screen behind it owns the error state */ })
+    // health pair settles together: sources needing attention + last scrape sweep
+    Promise.allSettled([
+      api.get('/health/entities'),
+      api.get('/monitor/history', { params: { limit: 1, job_type: 'scrape_all' } }),
+    ]).then(([w, h]) => {
+      // A rejection carrying a `response` is the server answering (500, 401…) —
+      // the screen behind the rail owns that. Only a rejection with NO response
+      // at all is "we could not reach the backend", and it has to be both.
+      const netErr = (r) => r.status === 'rejected' && !r.reason?.response
+      setDown(netErr(w) && netErr(h))
+      if (w.status === 'fulfilled') {
+        const d = w.value?.data
+        const nw = { companies: (d?.companies || []).length, searches: (d?.searches || []).length }
+        if (!sameWarn(nw, warnRef.current)) { warnRef.current = nw; setWarn(nw) }
+      }
+      if (h.status === 'fulfilled') {
+        const nh = slimHealth((h.value?.data || [])[0] || null)
+        if (!sameHealth(nh, healthRef.current)) { healthRef.current = nh; setHealth(nh) }
+      }
+    }).catch(() => { /* silent: the rail's health line — it just stays as it was */ })
+  }, [flash])
+  // screens dispatch jn:counts-changed after a create/delete so badges follow
+  useEffect(() => { loadCounts(); window.addEventListener('jn:counts-changed', loadCounts); return () => window.removeEventListener('jn:counts-changed', loadCounts) }, [loadCounts])
+  // keep the warm-start snapshot current — best effort, never a blocker
+  useEffect(() => { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ counts, warn, health })) } catch {} }, [counts, warn, health])
+
+  const failing = (warn.companies || 0) + (warn.searches || 0)
+  const healthy = !down && failing === 0 && health?.status !== 'failed'
+  // rail gives this line ~166px at 11.5px; unhealthy variant drops the
+  // timestamp rather than ellipsing away the part that matters
+  const healthText = down
+    ? 'Backend unreachable'
+    : failing
+      ? `${failing} source${failing === 1 ? ' needs' : 's need'} attention`
+      : health
+        ? `Scraper ${health.status === 'failed' ? 'run failed' : 'healthy'} · ${ago(health.finished_at || health.started_at) || '—'}`
+        : 'No scrape recorded yet'
+  // label merges both signals into one number; tooltip names them separately
+  const nC = warn.companies || 0
+  const nS = warn.searches || 0
+  const lastSweep = health ? (ago(health.finished_at || health.started_at) || '—') : 'no scrape run recorded yet'
+  const healthTip = down
+    ? 'The dashboard could not reach the backend. Nothing below is live — check that the server is running.'
+    : failing
+    ? `${nC} compan${nC === 1 ? 'y' : 'ies'} and ${nS} search${nS === 1 ? '' : 'es'} need attention. Click to open Run history.`
+    : health?.status === 'failed'
+      ? `All companies and searches are healthy, but the last scrape run failed ${lastSweep}. Click to open Run history.`
+      : `All companies and searches healthy · last scrape run ${lastSweep}. Click to open Run history.`
+
+  const W = open ? 206 : 50
+  const padX = open ? 20 : 13
+  return (
+    <div className="jn-v2" {...themeAttrs(look)} style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
+      {/* The class names on the rail and its parts are PAINT HOOKS, not styles.
+          win98's rail is Explorer's left pane — a sunken client-white well between
+          a chrome caption strip and a chrome status bar, with the groups as tree
+          nodes and the items as children on a dotted connector — and theme.css
+          builds all of that from these hooks plus ::before/::after, so there is
+          still one rail in this file rather than a second JSX branch. Every one of
+          those rules names win98; in every other theme the classes match nothing
+          and not a pixel moves. `data-open` gates them on the EXPANDED rail: at
+          50px this is an icon strip, and a tree with no labels is not a tree. */}
+      <aside className="v2-rail" data-open={open ? 'true' : 'false'} style={{ width: W, flex: `0 0 ${W}px`, background: 'var(--rail)', display: 'flex', flexDirection: 'column', padding: '0 0 8px', transition: 'width .32s ease', overflow: 'hidden' }}>
+        <div className="v2-railbrand" style={{ height: 64, flex: '0 0 auto', position: 'relative', display: 'flex', alignItems: 'center', padding: `0 ${padX}px`, color: 'var(--rail-ink)', whiteSpace: 'nowrap', transition: 'padding .32s ease' }}>
+          <span style={{ fontFamily: 'var(--serif)', fontSize: 19, letterSpacing: '-.01em', opacity: open ? 1 : 0, transition: 'opacity .2s' }}>JobNavigator</span>
+          <span style={{ position: 'absolute', left: 0, width: W, display: 'flex', justifyContent: 'center', fontFamily: 'var(--serif)', fontSize: 17, letterSpacing: '.02em', opacity: open ? 0 : 1, transition: 'opacity .2s, width .32s ease', pointerEvents: 'none' }}>JN</span>
+        </div>
+
+        <nav className="v2-railscroll" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14, padding: '6px 0', overflowX: 'hidden', overflowY: 'auto' }}>
+          {GROUPS.map((g) => (
+            <div key={g.label} className="v2-railgroup" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div className="v2-railgrouphead" style={{ position: 'relative', height: 18, padding: '0 20px', marginBottom: 4, display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                {/* group header case/tracking are theme-controlled (some skins are
+                    sentence case, no tracking); rail keeps its own wider stop
+                    rather than being folded into --label-tracking's .13em */}
+                <span style={{ fontSize: 10, lineHeight: '18px', letterSpacing: 'calc(.16em * var(--label-tracking-scale))', textTransform: 'var(--label-case)', color: 'var(--rail-dim)', opacity: open ? 1 : 0, transition: 'opacity .2s' }}>{g.label}</span>
+                {/* ui: keep — a rail hairline on --rail-line, not Rule's --head-line pair */}
+                <span style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', width: 16, height: 1, background: 'var(--rail-line)', opacity: open ? 0 : 1, transition: 'opacity .2s', pointerEvents: 'none' }} />
+              </div>
+              {g.items.map((it) => {
+                const active = loc.pathname === it.to || loc.pathname.startsWith(it.to + '/')
+                const count = it.countKey != null ? counts[it.countKey] : undefined
+                const warned = it.warnKey ? (warn[it.warnKey] || 0) > 0 : false
+                const { Icon } = it
+                const tip = open ? undefined : `${it.label}${count != null ? ` · ${count}` : ''}${warned ? ' · needs attention' : ''}`
+                const base = {
+                  position: 'relative', display: 'flex', alignItems: 'center', height: 34,
+                  // the 3px left border is inside the 50px column, so collapsed
+                  // padding is asymmetric to keep the icon on the axis
+                  padding: open ? `0 ${padX}px 0 ${padX - 1}px` : '0 13px 0 10px',
+                  fontSize: 14, whiteSpace: 'nowrap',
+                  // active item is a token set (--rail-active-mark/-bg), not a
+                  // hard-coded bar; inactive item holds the same 3px transparent
+                  // so labels stay on one axis whichever theme is active.
+                  // --rail-active-mark must therefore always be a 3px BORDER, even
+                  // where a theme draws no visible mark: at `none` the active
+                  // item's content box grew 3px on the left, which slid its icon
+                  // (collapsed) and its label (open) 3px off the axis every other
+                  // item sits on. A full-width-bar theme writes `3px solid
+                  // transparent` — the ground paints under it (background-clip is
+                  // border-box), so the bar still reads full width.
+                  borderLeft: active ? 'var(--rail-active-mark)' : '3px solid transparent',
+                  // the inset is an OPEN-rail treatment: at 50px the collapsed
+                  // column has 24px of content between the 3px mark and the
+                  // 10/13 padding, so a theme's `0 10px` would leave 4px and
+                  // shove every icon off the axis. `0` in the base blocks, so
+                  // the default theme computes the same margin either way.
+                  borderRadius: 'var(--radius-rail-item)', margin: open ? 'var(--rail-item-inset)' : 0,
+                  background: active ? 'var(--rail-active-bg)' : 'transparent', transition: 'padding .32s ease',
+                }
+                const inner = (
+                  <>
+                    <span style={{ flex: `0 0 ${open ? 0 : 24}px`, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: open ? 'flex-start' : 'center', opacity: open ? 0 : 1, transition: 'opacity .2s, flex-basis .32s ease' }}>
+                      <Icon size={15} strokeWidth={1.8} />
+                    </span>
+                    <span style={{ flex: open ? 1 : '0 0 0px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', opacity: open ? 1 : 0, transition: 'opacity .2s' }}>{it.label}</span>
+                    {/* slot reserved at final width while count is in flight
+                        (empty span, never a placeholder 0) so nothing shifts */}
+                    {/* --rail-count-active, not --rail-accent: on the default rail the
+                        active item is a left bar over a near-transparent wash, so the
+                        count reads as the rail's own accent; a theme that FILLS the tile
+                        paints the count in the tile's ink instead (its --rail-accent
+                        would sit on the accent ground at ~1:1). Base value is
+                        --rail-accent, so nothing about the default theme moves. */}
+                    {it.countKey != null && <span style={{ flex: '0 0 auto', minWidth: open ? 18 : 0, width: open ? undefined : 0, textAlign: 'right', overflow: 'hidden', fontFamily: 'var(--mono)', fontSize: 11, color: active ? 'var(--rail-count-active)' : 'var(--rail-dim)', opacity: open ? (fade ? .6 : 1) : 0, transform: 'translateY(var(--count-shift))', transition: 'opacity .15s' }}>{count != null ? count : ''}</span>}
+                    {/* ui: keep — 5px "needs attention" rail dot, not a control */}
+                    {!open && warned && <span title="Needs attention" style={{ position: 'absolute', top: 8, left: 'calc(50% + 5px)', width: 5, height: 5, borderRadius: 'var(--radius-control)', background: 'var(--warn)' }} />}
+                  </>
+                )
+                if (it.external) return <a key={it.to} href={it.to} target="_blank" rel="noopener noreferrer" title={tip} className="v2-navdark v2-railitem" style={{ ...base, color: 'var(--rail-text)' }}>{inner}</a>
+                if (!it.ready) return <div key={it.to} title={tip || 'Coming in the redesign'} className="v2-railitem" style={{ ...base, color: 'var(--rail-dim)', cursor: 'default' }}>{inner}</div>
+                return <NavLink key={it.to} to={it.to} title={tip} className="v2-navdark v2-railitem" style={{ ...base, color: active ? 'var(--rail-active-ink)' : 'var(--rail-text)' }}>{inner}</NavLink>
+              })}
+            </div>
+          ))}
+        </nav>
+
+        {/* pipeline pulse — the dot yields its slot to the theme toggle when collapsed */}
+        {/* tooltip promises Run history, the last card on the page — deep-link to it */}
+        <div onClick={() => navigate('/stats#runs')} title={healthTip} className="v2-navdark v2-railfoot" style={{ display: 'flex', alignItems: 'center', height: 30, padding: `0 ${padX}px`, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'padding .32s ease' }}>
+          <span style={{ flex: '0 0 24px', display: 'flex', justifyContent: open ? 'flex-start' : 'center' }}>
+            {open
+              /* ui: keep — 7px scrape-health rail dot, not a control */
+              ? <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-control)', background: healthy ? 'var(--rail-accent)' : down ? 'var(--bad)' : 'var(--warn)' }} />
+              /* the ◐ cycles Light -> Dark -> System; glyph names the current
+                 mode, tooltip spells it out */
+              : <span onClick={(e) => { e.stopPropagation(); look.cycle() }} title={appearanceTip} style={{ fontSize: 13, color: 'var(--rail-dim)', cursor: 'pointer' }}>{MODE_ICON[look.mode]}</span>}
+          </span>
+          <span style={{ fontSize: 11.5, lineHeight: '18px', color: 'var(--rail-dim)', opacity: open ? 1 : 0, transition: 'opacity .2s', overflow: 'hidden', textOverflow: 'ellipsis' }}>{healthText}</span>
+        </div>
+
+        <div className="v2-railfoot" style={{ display: 'flex', alignItems: 'center', height: 34, padding: `0 12px 0 ${padX}px`, borderTop: '1px solid var(--rail-line)', whiteSpace: 'nowrap', transition: 'padding .32s ease' }}>
+          <span onClick={toggleRail} title={open ? 'Collapse to icons' : 'Expand navigation'} className="v2-navdark" style={{ flex: '0 0 24px', fontSize: 13, color: 'var(--rail-dim)', cursor: 'pointer', display: 'flex', justifyContent: open ? 'flex-start' : 'center' }}>{open ? '‹' : '›'}</span>
+          <span onClick={toggleRail} className="v2-navdark" style={{ flex: 1, fontSize: 12, lineHeight: '18px', color: 'var(--rail-dim)', cursor: 'pointer', opacity: open ? 1 : 0, transition: 'opacity .2s' }}>Collapse</span>
+          {/* ui: keep — rail-dark theme toggle (--rail-dim ink, v2-navdark + v2-appearancebtn rail hovers); IconButton reads the light-surface tokens */}
+          <span onClick={look.cycle} title={appearanceTip} className="v2-navdark v2-appearancebtn" style={{ flex: '0 0 auto', width: 26, height: 26, borderRadius: 'var(--radius-control)', display: open ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--rail-dim)', cursor: 'pointer' }}>{MODE_ICON[look.mode]}</span>
+        </div>
+      </aside>
+      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <Outlet />
+      </main>
+    </div>
+  )
+}

@@ -1,14 +1,4 @@
-"""Levels.fyi source — Playwright DOM scraping of levels.fyi job listings.
-
-levels.fyi encrypts its API responses, so headless browser rendering is required.
-User pastes a search URL; this module paginates + expands company "View all open roles"
-buttons to collect all matching jobs.
-
-Public entry points:
-- `run(search)` — full scrape entry point for the scheduler / dispatch.
-- `_scrape_levelsfyi(url, browser, debug, max_pages)` — lower-level scraper used by the
-  preview / test endpoint in `routes_searches.py`.
-"""
+"""Levels.fyi source — Playwright DOM scraping, since levels.fyi encrypts its API responses; paginates + expands "View all open roles" per company to collect matching jobs."""
 import asyncio
 import json
 import logging
@@ -35,9 +25,7 @@ def _is_levelsfyi(url: str) -> bool:
 
 
 def _parse_levelsfyi_salary(location_text: str) -> tuple[str, str | None, int | None, int | None]:
-    """Parse levels.fyi location+salary string like 'San Francisco, CA · Remote · $200K - $300K'.
-    Returns (location, work_arrangement, salary_min, salary_max).
-    """
+    """Parse levels.fyi location+salary string like 'San Francisco, CA · Remote · $200K - $300K' into (location, work_arrangement, salary_min, salary_max)."""
     if not location_text:
         return ("", None, None, None)
 
@@ -108,12 +96,13 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
             pass
 
         location = ""
+        work_arrangement = None
         salary_min = salary_max = None
         try:
             loc_el = await link.query_selector('[class*="__companyJobLocation"]')
             if loc_el:
                 loc_text = (await loc_el.inner_text()).strip()
-                location, _, salary_min, salary_max = _parse_levelsfyi_salary(loc_text)
+                location, work_arrangement, salary_min, salary_max = _parse_levelsfyi_salary(loc_text)
         except Exception:
             pass
 
@@ -137,6 +126,7 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
             "url": job_url,
             "company": company_name,
             "location": location,
+            "work_arrangement": work_arrangement,
             "salary_min": salary_min,
             "salary_max": salary_max,
             "date_posted": date_posted,
@@ -146,12 +136,7 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
 
 
 async def _levelsfyi_extract_detail(page, job_url: str) -> dict:
-    """Visit a levels.fyi job detail page and extract application URL, salary, and description.
-
-    Extracts from __NEXT_DATA__ JSON: pageProps.initialJobDetails contains
-    applicationUrl, minBaseSalary/maxBaseSalary, baseSalaryCurrency, description.
-    Returns dict with application_url, salary_min, salary_max, description.
-    """
+    """Visit a levels.fyi job detail page and extract application URL, salary and description from its __NEXT_DATA__ JSON (pageProps.initialJobDetails)."""
     result = {"application_url": None, "salary_min": None, "salary_max": None, "description": None}
 
     try:
@@ -175,12 +160,10 @@ async def _levelsfyi_extract_detail(page, job_url: str) -> dict:
                     or {}
                 )
 
-                # Application URL
                 app_url = job_data.get("applicationUrl") or job_data.get("applyUrl") or ""
                 if app_url:
                     result["application_url"] = _clean_application_url(app_url)
 
-                # Description (plain text from JSON)
                 desc = job_data.get("description") or ""
                 if len(desc) > 50:
                     result["description"] = desc[:30000]
@@ -204,20 +187,7 @@ async def _levelsfyi_extract_detail(page, job_url: str) -> dict:
 
 
 async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pages: int = 50) -> list[dict] | tuple:
-    """Scrape levels.fyi job listings using Playwright DOM extraction.
-
-    levels.fyi encrypts its API responses, so we must render the page and extract
-    from the DOM. Job cards are grouped by company, with a[href*="jobId="] links
-    containing title, location, and salary info.
-
-    Strategy:
-    1. Load the page with filters from URL
-    2. Pass 1 — Paginate: extract visible jobs from each page
-    3. Pass 3 — Enrich: fetch detail pages for application URLs, descriptions, salaries
-
-    Returns list of dicts with title, url, company, location, salary_min, salary_max.
-    If debug=True, returns tuple: (jobs, rejected).
-    """
+    """Scrape levels.fyi job listings via Playwright DOM extraction (paginate, then enrich detail pages); returns a list of job dicts, or (jobs, rejected) when debug=True."""
     own_browser = browser is None
     pw = None
     if own_browser:
@@ -372,7 +342,6 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                         except Exception as e:
                             logger.debug(f"levels.fyi: detail failed for {j.get('title', '?')}: {e}")
 
-                # Split jobs into N slices, one per tab
                 slices = [[] for _ in range(NUM_TABS)]
                 for i, j in enumerate(jobs):
                     slices[i % NUM_TABS].append(j)
@@ -573,11 +542,15 @@ async def run(search: Search) -> dict:
                 try:
                     from backend.analyzer.h1b_checker import check_job_h1b
                     from backend.analyzer.salary_extractor import apply_salary_to_job
+                    from backend.analyzer.work_arrangement import apply_arrangement_to_job
+                    from backend.analyzer.location import apply_location_to_job
                     await check_job_h1b(job, db)
                     from backend.models.db import find_company_by_name
                     company_obj = find_company_by_name(db, j["company"])
-                    h1b_median = company_obj.h1b_median_salary if company_obj else None
-                    apply_salary_to_job(job, h1b_median)
+                    apply_salary_to_job(job, getattr(job, "_h1b_median", None))
+                    # The card carries "· Remote" / "· Hybrid" next to the salary.
+                    apply_arrangement_to_job(job, structured=j.get("work_arrangement"))
+                    apply_location_to_job(job)
                 except Exception as e:
                     logger.warning(f"Inline analysis failed for {j['title']}: {e}")
 
@@ -594,6 +567,9 @@ async def run(search: Search) -> dict:
                     existing_ids.add(ext_id)
                 except IntegrityError:
                     logger.debug(f"Duplicate external_id for '{j['title']}' at {j.get('company')}, skipping")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Insert failed for '{j['title']}' at {j.get('company')} ({job_url}): {e}")
                     continue
 
             # Update last_run_at

@@ -1,15 +1,132 @@
 """Job execution monitor — tracks running state and run history (Hangfire-style)."""
 import asyncio
+import contextvars
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from backend.models.db import SessionLocal, JobRun
+from backend.models.db import SessionLocal, JobRun, Setting
 
 logger = logging.getLogger("jobnavigator.monitor")
+
+
+# ── Background concurrency limiters ────────────────────────────────────────
+# One place decides how many background tasks of a kind may run at once. The
+# gate is taken in launch_background's wrapper — BEFORE the worker opens its
+# first DB session — so N queued tasks cost N cheap coroutines, not N pooled
+# connections. Scoring 80 jobs used to fan out 80 tasks that each opened a
+# session and then waited minutes on the LLM, which drained the QueuePool and
+# left even /health unable to get a connection.
+
+
+class TaskLimiter:
+    """A named concurrency gate, re-entrant within one task.
+
+    Re-entrancy matters because the same limit is enforced at two levels: the
+    launcher takes it for a whole background run, and helpers such as
+    `cv_scorer.score_job_sync` take it for their own LLM call (they are also
+    reachable outside launch_background). A plain Semaphore would deadlock on
+    the inner acquire; here the inner `async with` just bumps a per-task depth.
+    """
+
+    def __init__(self, name: str, value: int):
+        self.name = name
+        self.value = max(1, int(value))
+        self._sem = asyncio.Semaphore(self.value)
+        self._loop = None
+        self._depth: contextvars.ContextVar[int] = contextvars.ContextVar(
+            f"jn_limiter_{name}", default=0
+        )
+
+    def _semaphore(self) -> asyncio.Semaphore:
+        # An asyncio.Semaphore binds to the loop that first blocks on it. The
+        # app has one loop, but the test suite runs each case in a fresh one,
+        # so rebind rather than raising "bound to a different event loop".
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:
+            self._sem = asyncio.Semaphore(self.value)
+            self._loop = loop
+        return self._sem
+
+    async def __aenter__(self):
+        depth = self._depth.get()
+        if depth == 0:
+            await self._semaphore().acquire()
+        self._depth.set(depth + 1)
+        return self
+
+    async def __aexit__(self, *exc_info):
+        depth = self._depth.get() - 1
+        self._depth.set(depth)
+        if depth == 0:
+            self._sem.release()
+        return False
+
+
+# name -> (settings key that carries the limit, fallback when unset/unreadable)
+_LIMIT_SOURCES: dict[str, tuple[Optional[str], int]] = {
+    "scoring": ("scoring_max_concurrent", 5),
+    "tailoring": ("tailoring_max_concurrent", 2),
+    # Page caching is httpx + BeautifulSoup and, on thin pages, a whole
+    # Chromium. Four at a time is the difference between ~300 MB and the 2.5 GB
+    # the box hit; it is deliberately not user-tunable.
+    "page_cache": (None, 4),
+}
+
+# Which gate a launch_background job_type belongs to. Anything absent runs
+# unlimited — scrapes and backups are already deduped by scope key.
+_JOB_TYPE_LIMITER: dict[str, str] = {
+    "analyze_job": "scoring",
+    "score_resume": "scoring",
+    "tailor_resume": "tailoring",
+    "generate_cover_letter": "tailoring",
+    "cache_job_page": "page_cache",
+}
+
+_limiters: dict[str, TaskLimiter] = {}
+
+
+def _resolve_limit(name: str) -> int:
+    setting_key, fallback = _LIMIT_SOURCES.get(name, (None, 4))
+    if not setting_key:
+        return fallback
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(Setting).filter(Setting.key == setting_key).first()
+            return max(1, int(row.value)) if row and row.value else fallback
+        finally:
+            db.close()
+    except Exception:
+        return fallback
+
+
+def get_limiter(name: str) -> TaskLimiter:
+    """The process-wide gate called `name`, created on first use."""
+    limiter = _limiters.get(name)
+    if limiter is None:
+        limiter = TaskLimiter(name, _resolve_limit(name))
+        _limiters[name] = limiter
+        logger.info("Background limiter '%s' initialized: max %d concurrent",
+                    name, limiter.value)
+    return limiter
+
+
+def reset_limiter(name: Optional[str] = None) -> None:
+    """Drop cached limiters so the next use re-reads its limit from settings."""
+    if name is None:
+        _limiters.clear()
+    else:
+        _limiters.pop(name, None)
+
+
+def limiter_for_job_type(job_type: str) -> Optional[TaskLimiter]:
+    name = _JOB_TYPE_LIMITER.get(job_type)
+    return get_limiter(name) if name else None
 
 # ── In-memory running state ────────────────────────────────────────────────
 
@@ -23,6 +140,15 @@ class RunningJob:
     task: Optional[asyncio.Task] = None
     scope_key: Optional[str] = None
     target_job_id: Optional[uuid.UUID] = None
+    # The Company this run targets, when it has one (company_scrape); carried separately from
+    # scope_key so the dashboard can match a running scrape to a row by id, not by name+time.
+    company_id: Optional[str] = None
+    # "What this run did", shown in Stats > Run history; set via `run.summary = ...` in
+    # tracked_run, or by a launch_background coroutine returning a string.
+    summary: Optional[str] = None
+    # Same dict stored on the JobRun row: what this run is about (which résumés a
+    # scoring run covers, which base a tailor copies from). Read by /monitor/in-flight?detail=1.
+    meta: Optional[dict] = None
 
 
 # Keyed by dedup key (e.g. "scrape_all" or "company_scrape:<uuid>")
@@ -33,6 +159,54 @@ def _make_key(job_type: str, scope_key: Optional[str] = None) -> str:
     if scope_key:
         return f"{job_type}:{scope_key}"
     return job_type
+
+
+# ── "Finished, but it did not work" ────────────────────────────────────────
+# Some tracked coroutines swallow their own exception and return a human summary
+# instead ("Scoring failed" when the LLM provider is down). The run then reads as
+# `completed` in Stats and as an OK toast in the dashboard, and the outage is
+# only visible in llm_call_log (R4-T1-28). A coroutine calls mark_run_failed()
+# to say "keep my summary, but this run failed, and here is why".
+#
+# A ContextVar keeps it per-task: launch_background's wrapper runs in its own
+# task context, and each scheduled job owns its own too, so two concurrent runs
+# never see each other's reason.
+_run_failure: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "jn_run_failure", default=None
+)
+
+
+# A DBAPI error string carries the failed statement, its bound parameters and
+# the driver module path. JobRun.error stored all three, and
+# /api/monitor/history returned them to the browser. Reduce the text to the
+# message before it is stored, and again before it is returned, because rows
+# written before this fix still hold the raw string.
+MAX_RUN_ERROR_CHARS = 1000
+_SQL_BLOCK = "[SQL:"
+_DRIVER_PREFIX_RE = re.compile(r"^\((?:\w+\.)+(\w+)\)\s*")
+
+
+def sanitize_run_error(error: Optional[str]) -> Optional[str]:
+    """Return the message of a run error without the SQL, the parameters or the driver module path."""
+    if error is None:
+        return None
+    text = str(error).split(_SQL_BLOCK, 1)[0].strip()
+    text = _DRIVER_PREFIX_RE.sub(r"\1: ", text)
+    if len(text) > MAX_RUN_ERROR_CHARS:
+        text = text[:MAX_RUN_ERROR_CHARS].rstrip() + "..."
+    return text or None
+
+
+def mark_run_failed(reason: str) -> None:
+    """Flag the currently tracked run as failed while still returning a summary."""
+    if reason:
+        _run_failure.set(str(reason)[:MAX_RUN_ERROR_CHARS])
+
+
+def _take_run_failure() -> Optional[str]:
+    reason = _run_failure.get()
+    _run_failure.set(None)
+    return reason
 
 
 class JobAlreadyRunningError(Exception):
@@ -59,6 +233,7 @@ def get_all_running() -> list[dict]:
             "elapsed_seconds": round((now - r.started_at).total_seconds(), 1),
             "scope_key": r.scope_key,
             "target_job_id": str(r.target_job_id) if r.target_job_id else None,
+            "company_id": str(r.company_id) if r.company_id else None,
         }
         for r in _running.values()
     ]
@@ -110,9 +285,11 @@ def _finish_job_run(run_id: uuid.UUID, status: str, result_summary: Optional[str
             now = datetime.now(timezone.utc)
             run.status = status
             run.finished_at = now
-            run.duration_seconds = round((now - run.started_at).total_seconds(), 1)
+            # SQLite (tests) hands back naive datetimes; treat them as UTC
+            started = run.started_at if run.started_at.tzinfo else run.started_at.replace(tzinfo=timezone.utc)
+            run.duration_seconds = round((now - started).total_seconds(), 1)
             run.result_summary = result_summary
-            run.error = error
+            run.error = sanitize_run_error(error)
             db.commit()
     finally:
         db.close()
@@ -148,6 +325,7 @@ async def tracked_run(
     scope_key: Optional[str] = None,
     meta: Optional[dict] = None,
     target_job_id: Optional[uuid.UUID] = None,
+    company_id: Optional[str] = None,
 ):
     """Async context manager: tracks a job run in-memory + DB. Raises JobAlreadyRunningError on duplicate."""
     key = _make_key(job_type, scope_key)
@@ -167,12 +345,17 @@ async def tracked_run(
         started_at=datetime.now(timezone.utc),
         scope_key=scope_key,
         target_job_id=target_job_id,
+        company_id=company_id,
+        meta=meta,
     )
     _running[key] = running_job
 
     try:
+        _run_failure.set(None)
         yield running_job
-        _finish_job_run(run_id, "completed", None, None)
+        reason = _take_run_failure()
+        _finish_job_run(run_id, "failed" if reason else "completed",
+                        running_job.summary, reason)
     except Exception as e:
         _finish_job_run(run_id, "failed", None, str(e))
         raise
@@ -192,9 +375,9 @@ def launch_background(
     func_args: tuple = (),
     func_kwargs: Optional[dict] = None,
     target_job_id: Optional[uuid.UUID] = None,
+    company_id: Optional[str] = None,
 ) -> str:
-    """Launch a coroutine as a background asyncio.Task with tracking. Returns run_id immediately.
-    Raises JobAlreadyRunningError if already running."""
+    """Launch a coroutine as a background asyncio.Task with tracking; returns run_id immediately, raising JobAlreadyRunningError if already running."""
     key = _make_key(job_type, scope_key)
 
     existing = _running.get(key)
@@ -209,8 +392,20 @@ def launch_background(
 
     async def _wrapper():
         try:
-            await coro_func(*(func_args or ()), **(func_kwargs or {}))
-            _finish_job_run(run_id, "completed", None, None)
+            _run_failure.set(None)
+            # The gate is taken here, before the worker runs, so a queued task
+            # holds nothing but itself — no DB connection, no LLM slot.
+            limiter = limiter_for_job_type(job_type)
+            if limiter is None:
+                result = await coro_func(*(func_args or ()), **(func_kwargs or {}))
+            else:
+                async with limiter:
+                    result = await coro_func(*(func_args or ()), **(func_kwargs or {}))
+            # A coroutine that returns a string is describing what it did.
+            summary = result.strip() if isinstance(result, str) and result.strip() else None
+            # …but it may also have reported a failure it handled itself.
+            reason = _take_run_failure()
+            _finish_job_run(run_id, "failed" if reason else "completed", summary, reason)
         except Exception as e:
             logger.error(f"Background job {job_type} failed: {e}")
             _finish_job_run(run_id, "failed", None, str(e))
@@ -227,6 +422,8 @@ def launch_background(
         task=task,
         scope_key=scope_key,
         target_job_id=target_job_id,
+        company_id=company_id,
+        meta=meta,
     )
 
     return str(run_id)

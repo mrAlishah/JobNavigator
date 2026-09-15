@@ -21,10 +21,7 @@ def log_llm_call(
     success: bool = True,
     error: Optional[str] = None,
 ) -> None:
-    """Insert a row into llm_call_log. Swallows DB errors — logging must never break scoring.
-
-    usage: {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}
-    """
+    """Insert a row into llm_call_log; swallows DB errors so logging never breaks scoring. usage: {input_tokens, output_tokens, cache_read_tokens, cache_write_tokens}."""
     try:
         cost = calc_cost(
             provider,
@@ -60,25 +57,25 @@ def log_llm_call(
 
 @asynccontextmanager
 async def track_llm_call(purpose: str, provider: str, model: str, job_id=None):
-    """Async context manager that logs an LLM call to llm_call_log.
-
-    Usage:
-        async with track_llm_call("email", provider, model) as tracker:
-            resp = await call_email_llm(...)
-            tracker.usage = resp.get("usage", tracker.usage)
-            raw = resp["text"]
-
-    Automatically captures duration, success/failure, and error text.
-    Caller must set tracker.usage from the LLM response dict.
-    """
+    """Async context manager that times an LLM call and logs it to llm_call_log; the caller must set tracker.usage (or call tracker.record(resp)) so a fallback dispatch is logged as the model that actually answered."""
     started = time.monotonic()
 
     class _Tracker:
-        def __init__(self):
+        def __init__(self, provider, model):
             self.usage = {"input_tokens": 0, "output_tokens": 0,
                           "cache_read_tokens": 0, "cache_write_tokens": 0}
+            self.provider = provider
+            self.model = model
 
-    t = _Tracker()
+        def record(self, resp):
+            """Take usage + the dispatched provider/model off an LLM response dict."""
+            if isinstance(resp, dict):
+                self.usage = resp.get("usage") or self.usage
+                self.provider = resp.get("provider") or self.provider
+                self.model = resp.get("model") or self.model
+            return resp
+
+    t = _Tracker(provider, model)
     success = True
     error = None
     try:
@@ -89,10 +86,17 @@ async def track_llm_call(purpose: str, provider: str, model: str, job_id=None):
         raise
     finally:
         try:
+            # Keep OpenRouter live pricing fresh (TTL-gated) so cost is accurate.
+            if t.provider == "openrouter":
+                try:
+                    from backend.analyzer.llm_cost import refresh_openrouter_prices
+                    await refresh_openrouter_prices()
+                except Exception:
+                    pass
             log_llm_call(
                 purpose=purpose,
-                provider=provider,
-                model=model,
+                provider=t.provider,
+                model=t.model,
                 usage=t.usage,
                 duration_ms=int((time.monotonic() - started) * 1000),
                 job_id=job_id,

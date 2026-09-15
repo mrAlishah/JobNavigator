@@ -1,11 +1,4 @@
-"""Regression: a malformed LLM response ({"scores": null} / non-dict scores) must
-be treated as a transient failure (return None), never crash the scoring batch.
-
-Incident 2026-06: scrape_all died with 'NoneType' object has no attribute
-'values' — the model emitted "scores": null, result.get("scores", {}) returned
-None (the default only applies when the key is ABSENT), and phase 3 called
-scores.values() on it, killing the whole run.
-"""
+"""A malformed LLM response ({"scores": null} / non-dict scores) must be treated as a transient failure (return None), never crash the scoring batch."""
 import asyncio
 import pytest
 from sqlalchemy import create_engine
@@ -44,7 +37,7 @@ def scorer_db(monkeypatch):
 
 
 def _llm_returning(text):
-    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None):
+    async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         return {"text": text,
                 "usage": {"input_tokens": 1, "output_tokens": 1,
                           "cache_read_tokens": 0, "cache_write_tokens": 0}}

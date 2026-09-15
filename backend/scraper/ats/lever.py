@@ -1,16 +1,9 @@
-"""Lever ATS handler — GET api.lever.co/v0/postings/{company}.
-
-Detection: substring match on `jobs.lever.co/` (the board host + trailing slash
-prevents matching attacker-controlled paths like `https://evil.com/?u=lever.co`).
-Public interface: is_lever(url), scrape(url, debug=False).
-
-The public Lever API returns all postings for the given company slug. Supported
-filters (department, team, location, commitment) are forwarded from the original
-URL's query string.
-"""
+"""Lever ATS handler: GET api.lever.co/v0/postings/{company}; matched on `jobs.lever.co/` (trailing
+slash guards against attacker-controlled paths) with department/team/location/commitment filters
+forwarded from the original query string."""
 import json
 import logging
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 
@@ -25,13 +18,9 @@ def is_lever(url: str) -> bool:
 
 
 async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
-    """Fetch jobs from Lever's public JSON API.
-
-    Forwards supported filters from the original URL query string:
-    department, team, location, commitment.
-    """
+    """Fetch jobs from Lever's public JSON API, forwarding department/team/location/commitment
+    filters from the original URL query string."""
     parsed = urlparse(url)
-    # Extract company slug from path: /plaid or /plaid/
     path_parts = [p for p in parsed.path.strip("/").split("/") if p]
     if not path_parts:
         if debug:
@@ -39,12 +28,13 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
         return []
     company_slug = path_parts[0]
 
-    # Build API URL, forwarding supported Lever filters
     api_url = f"https://api.lever.co/v0/postings/{company_slug}?mode=json"
     qs = parse_qs(parsed.query)
     for param in ("department", "team", "location", "commitment"):
         if param in qs:
-            api_url += f"&{param}={qs[param][0]}"
+            # parse_qs already decoded the value, so a filter with a space
+            # ("San Francisco") has to be re-encoded before it is appended.
+            api_url += f"&{param}={quote(qs[param][0], safe='')}"
 
     jobs = []
     rejected = []
@@ -63,7 +53,14 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
             job_url = p.get("hostedUrl") or ""
             reason = _validate_job(title, job_url)
             if reason is None:
-                jobs.append({"title": title, "url": job_url})
+                categories = p.get("categories") or {}
+                # `allLocations` is the full list; 9 of 75 postings on one live
+                # board name more than one place.
+                every = [x for x in (categories.get("allLocations") or []) if x]
+                jobs.append({"title": title, "url": job_url,
+                             "location": categories.get("location") or None,
+                             "locations": every,
+                             "arrangement": p.get("workplaceType") or None})
             elif debug:
                 rejected.append({"title": title, "url": job_url, "selector": "lever_api", "reason": reason})
 
