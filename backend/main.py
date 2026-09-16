@@ -87,9 +87,11 @@ OPENAPI_TAGS = [
     {"name": "system", "description": "Health check and system info"},
 ]
 
+APP_VERSION = "2.1.0"  # released version; shown in Settings and on /health
+
 app = FastAPI(
     title="JobNavigator API",
-    version="1.0.0",
+    version=APP_VERSION,
     description=(
         "Personal job hunt automation system. Scrapes job boards and career pages, "
         "scores jobs against resumes using Claude API, monitors Gmail for responses, "
@@ -354,7 +356,7 @@ def health_check():
     while the pool is drained, and it is in _PUBLIC_PREFIXES so the auth
     middleware's settings read is skipped too.
     """
-    return {"status": "ok", "service": "JobNavigator"}
+    return {"status": "ok", "service": "JobNavigator", "version": APP_VERSION}
 
 
 async def _tracer_click_and_redirect(token: str, request: Request):

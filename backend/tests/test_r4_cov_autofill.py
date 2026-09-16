@@ -104,7 +104,8 @@ def test_a_template_without_a_company_placeholder_becomes_all_suffix(test_db):
     built = _build_autofill_prompt(BODY)
     assert built["cached_prefix"] is None
     assert "{persona}" not in built["suffix"]
-    assert built["suffix"].startswith("Answer Why us? in 250 chars for ")
+    assert built["suffix"].startswith("Answer <<<APPLICATION QUESTION>>>\nWhy us?\n<<<END APPLICATION QUESTION>>> in 250 chars for ")
+    assert built["suffix"].rstrip().endswith("whatever it says.")   # the fence notice closes the suffix
     assert "fintech PM" in built["suffix"]         # the flattened persona, not the token
 
 
@@ -134,7 +135,7 @@ def test_the_split_puts_persona_and_qa_bank_in_the_cacheable_prefix(test_db):
     assert "Because payments." in built["cached_prefix"]
     assert "Because payments." not in built["suffix"]
     assert built["suffix"].startswith("Rogo - PM")
-    assert "Why us?" in built["suffix"]
+    assert "<<<APPLICATION QUESTION>>>\nWhy us?\n<<<END APPLICATION QUESTION>>>" in built["suffix"]
 
 
 def test_no_persona_row_renders_a_placeholder(test_db):

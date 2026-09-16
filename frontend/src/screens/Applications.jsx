@@ -4,7 +4,8 @@ import api from '../api'
 import { useToasts, ToastStack } from '../Toast'
 import ConfirmDialog from '../ConfirmDialog'
 import { useEscape, useSettled, NBSP, DASH } from '../hooks'
-import { Button, Card, Check, CopyGlyph, DashedAdd, Dot, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, Mono, PageTitle, Pill, Row, SectionHead, Segmented, Spinner, Textarea } from '../ui'
+import { Button, Card, Check, CopyGlyph, DashedAdd, Dot, FooterRow, GlyphBadge, Heading, HeaderRow, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, Mono, PageTitle, Pill, Row, SectionHead, Segmented, Spinner, Textarea } from '../ui'
+import { PICK_KEY, clickMods, clickSelection, pruneSelection } from './rowSelect'
 import '../theme.css'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -62,6 +63,16 @@ const isStale = (a) => daysSince(a.updated_at) > 7 && ['applied', 'interview'].i
 
 // where a popover sits; how it looks is `Menu`'s.
 const POPOVER = { position: 'absolute', top: '100%', zIndex: 40 }
+// ui: keep — the bulk bar's on-rail controls: --rail-ink on an --on-rail-line
+// hairline, drawn over the dark --rail bar. Pill and Button paint for light
+// surfaces, so these keep their own look. The same object as the Feed's
+// (JobFeed.jsx, `RAIL_BTN`) — the two bulk bars are one control set, and the
+// constant is duplicated rather than hoisted because it is not a primitive.
+const RAIL_BTN = {
+  height: 27, padding: '0 11px', border: '1px solid var(--on-rail-line)', borderRadius: 'var(--radius-control)',
+  // --ctl-line, not the v2-ctl 1: at 1 the line box is the em and Plex's ink rides high in a centred box (see Select)
+  display: 'flex', alignItems: 'center', fontSize: 11.5, lineHeight: 'var(--ctl-line)', color: 'var(--rail-ink)', cursor: 'pointer',
+}
 // (round 9: ACT_BTN is gone — the three header actions it painted are now
 // `Button variant="secondary"` / `IconButton`, see the detail header below.)
 // FastAPI's `detail` is a plain string for HTTPException; append it when present.
@@ -93,6 +104,11 @@ export default function Applications() {
   const [prep, setPrep] = useState(null)           // {text} | 'loading'
   const [copied, setCopied] = useState(false)
   const [logOpen, setLogOpen] = useState(false)
+  // bulk selection — the Feed's mechanics: ⌘/Ctrl picks, ⇧ ranges from the last
+  // anchor in LIST order, a plain click focuses one row and drops the selection.
+  const [checked, setChecked] = useState(() => new Set())
+  const lastIdx = useRef(null)
+  const [bulkBusy, setBulkBusy] = useState(false)   // one bulk write at a time
   const timers = useRef([])
   const notesTimer = useRef(null)
   useEffect(() => () => { timers.current.forEach(clearTimeout); clearTimeout(notesTimer.current) }, [])
@@ -116,6 +132,9 @@ export default function Applications() {
       setTotal(typeof data?.total === 'number' ? data.total : null)   // header counts what the server has, not what fits in one page
       const list = data.applications || []
       setApps(list); setLoadErr(null)
+      // A background refresh keeps the bulk selection — only rows the server has
+      // stopped sending (deleted elsewhere) drop out of it.
+      setChecked((cur) => pruneSelection(cur, list.map((a) => a.id)))
       setSel((cur) => {
         if (forceId != null && list.some((a) => a.id === forceId)) return forceId
         if (cur != null && list.some((a) => a.id === cur)) return cur
@@ -150,7 +169,14 @@ export default function Applications() {
   }, [])
   // Escape closes filter menus, prep, interview edit and Log (its dirty-discard confirm still fires) via the shared hook, which claims the event.
   // Gated on !confirm so ConfirmDialog's own Escape wins while open; closeLog() is gated on logOpen so a stale dirty flag can't fire the discard confirm with no form open.
-  useEscape(() => { closeAll(); setPrep(null); setEditIv(null); setIntForm(false); if (logOpen) closeLog() }, !confirm)
+  // The selection is the LAST thing Escape takes: with a menu, the prep sheet, an
+  // interview editor or the Log form open, that key is closing the overlay, and
+  // clearing a bulk selection under it would be a second, unasked-for undo.
+  useEscape(() => {
+    const overlay = !!openFlt || menuOpen || !!prep || !!editIv || intForm || logOpen
+    closeAll(); setPrep(null); setEditIv(null); setIntForm(false); if (logOpen) closeLog()
+    if (!overlay) setChecked(new Set())
+  }, !confirm)
 
   // ── derived ──
   const nInterview = apps.filter((a) => a.status === 'interview').length
@@ -200,6 +226,13 @@ export default function Applications() {
 
   const d = apps.find((a) => a.id === sel) || null
 
+  // The rows as PAINTED — stage groups in order, a collapsed group left out
+  // entirely. This, not `visible`, is the list order a ⇧-range walks, so a range
+  // can never reach through a group the user has folded away.
+  const flatIds = useMemo(() => STAGES.flatMap((st) => (closed[st.id] ? []
+    : visible.filter((a) => groupOf(a.status) === st.id).map((a) => a.id))), [visible, closed])
+  const rowIndex = useMemo(() => new Map(flatIds.map((id, i) => [id, i])), [flatIds])
+
   // ── actions ──
   // Patches only the row it belongs to — never a full reload — and never touches `sel`, so a
   // response landing after the user has already selected a different row can't move the pane.
@@ -244,6 +277,63 @@ export default function Applications() {
       },
     })
   }
+  // ── bulk selection ──
+  // The Feed's rowClick, over the painted row order (`flatIds`): ⌘/Ctrl toggles,
+  // ⇧ ranges from the anchor, a plain click opens the row in the detail pane and
+  // drops whatever was selected.
+  const rowClick = (e, a) => {
+    const index = rowIndex.get(a.id) ?? -1
+    const { pick, range } = clickMods(e)
+    // `focused` is the row in the detail pane: as on the Feed, the first ⌘ or ⇧
+    // click takes it along, so picking a second row never silently loses the one
+    // the user was already looking at.
+    const next = clickSelection({ checked, ids: flatIds, index, anchor: lastIdx.current, pick, range, focused: rowIndex.get(sel) ?? null })
+    lastIdx.current = next.anchor
+    // as on the Feed: a plain click opens the row and leaves the selection alone (✕ or Esc clears)
+    if (next.focus) { closeAll(); setSel(a.id); return }
+    setChecked(next.checked)
+  }
+  const selectedRows = useMemo(() => apps.filter((a) => checked.has(a.id)), [apps, checked])
+  // one bulk write per (previous status) group — the rows in a batch can have come
+  // from different stages, and each goes back to its own.
+  // The stepper's own undo: the toast reverses the move, and the server drops the
+  // transition it reverses (undo: true) so a misclick never reaches the Stats funnel.
+  const stageWithUndo = (app, status) => {
+    const prev = app.status
+    if (!prev || prev === status) return
+    patch(app.id, { status })
+    pushToast({ kind: 'undo', msg: `Moved to ${STAGE[status]?.label || status}.`, action: 'Undo',
+      onAction: () => patch(app.id, { status: prev, undo: true }) })
+  }
+  const bulkUndo = async (prev) => {
+    if (!prev.length) return
+    const groups = new Map()
+    prev.forEach((p) => { if (!groups.has(p.status)) groups.set(p.status, []); groups.get(p.status).push(p.id) })
+    try {
+      for (const [status, ids] of groups) await api.post('/applications/bulk-update', { ids, status, undo: true })
+      load(); window.dispatchEvent(new CustomEvent('jn:counts-changed'))
+      pushToast({ kind: 'success', msg: `Restored ${prev.length} application${prev.length === 1 ? '' : 's'}.` })
+    } catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Could not undo ${prev.length} application${prev.length === 1 ? '' : 's'}` + errSuffix(e) }); load() }
+  }
+  const bulkStatus = async (status) => {
+    const moving = selectedRows.filter((a) => a.status !== status)
+    if (!moving.length || bulkBusy) return
+    const ids = moving.map((a) => a.id)
+    const prev = moving.map((a) => ({ id: a.id, status: a.status }))   // snapshot before the write
+    setBulkBusy(true); setChecked(new Set())
+    // Optimistic, and each row's patchSeq is bumped first: a single-row PATCH still
+    // in flight on one of these rows must not land afterwards and win.
+    ids.forEach((id) => { patchSeq.current[id] = (patchSeq.current[id] || 0) + 1 })
+    setApps((p) => p.map((a) => (ids.includes(a.id) ? { ...a, status, updated_at: new Date().toISOString() } : a)))
+    try {
+      await api.post('/applications/bulk-update', { ids, status })
+      load(); window.dispatchEvent(new CustomEvent('jn:counts-changed'))
+      pushToast({ kind: 'undo', msg: `Moved ${ids.length} to ${STAGE[status].label}.`, action: 'Undo', onAction: () => bulkUndo(prev) })
+    } catch (e) {
+      console.error(e); pushToast({ kind: 'error', msg: `Could not move ${ids.length} application${ids.length === 1 ? '' : 's'}` + errSuffix(e) }); load()
+    } finally { setBulkBusy(false) }
+  }
+
   const canAddInterview = !intBusy && (!!intWhat.trim() || !!intWhen)   // a blank form adds nothing
   const addInterview = async () => {
     if (!d || !canAddInterview) return
@@ -388,6 +478,10 @@ export default function Applications() {
           )}
         </span>
 
+        {/* the Feed's head-row hint, over the list column: this list has no head row
+            of its own, so it rides along with the filters */}
+        <span style={{ flex: '0 0 auto', fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '.02em', color: 'var(--muted)', whiteSpace: 'nowrap' }}>⇧ range · {PICK_KEY} pick</span>
+
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {visible.length !== apps.length && <Helper style={{ whiteSpace: 'nowrap' }}>{visible.length} of {apps.length} shown</Helper>}
           <span style={{ position: 'relative', display: 'flex' }} onClick={(e) => e.stopPropagation()}>
@@ -411,11 +505,14 @@ export default function Applications() {
       </HeaderRow>
 
       {/* split body */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      {/* position:relative — the bulk bar below floats over the list column, and the
+          list column is itself the scroller (a bar inside it would scroll away) */}
+      <div style={{ position: 'relative', flex: 1, display: 'flex', minHeight: 0 }}>
         {/* list */}
         {/* --list-well: transparent everywhere but win98, where the list column is a
             sunken #dfdfdf well (round-6 addendum) — same hook as the Feed's. */}
-        <div className="v2-scroll" style={{ flex: '0 0 472px', borderRight: '1px solid var(--line)', background: 'var(--list-well)', overflow: 'auto', padding: '6px 14px 14px 22px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* userSelect:none — ⇧-click is a row range here, not a text range */}
+        <div className="v2-scroll" style={{ flex: '0 0 472px', borderRight: '1px solid var(--line)', background: 'var(--list-well)', overflow: 'auto', padding: '6px 14px 14px 22px', display: 'flex', flexDirection: 'column', minHeight: 0, userSelect: 'none', WebkitUserSelect: 'none' }}>
           {/* Nothing about the list is drawn before /applications settles: the four
               stage headers would otherwise paint with NBSP counts under a title that
               already says how many there are, and the row groups would fill in one
@@ -440,11 +537,18 @@ export default function Applications() {
                 {!shut && rows.map((a) => {
                   const stale = isStale(a)
                   const unknownTitle = !a.title || a.title === 'Unknown Role'
+                  const on = checked.has(a.id)   // in the bulk selection, which has no Row state of its own
                   // selection is `Row selected` and nothing else — a background wash, no
                   // accent bar and no left-pad compensation, so text stays on the same axis.
+                  // A bulk-picked row borrows the same wash (the Feed's `--row-selected` tint).
                   return (
-                    <Row key={a.id} selected={sel === a.id} onClick={() => { closeAll(); setSel(a.id) }} className="v2-arow"
-                      style={{ gap: 8, flex: '0 0 46px', marginBottom: 3 }}>
+                    <Row key={a.id} selected={sel === a.id} onClick={(e) => rowClick(e, a)} className="v2-arow"
+                      style={{ position: 'relative', gap: 8, flex: '0 0 46px', marginBottom: 3, ...(on ? { backgroundColor: 'var(--row-selected)' } : null) }}>
+                      {/* ui: keep — the Feed's bulk tick, at the same -4/-3 offsets. With no
+                          score ring (or any other leading element) to hang off, it pins to the
+                          row's own top-left corner, and the 2px --surface knock-out ring is what
+                          lifts it off both the row and the gutter it half sits in. */}
+                      {on && <GlyphBadge style={{ position: 'absolute', left: -4, top: -3, border: '2px solid var(--surface)', fontSize: 'var(--t-9)' }}>✓</GlyphBadge>}
                       {/* lineHeight:normal — the design is authored at the browser default;
                           Tailwind's preflight sets 1.5 on <html>, which would inflate the block */}
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 'normal' }}>
@@ -486,7 +590,7 @@ export default function Applications() {
 
         {/* detail */}
         {d ? <Detail d={d} history={history} menuOpen={menuOpen} setMenuOpen={setMenuOpen}
-          onStage={(s) => patch(d.id, { status: s })} onNotes={(v, now) => saveNotes(d.id, v, now)}
+          onStage={(s) => stageWithUndo(d, s)} onNotes={(v, now) => saveNotes(d.id, v, now)}
           onDelete={() => remove(d)} navigate={navigate}
           intForm={intForm} setIntForm={setIntForm} intWhat={intWhat} setIntWhat={setIntWhat}
           intWhen={intWhen} setIntWhen={setIntWhen} intWhere={intWhere} setIntWhere={setIntWhere}
@@ -498,6 +602,33 @@ export default function Applications() {
              it is still loading the same box holds a Spinner instead. Identical box
              either way, so the settled frame does not move. */
           : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', color: 'var(--muted)', fontSize: 13 }}>{loaded ? 'Select an application.' : <Spinner />}</div>}
+
+        {/* Bulk bar — the Feed's, over the list column. It is the split body's LAST
+            child on purpose: the list scroller's next sibling has to stay the detail
+            pane (tests/e2e/case_apps_select.py finds the pane that way), so the bar is
+            positioned over the 472px list column instead of sitting next to it. */}
+        {checked.size > 0 && (
+          <div style={{ position: 'absolute', left: 0, bottom: 14, width: 472, zIndex: 25, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+            {/* ui: keep — floating bulk bar is a pill-shaped *bar* on --rail with --shadow-pop; no primitive owns a bar */}
+            <div className="v2-bulkbar" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 6, padding: '7px 8px 7px 14px', background: 'var(--rail)', borderRadius: 'var(--radius-control)', boxShadow: 'var(--shadow-pop)' }}>
+              <span style={{ fontSize: 12, color: 'var(--rail-ink)', fontWeight: 600, whiteSpace: 'nowrap' }}>{checked.size} selected</span>
+              <div className="v2-bulksep" style={{ width: 1, height: 16, background: 'var(--on-rail-sep)', margin: '0 3px' }} />
+              {STAGES.map((st) => {
+                // a stage every picked row is already in has nothing to do: dimmed and inert,
+                // rather than gone — the four stages are one row of controls and must not reflow.
+                const n = selectedRows.filter((a) => a.status !== st.id).length
+                const done = n === 0
+                // ui: keep — RAIL_BTN controls (--rail-ink on --on-rail-line); the Pill tokens are for light surfaces
+                return (
+                  <div key={st.id} onClick={done ? undefined : () => bulkStatus(st.id)} className={done ? undefined : 'v2-onrail v2-ctl'}
+                    title={done ? `All selected are already in ${st.label}` : `Move ${n} to ${st.label}`}
+                    style={{ ...RAIL_BTN, ...(done ? { opacity: 0.4, cursor: 'default' } : null) }}>{st.label}</div>
+                )
+              })}
+              <div onClick={() => setChecked(new Set())} className="v2-onrail" title="Clear the selection" style={{ width: 27, height: 27, borderRadius: 'var(--radius-control)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--on-rail-dim)', cursor: 'pointer' }}>✕</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {prep && <PrepModal prep={prep} company={d ? companyOf(d) : ''} copied={copied} onCopy={copyPrep} onClose={() => setPrep(null)} />}

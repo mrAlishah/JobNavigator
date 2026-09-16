@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Posting zoom:** a + / − floater top-right of the posting steps the frame from 50 to 200 %; the level is remembered per browser. Double-click resets. Settings › General › Feed hides it.
+
+### Changed
+- **Page text is fenced in every prompt:** the job posting (scoring, tailoring, cover letters) and the application question (autofill) go to the model between `<<<JOB POSTING>>>` markers with a one-line notice that it is data, so a posting that carries instructions is read as a posting. Output for ordinary postings is unchanged.
+- **Frontend port 3000** binds to 127.0.0.1; the dashboard is reached through Caddy on port 80 only.
+
+### Fixed
+- **Location parser, second pass:** bare Bay Area and Puget Sound cities resolve to their state; "Remote US" / "Remote in Canada" give the country with the remote flag; "Multiple Locations" and a stray "Location:" label never become a city; comma-joined city lists ("New York, San Francisco, Seattle", "IRL, Dublin, Cork") split into one place each. Corpus grown to 706 strings; existing rows re-parsed (unparsed 421 → 124).
+- **Google and Meta handlers emit the card's location** (first place plus every listed one), so those jobs answer the Location filter; "USA Remote" and other country-first remote strings parse to the country with the remote flag.
+- **Company page cap:** the ATS-dispatch fallback now honours the company's "Pages to read" like every other path.
+- **LinkedIn Personal login** (by @volkotyk, #16): the session check asks Voyager `/me` instead of probing feed markup that no longer exists, and the login form is filled by `autocomplete` attribute since LinkedIn's ids are generated per render; the refresh script shares both helpers.
+
+## [2.1.0] — 2026-09-16
+
+The classic dashboard stays at `/classic` for this release too. Upgrade: `git pull`, `docker compose up --build -d`; reload the extension from `extension/`.
+
+### Added
 - **Location and work-arrangement search** (base by @volkotyk, #10): every job gets a parsed country, region and city plus remote / hybrid / on-site flags; the Jobs tab has Location and Work filters with counts that narrow each other, and a badge on the row. A posting open in several places answers every one of them. The board's own location text is never rewritten.
 - **Every handler we own now emits location, multi-location and arrangement from what the board returns:** Greenhouse splits multi-location names and reads offices; Workday reads `remoteType` and the detail's additional locations with no extra request; the generic page scraper reads the location line of each job card (Stripe, Coinbase, Brex, Cursor, ServiceNow, Bloomberg, IBM, Databricks, Apple, PayPal); Phenom multi-location and RemoteType; TalentBrew; Oracle HCM and Rippling secondary locations; a small Amazon handler. A normal company pass also fills these fields on postings scraped before, so existing rows catch up without a re-fetch.
 - **Location menu** lists the busiest country first and its regions and cities by count; a city that is also its region's name is one entry.
@@ -16,11 +33,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex CLI provider** (by @funstuie-bit, #8): use a ChatGPT subscription for scoring, tailoring, letters, autofill and email through `codex exec`. One-time `docker compose exec backend codex login --device-auth`; token usage is logged, cost counts as $0.
 - Follow-up hardening: a login pre-check that names the fix instead of a 15-second 401 storm, `turn.failed` surfaced as the error (a usage-limit hit fails over to the fallback provider without retrying), a 5-minute timeout on both subscription CLIs, and at most two concurrent Codex processes on the shared login file.
 
+- **Applications: bulk actions**, the Jobs feed's exactly — ⌘/Ctrl-click picks rows, ⇧-click takes a range, and a floating bar moves the whole selection to Applied, Interview, Offer or Rejected (with an undo toast that puts every row back to the stage it came from). A stage the selection is already in is dimmed and does nothing. New `POST /api/applications/bulk-update` and `/bulk-delete`.
 - **Add a job to the feed from the Log modal** (by @volkotyk, #9): the Applications › Log modal's Status now offers New and Saved beside the stages; those write a feed job only (`POST /jobs/manual`, deduplicated against existing rows), and a ✦ Tailor trigger beside each base résumé saves the row and starts a tailored copy.
+- **Applications: undo on the stage stepper.** Moving one application to another stage shows the same undo toast the bulk bar has; an undo drops the transition it reverses instead of logging a new one, so the Stats funnel stays honest.
+- **Getting-started guide** (`docs/GETTING-STARTED.md`): install, provider choice including the Claude Code and Codex CLI subscription logins from inside the container, résumés and Persona, companies, searches, the feed, the extension, Telegram and Gmail. README Quick Start reworked around it.
+- **Version** in the Settings colophon comes from the build (the backend's is noted when it differs) and is on `/health`.
+
+### Changed
+- **Status filter:** picking nothing shows every status, like the other filters, and the pill's ✕ clears to Any; a browser with no saved filters starts on New.
+- **Feed row:** the third line never wraps — salary · arrangement · H-1B · age; when space runs out the H-1B verdict gives way first and the age stays whole. The company name keeps its width; the location line shrinks.
+- **Selection:** the first ⌘/Ctrl- or ⇧-click includes the row that is already open, on the Feed and in Applications. The bulk bar's buttons hover in the rail's own tones (Windows 98 gets a raised strip with bevel buttons); the Applications bar has no Delete.
+- **Extension** 2.1.0, same code as 2.0.0.
 
 ### Fixed
 - **Auto-scoring and the daily digest on fresh installs** (by @volkotyk, #11): `cv_scores` is created as `json` on a new database, and comparing it with a `jsonb` literal aborted every auto-score pass after a scrape and every digest; both compare as text now. Run errors no longer store or return the failed SQL statement and its parameters.
 - **Cover letters for hand-logged jobs** (by @volkotyk, #7): a job logged from Applications has no stored description, and generation refused it. The letter worker now resolves the text the way tailoring does (description, then a live fetch saved to the job, then the cached page); logging an application queues that fetch; the description backfill covers applied jobs.
+- **Feed paging under a filter:** a filter change starts a new load generation, so a page still in flight from the old filter is dropped instead of appended; every job sort carries an id tiebreak so pages never overlap.
+- **Handler filters:** Greenhouse tolerates spaces in department and office ids and logs what it discards; Rippling compares country and region through the parser; Ashby reads secondary locations; Lever quotes filter values.
+- **Cairo and Bengaluru in a US feed:** the Amazon handler honoured no country filter, and country-first strings ("IN, KA, Bengaluru") read as Indiana; both fixed and existing rows re-parsed.
+- **Select boxes** in Paper and Green Paper no longer clip descenders.
 
 ## [2.0.0] — 2026-09-06
 
@@ -129,6 +160,8 @@ replies, and manage it all from a React dashboard.
 - **Dashboard:** React + Tailwind (dark mode), keyboard-driven Job Feed, editable
   settings (LLM providers/models, rubric, filters) — only secrets live in `.env`.
 
-[Unreleased]: https://github.com/vesaias/JobNavigator/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/vesaias/JobNavigator/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/vesaias/JobNavigator/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/vesaias/JobNavigator/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/vesaias/JobNavigator/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/vesaias/JobNavigator/releases/tag/v1.0.0

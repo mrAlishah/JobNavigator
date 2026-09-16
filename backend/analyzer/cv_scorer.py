@@ -1,4 +1,5 @@
 """LLM-based CV scorer — scores job vs all uploaded CV versions dynamically."""
+from backend.analyzer.prompt_fence import fence
 import asyncio
 import json
 import logging
@@ -355,7 +356,7 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
 {output_schema}"""
 
     # PER-JOB SUFFIX: just the JD. Changes every call.
-    user_prompt = f"JOB DESCRIPTION:\n{job_text[:8000]}"
+    user_prompt = "JOB DESCRIPTION:\n" + fence(job_text[:8000], "JOB POSTING")
 
     max_tokens = 2000 if depth == "full" else 600
     system_msg = "You are a senior tech recruiter evaluating candidate-job fit. Score precisely using the rubric provided. Return ONLY valid JSON, no markdown."

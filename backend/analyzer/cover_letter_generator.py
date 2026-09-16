@@ -1,5 +1,6 @@
 """Cover-letter generation — builds the prompt and calls the LLM. Voice comes from the paired resume plus a selectable voice preset, with persona preferences supplying the "why this role/company" beat.
 Prompt-caching split: cacheable PREFIX = resume + preferences + schema (stable per resume), per-job SUFFIX = JD + voice + length, so switching voice/length reuses the cached prefix."""
+from backend.analyzer.prompt_fence import fence
 import json
 import logging
 import re
@@ -65,7 +66,7 @@ def build_cover_letter_prompt(resume_data: dict, preferences: dict, jd_text: str
         prompt_template
         .replace("{voice_instruction}", voice_instruction or "Professional and concise.")
         .replace("{length_instruction}", length_instruction)
-        .replace("{job_description}", (jd_text or "")[:6000])
+        .replace("{job_description}", fence((jd_text or "")[:6000], "JOB POSTING"))
     )
     return cached_prefix, suffix
 

@@ -1,12 +1,73 @@
 """Meta Careers scraper (Playwright DOM) — job cards render client-side via React, so this scrapes the DOM instead of an API."""
 import asyncio
 import logging
+import re
 
 from backend.scraper._shared.browser import _get_browser, _new_page, _close_page
 from backend.scraper._shared.urls import host_matches
 from backend.scraper._shared.filters import _validate_job
 
 logger = logging.getLogger("jobnavigator.scraper.ats.meta")
+
+# Meta separates the places of one card with a dot operator, not a semicolon.
+_DOT = "⋅"
+# "+4 more" is a count of the places the card did not print, not a place.
+_MORE = re.compile(r"^\+\s*\d+\s+more$", re.I)
+# A line that is one place on its own: "Menlo Park, CA".
+_ONE_PLACE = re.compile(r"^[A-Za-z .'-]+, [A-Z]{2}$")
+
+# Meta's class names are hashed, so the card is read by structure instead. Each
+# separator sits in its own element, so the block that holds the places is the
+# smallest one holding every dot - an outer block holds the same dots and more
+# text, an inner one holds fewer. A card naming a single place carries no dot at
+# all, and there the first line after the title that reads as a place is taken.
+_PLACES_JS = """
+el => {
+  let best = null, most = 0;
+  for (const node of el.querySelectorAll('*')) {
+    const text = node.textContent || '';
+    const dots = (text.match(/\\u22C5/g) || []).length;
+    if (!dots) continue;
+    if (!text.replace(/\\u22C5/g, '').trim()) continue;   // a lone separator
+    if (dots > most || (dots === most && best !== null && text.length < best.length)) {
+      most = dots; best = text;
+    }
+  }
+  if (best !== null) return best;
+  const lines = (el.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+  const h3 = el.querySelector('h3');
+  const title = h3 ? (h3.innerText || '').trim() : '';
+  let start = 0;
+  if (title) { const at = lines.indexOf(title); if (at >= 0) start = at + 1; }
+  for (let i = start; i < lines.length; i++) {
+    if (/^[A-Za-z .'-]+, [A-Z]{2}$/.test(lines[i])) return lines[i];
+  }
+  return '';
+}
+"""
+
+
+def _places_from_text(text: str | None) -> list[str]:
+    """Every place one Meta card names, in the order the card prints them.
+
+    The line reads "Bellevue, WA ⋅ Redmond, WA ⋅ +4 more": dot operators
+    separate the entries and the trailing "+N more" is a count, not a place.
+    A line that names nothing place-shaped yields nothing at all, so a card the
+    DOM route missed leaves `location` empty rather than filling it with a tag.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(_DOT)]
+    if len(parts) == 1 and not _ONE_PLACE.match(parts[0]):
+        return []
+    out: list[str] = []
+    for part in parts:
+        if not part or _MORE.match(part):
+            continue
+        if part not in out:
+            out.append(part)
+    return out
 
 
 def is_meta(url: str) -> bool:
@@ -64,9 +125,16 @@ async def scrape(url: str, browser=None, max_pages: int | None = None, debug: bo
                 title = (await h3.inner_text()).strip() if h3 else ""
                 job_url = f"https://www.metacareers.com/v2/jobs/{job_id}/"
 
+                try:
+                    places = _places_from_text(await link.evaluate(_PLACES_JS))
+                except Exception:
+                    places = []
+
                 reason = _validate_job(title, job_url)
                 if reason is None:
-                    jobs.append({"title": title, "url": job_url})
+                    jobs.append({"title": title, "url": job_url,
+                                 "location": places[0] if places else None,
+                                 "locations": places})
                 elif debug:
                     rejected.append({"title": title, "url": job_url, "selector": "meta_careers", "reason": reason})
 

@@ -109,6 +109,9 @@ DEFAULT_SETTINGS = {
     "tailor_auto_quick_score": ("light", "After tailoring finishes, auto-launch a score chain. Values: 'off' | 'light' | 'full'. Default 'light'. Legacy 'true'='light', 'false'='off'."),
     "prompt_caching_enabled": ("true", "Use Anthropic prompt caching on resume scoring (claude_api only; ~50% cheaper input tokens on same-batch calls). Set false to disable as a rollback lever."),
     "scoring_default_depth": ("light", "Default scoring depth: light or full"),
+    # Dashboard-only switch: the Jobs pane reads it, nothing on the backend does.
+    # The zoom LEVEL itself is per-browser (localStorage), never a setting.
+    "feed_zoom_floater": ("true", "Show the + / - zoom control on postings in the Jobs pane"),
     "on_save_action": ("off", "Action when job is saved: off, light, or full"),
     "email_llm_enabled": ("false", "Enable LLM second pass for ambiguous email classification"),
     "email_llm_provider": ("", "LLM provider for email classification (empty = use primary llm_provider)"),

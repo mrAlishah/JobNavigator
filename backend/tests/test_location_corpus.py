@@ -165,7 +165,9 @@ TRAPS = [
     ("DMV", "US", "DC", "Washington"),
     ("Tri-State Area", "US", None, None),
     ("Greater Indianapolis", None, None, "Indianapolis"),
-    ("Redwood City Office", None, None, "Redwood City"),
+    # the office label comes off, and the city under it is one the bare table
+    # now places
+    ("Redwood City Office", "US", "CA", "Redwood City"),
     # hyphen triples
     ("US-CA-San Jose", "US", "CA", "San Jose"),
     ("US-TX-Austin", "US", "TX", "Austin"),

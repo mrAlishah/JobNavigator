@@ -115,30 +115,36 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 
 ## Quick Start
 
+**1. Run it**
+
 ```bash
 git clone https://github.com/vesaias/JobNavigator.git
 cd JobNavigator
 cp .env.example .env
-
-docker compose up --build -d
+docker compose pull && docker compose up -d      # prebuilt images from GHCR
 ```
 
-Open `http://localhost`. On first run sign in with a blank key, then set one in Settings › Advanced. The previous interface is at `/classic`.
+Open `http://localhost`. To build from source instead (or on ARM), use `docker compose up --build -d`; every release is also published as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=2.1.0` in `.env`. On first run sign in with a blank key, then set one in Settings › Advanced.
 
-To use a ChatGPT subscription through Codex CLI, authenticate once after the containers start:
+**2. Connect a model**
 
-```bash
-docker compose exec backend codex login --device-auth
-docker compose exec backend codex login status
-```
+Any API key goes straight into Settings › AI. A subscription needs one login inside the container first:
 
-Then pick **Codex CLI (ChatGPT Subscription)** in Settings › AI. The login lives in the `codex_auth` volume (about 100 MB with Codex's own state); no API key needed. A plan limit fails over to the fallback provider without retrying.
+| Subscription | Once after the containers start | Then pick |
+|---|---|---|
+| Claude Pro / Max | `docker compose exec backend claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` | **Claude Code** |
+| ChatGPT | `docker compose exec backend codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) | **Codex CLI** |
 
-**First steps:**
-1. Settings › AI — provider and key
+No API key needed for either. A plan limit fails over to the fallback provider without retrying.
+
+**3. First steps**
+
+1. Settings › AI — provider and model
 2. Résumés — create a base résumé or import a PDF
 3. Persona — import from that résumé, fill the Q&A bank
 4. Companies and Searches — add a few, run them
+
+The full walkthrough, screen by screen, is in [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
 
 ## Chrome Extension ("The Navigator")
 

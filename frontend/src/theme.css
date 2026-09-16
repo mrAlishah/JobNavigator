@@ -1905,6 +1905,15 @@
 .v2-bd-warn:hover { border-color:var(--warn) !important; }
 /* border + text turn accent, no background wash (the design's pill hover) */
 .v2-bdc:hover { border-color:var(--pill-border-hover) !important; color:var(--pill-ink-hover) !important; }
+/* a control ON the rail (the bulk bar's Skip/Score/Tailor/✕): the pill hover tokens are for
+   light surfaces and paint the accent on the dark rail, so the hover is a rail wash and a
+   brighter edge, ink unchanged */
+.v2-onrail:hover { background:var(--rail-hover) !important; border-color:var(--rail-ink) !important; color:var(--rail-ink) !important; }
+/* Posting zoom floater (Feed): the pill idles at .55 over the posting and comes
+   up whole on hover; each step washes on the rail's own hover tone, like the
+   bulk-bar controls that share its ground. */
+.v2-zoomfloat:hover { opacity:1 !important; }
+.v2-zoomstep:hover { background:var(--rail-hover) !important; }
 
 /* Controls only: at the inherited 1.5 a fixed-height control's label rides high.
    Never put this on the root — content-driven card heights depend on 1.5. */
@@ -2053,6 +2062,23 @@
    painted in a single tone instead of mitred between two border sides. The box
    is kept identical by --bevel-pad, which every carrier adds to its own padding. */
 .jn-v2[data-theme="win98"] .v2-raised { border:var(--bevel-raised-border) !important; border-color:var(--bevel-raised-color) !important; box-shadow:var(--bevel-raised-shadow) !important; }
+/* Bulk bar (Primitives Board · SelectionBar): no pill in 98 — a raised toolbar strip on
+   --surface, count in --text, --line divider, and grey bevel buttons that press in. */
+.jn-v2[data-theme="win98"] .v2-bulkbar { background:var(--surface) !important; color:var(--text) !important; border-radius:0 !important; padding:3px 4px 3px 8px !important; border:var(--bevel-raised-border) !important; border-color:var(--bevel-raised-color) !important; box-shadow:var(--bevel-raised-shadow) !important; }
+.jn-v2[data-theme="win98"] .v2-bulkbar > span { color:var(--text) !important; }
+.jn-v2[data-theme="win98"] .v2-bulksep { background:var(--line) !important; }
+.jn-v2[data-theme="win98"] .v2-bulkbar .v2-btn { height:23px !important; padding:0 9px !important; font-size:11px !important; font-weight:700 !important; min-width:0 !important; box-shadow:var(--bevel-raised-shadow) !important; }   /* Save is one more toolbar button in the strip (board: h 23 · px 9 · 11px bold), not the dialog default button with its dark ring */
+.jn-v2[data-theme="win98"] .v2-onrail { height:23px !important; padding:0 9px !important; font-size:11px !important; background:var(--surface) !important; color:var(--text) !important; font-weight:700; border-radius:0 !important; border:var(--bevel-raised-border) !important; border-color:var(--bevel-raised-color) !important; box-shadow:var(--bevel-raised-shadow) !important; }
+.jn-v2[data-theme="win98"] .v2-onrail:hover { background:var(--surface) !important; }
+/* Zoom floater: 98 has no translucent overlay and no pill — a raised bevel strip
+   on --surface, always at full opacity, holding two bevelled buttons that press
+   in. A dimmed step takes the theme's engraved disabled ink instead of a fade. */
+.jn-v2[data-theme="win98"] .v2-zoomfloat { opacity:1 !important; gap:0 !important; padding:2px !important; border-radius:0 !important; background:var(--surface) !important; color:var(--text) !important; border:var(--bevel-raised-border) !important; border-color:var(--bevel-raised-color) !important; box-shadow:var(--bevel-raised-shadow) !important; }
+.jn-v2[data-theme="win98"] .v2-zoomstep { width:22px !important; height:20px !important; border-radius:0 !important; background:var(--surface) !important; color:var(--text) !important; font-weight:700 !important; font-size:12px !important; box-shadow:var(--bevel-raised-shadow) !important; }
+.jn-v2[data-theme="win98"] .v2-zoomstep:hover { background:var(--surface) !important; }
+.jn-v2[data-theme="win98"] .v2-zoomstep:active { border:var(--bevel-inset-border) !important; border-color:var(--bevel-inset-color) !important; box-shadow:var(--bevel-inset-shadow) !important; }
+.jn-v2[data-theme="win98"] .v2-zoomstep[aria-disabled="true"] { opacity:1 !important; color:var(--disabled-ink) !important; text-shadow:var(--disabled-engrave) !important; }
+.jn-v2[data-theme="win98"] .v2-onrail:active { border:var(--bevel-inset-border) !important; border-color:var(--bevel-inset-color) !important; box-shadow:var(--bevel-inset-shadow) !important; }
 /* Round 9 #12a · `:not([role="dialog"])`. `ModalPanel` wears `v2-raised` for its
    raised window frame, which is right — but it then also matched the PRESSED
    half of the same pair, so mousing down anywhere inside a modal flipped the

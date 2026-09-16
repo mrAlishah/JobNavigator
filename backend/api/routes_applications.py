@@ -428,10 +428,14 @@ def update_application(app_id: str, updates: dict, db: Session = Depends(get_db)
         raise HTTPException(status_code=400,
                             detail=f"status must be one of {sorted(VALID_STATUSES)}")
     changed = False
+    undo = bool(updates.pop("undo", False))   # the toast's Undo: reverse the last move, do not log a new one
     if "status" in updates:
         if updates["status"] != app.status:
-            from backend.models.db import record_transition
-            record_transition(app, updates["status"], "ui")
+            from backend.models.db import record_transition, revert_transition
+            if undo:
+                revert_transition(app, updates["status"])
+            else:
+                record_transition(app, updates["status"], "ui")
             changed = True
         # Same status = click on the already-active stage; record_transition() already
         # skips logging it, so skip updated_at too — bumping it would reset the ageing signal.
@@ -461,6 +465,101 @@ def delete_application(app_id: str, db: Session = Depends(get_db)):
     db.delete(app)
     db.commit()
     return {"deleted": True}
+
+
+# ── Bulk actions (the Applications screen's selection bar) ───────────────────
+# Same shape as POST /jobs/bulk-update: a malformed id is reported in
+# `not_found` rather than aborting the batch with a DataError, and every bad
+# body shape answers 400, never a 500.
+def _bulk_ids(body: dict) -> list:
+    """The `ids` list off a bulk body, as a list — any other shape is a 400."""
+    ids = (body or {}).get("ids")
+    if ids is None:
+        return []
+    if not isinstance(ids, (list, tuple)):
+        raise HTTPException(status_code=400, detail="ids must be a list")
+    return list(ids)
+
+
+def _parse_app_id(raw):
+    """A single bulk id as a UUID, or None when it is not one."""
+    import uuid as _uuid
+    try:
+        return _uuid.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+@router.post("/bulk-update")
+def bulk_update_applications(body: dict, db: Session = Depends(get_db)):
+    """Move several applications to one status.
+
+    Each row goes through the same path as PATCH /{app_id}: record_transition()
+    with source "ui", then a fresh updated_at. A row already in that status is
+    skipped entirely (no transition, no updated_at bump — the ageing signal on
+    the row must not reset because it was caught in a selection).
+    """
+    from backend.api._input import str_field
+    from backend.models.db import record_transition, revert_transition
+
+    ids = _bulk_ids(body)
+    status = str_field(body, "status", required=True)
+    undo = bool((body or {}).get("undo", False))   # the bulk toast's Undo, see PATCH
+    if status not in VALID_STATUSES:
+        raise HTTPException(status_code=400,
+                            detail=f"status must be one of {sorted(VALID_STATUSES)}")
+
+    updated = 0
+    skipped = 0
+    not_found: list[str] = []
+    for raw in ids:
+        parsed = _parse_app_id(raw)
+        if parsed is None:
+            not_found.append(str(raw))
+            continue
+        app = db.query(Application).filter(Application.id == parsed).first()
+        if app is None:
+            not_found.append(str(raw))
+            continue
+        if app.status == status:
+            skipped += 1
+            continue
+        if undo:
+            revert_transition(app, status)
+        else:
+            record_transition(app, status, "ui")
+        app.updated_at = utcnow()
+        updated += 1
+    db.commit()
+    return {"updated": updated, "skipped": skipped, "not_found": not_found}
+
+
+@router.post("/bulk-delete")
+def bulk_delete_applications(body: dict, db: Session = Depends(get_db)):
+    """Delete several applications, exactly as DELETE /{app_id} deletes one.
+
+    The job each row points at is released back to 'saved' so it stops counting
+    as applied, and the row's interviews go with it (delete-orphan cascade).
+    """
+    ids = _bulk_ids(body)
+    deleted = 0
+    not_found: list[str] = []
+    for raw in ids:
+        parsed = _parse_app_id(raw)
+        if parsed is None:
+            not_found.append(str(raw))
+            continue
+        app = db.query(Application).filter(Application.id == parsed).first()
+        if app is None:
+            not_found.append(str(raw))
+            continue
+        job = app.job
+        if job is not None and job.status == "applied":
+            job.status = "saved"
+        db.delete(app)
+        deleted += 1
+    db.commit()
+    return {"deleted": deleted, "not_found": not_found}
 
 
 # ── Employer detection for the posting-URL reader ────────────────────────────

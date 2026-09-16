@@ -69,7 +69,8 @@ def test_build_prompt_truncates_long_jd():
     from backend.analyzer.cover_letter_generator import build_cover_letter_prompt
     long_jd = "x" * 9000
     _, suffix = build_cover_letter_prompt(SAMPLE_RESUME, {}, long_jd, "v", "concise", "{job_description}")
-    assert suffix.count("x") == 6000  # capped at 6000
+    body = suffix.split("<<<JOB POSTING>>>\n", 1)[1].rsplit("\n<<<END JOB POSTING>>>", 1)[0]
+    assert body == "x" * 6000  # capped at 6000, inside the fence
 
 
 # ── resolve_voice_instruction ────────────────────────────────────────────────

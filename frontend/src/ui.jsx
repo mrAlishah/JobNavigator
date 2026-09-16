@@ -1691,6 +1691,45 @@ export function ToastCard({ kind = 'progress', children, style, className }) {
   )
 }
 
+// ── ZoomFloater ─────────────────────────────────────────────────────────────
+// The Feed posting's zoom control: a vertical + / − pill that idles faded so it
+// never competes with the page under it and comes up whole on hover
+// (theme.css `.v2-zoomfloat:hover`). The pill only — the CALLER pins it
+// (`position:absolute; right:30px; top:14px; z-index:6`) over the frame it
+// zooms, and owns the level; this draws the two steps and reports the clicks.
+// Double-click anywhere on the pill resets. Every handler stops propagation:
+// the pill floats over a posting pane whose ancestors select/toggle on click.
+export const ZOOM_MIN = 50
+export const ZOOM_MAX = 200
+export function ZoomFloater({ zoom = 100, onIn, onOut, onReset, style, className }) {
+  const step = (fn, off) => (e) => { e.stopPropagation(); if (!off) fn && fn(e) }
+  const glyph = (label, mark, off, fn) => {
+    const hit = step(fn, off)
+    return (
+      <div className="v2-zoomstep" {...kb(hit)} onClick={hit}
+        aria-label={label} aria-disabled={off || undefined}
+        style={{
+          width: 22, height: 22, borderRadius: 'var(--radius-control)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', fontSize: 14, lineHeight: 1,
+          cursor: 'pointer', opacity: off ? 0.35 : 1,
+        }}>{mark}</div>
+    )
+  }
+  return (
+    <div className={cx('v2-zoomfloat', className)}
+      title={`Zoom ${zoom}% · double-click to reset · hide in Settings`}
+      onDoubleClick={(e) => { e.stopPropagation(); onReset && onReset(e) }}
+      style={{
+        display: 'inline-flex', flexDirection: 'column', gap: 1, padding: 3,
+        borderRadius: 'var(--radius-control)', background: 'var(--rail)', color: 'var(--rail-text)',
+        boxShadow: 'var(--shadow-pop)', opacity: 0.55, ...style,
+      }}>
+      {glyph('Zoom in', '+', zoom >= ZOOM_MAX, onIn)}
+      {glyph('Zoom out', '−', zoom <= ZOOM_MIN, onOut)}
+    </div>
+  )
+}
+
 // ── Link / NavLink ──────────────────────────────────────────────────────────
 // Link canonical: accent · 11.5 · 500, hover v2-hover-accent-text.
 // NavLink is the "‹ back"/section jump: accent · 12, hover washes to

@@ -100,26 +100,56 @@ async def _get_linkedin_browser():
     return pw, browser, context, page
 
 
-async def _is_logged_in(page) -> bool:
-    """Check if current page shows a logged-in LinkedIn session."""
+# The feed is server-driven: LinkedIn renames its nav and avatar markup often, so
+# a DOM probe reports "logged out" for a live session. Ask the API instead —
+# voyager /me answers 200 only for a signed-in member.
+_VOYAGER_ME_JS = """
+async () => {
+  const csrf = (document.cookie.match(/JSESSIONID="?([^;"]+)/) || [])[1] || '';
+  try {
+    const r = await fetch('https://www.linkedin.com/voyager/api/me',
+                          {credentials: 'include', headers: {'csrf-token': csrf}});
+    return r.status;
+  } catch (e) {
+    return 0;
+  }
+}
+"""
+
+
+async def _voyager_me_status(page) -> int:
+    """Return the status of voyager /me for the page session. 0 means the call failed."""
     try:
-        # Check URL — login/checkpoint pages mean not logged in
+        return await page.evaluate(_VOYAGER_ME_JS)
+    except Exception:
+        return 0
+
+
+async def _is_logged_in(page) -> bool:
+    """Check if the current page holds a live LinkedIn session."""
+    try:
         if "/login" in page.url or "/checkpoint" in page.url:
             return False
-        # Look for feed nav or global nav elements present when logged in
-        count = await page.locator('nav[aria-label="Primary"]').count()
-        if count > 0:
-            return True
-        count = await page.locator('[data-alias="feed"]').count()
-        if count > 0:
-            return True
-        # Check for profile icon
-        count = await page.locator('img[alt*="Photo"]').count()
-        if count > 0:
-            return True
-        return False
     except Exception:
         return False
+    return await _voyager_me_status(page) == 200
+
+
+# The login page renders no <form>, gives each input a generated id ("«r0»"),
+# localizes the submit button and keeps a second, hidden copy of every field.
+# Only the autocomplete attributes are stable, so select on them and press Enter.
+_LOGIN_EMAIL = 'input[autocomplete="username"]:visible'
+_LOGIN_PASSWORD = 'input[autocomplete="current-password"]:visible'
+
+
+async def _fill_login_form(page, email: str, password: str):
+    """Fill the credentials on an open LinkedIn login page and submit them."""
+    await page.locator(_LOGIN_EMAIL).first.fill(email)
+    await asyncio.sleep(random.uniform(0.5, 1.0))
+    pwd = page.locator(_LOGIN_PASSWORD).first
+    await pwd.fill(password)
+    await asyncio.sleep(random.uniform(0.5, 1.0))
+    await pwd.press("Enter")
 
 
 async def _login(page, context, email: str, password: str):
@@ -128,11 +158,7 @@ async def _login(page, context, email: str, password: str):
     await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(random.uniform(1.5, 3.0))
 
-    await page.fill("#username", email)
-    await asyncio.sleep(random.uniform(0.5, 1.0))
-    await page.fill("#password", password)
-    await asyncio.sleep(random.uniform(0.5, 1.0))
-    await page.click('button[type="submit"]')
+    await _fill_login_form(page, email, password)
 
     try:
         await page.wait_for_url(

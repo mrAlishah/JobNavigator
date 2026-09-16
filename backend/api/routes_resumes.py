@@ -921,7 +921,8 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
         # only the base resume's bullets (predictable length); Persona-as-base uses the full pool via persona_tailor_prompt.
 
         prompt = prompt_template.replace("{resume_json}", _json.dumps(resume_sections, indent=2))
-        prompt = prompt.replace("{job_description}", jd_text[:6000])
+        from backend.analyzer.prompt_fence import fence
+        prompt = prompt.replace("{job_description}", fence(jd_text[:6000], "JOB POSTING"))
 
         system = (
             "You are an expert resume tailor. Rewrite the resume to align with the "

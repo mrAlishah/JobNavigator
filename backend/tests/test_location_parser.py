@@ -255,7 +255,7 @@ def test_countries_seen_on_live_boards(text, expected):
     assert canonical(text) == expected
 
 
-@pytest.mark.parametrize("text", ["USAVAReston", "USA Remote"])
+@pytest.mark.parametrize("text", ["USAVAReston"])
 def test_a_run_together_value_is_returned_as_written(text):
     """Some Workday URL segments carry no separator at all. Splitting them
     would be a guess, so the board's own text is kept."""
@@ -391,3 +391,177 @@ def test_a_city_too_long_for_the_index_is_cut_not_dropped():
     country, region, city = _place_of("%s, Ontario, Canada" % ("x" * (MAX_CITY + 50)))
     assert (country, region) == ("CA", "ON")
     assert len(city) == MAX_CITY
+
+
+# ── the bare cities boards write without a state ─────────────────────────────
+
+@pytest.mark.parametrize("text,region", [
+    ("Cupertino", "CA"), ("Sunnyvale", "CA"), ("Santa Clara", "CA"),
+    ("Mountain View", "CA"), ("Menlo Park", "CA"), ("Palo Alto", "CA"),
+    ("Redwood City", "CA"), ("San Jose", "CA"), ("San Mateo", "CA"),
+    ("Fremont", "CA"), ("Milpitas", "CA"),
+    ("Redmond", "WA"), ("Bellevue", "WA"), ("Kirkland", "WA"),
+])
+def test_a_bare_bay_area_city_carries_its_state(text, region):
+    """These are the names a board writes with nothing beside them - 36 live
+    rows say "Cupertino" and nothing else - and each answered no filter."""
+    result = parse(text)
+    assert (result["country"], result["region"], result["city"]) == ("US", region, text)
+
+
+@pytest.mark.parametrize("text", ["Sunnyvale Office", "Redmond Campus"])
+def test_a_bare_city_survives_the_site_label(text):
+    assert parse(text)["country"] == "US"
+
+
+def test_a_bare_city_still_has_to_be_unambiguous():
+    """The table places a name that means one place in a posting. Richmond and
+    Windsor are in California and in Canada, and stay unplaced."""
+    assert parse("Richmond")["country"] is None
+    assert parse("Windsor")["country"] is None
+
+
+# ── remote plus a country, with no separator between them ────────────────────
+
+@pytest.mark.parametrize("text,country", [
+    ("Remote US", "US"),
+    ("Remote USA", "US"),
+    ("Remote in United States", "US"),
+    ("Remote - United States", "US"),
+    ("Remote, US", "US"),
+    ("Remote (US)", "US"),
+    ("Remote in Canada", "CA"),
+    ("Remote - Germany", "DE"),
+    ("Remote within Ireland", "IE"),
+    ("Fully Remote - United Kingdom", "GB"),
+])
+def test_remote_and_a_country_is_the_country_and_the_flag(text, country):
+    """"Remote US" reached the feed as a city called "Remote US"."""
+    result = parse(text)
+    assert (result["country"], result["region"], result["city"]) == (country, None, None)
+    assert result["arrangement"] == "remote"
+
+
+@pytest.mark.parametrize("text", [
+    # a held-out code is not a country, here as anywhere else
+    "Remote CA",
+    # and a place is not one either: the city keeps its own path
+    "Remote - Anywhere",
+])
+def test_remote_and_a_non_country_is_not_read_as_one(text):
+    assert parse(text)["country"] is None
+
+
+@pytest.mark.parametrize("text,mirror,country", [
+    ("USA Remote", "Remote USA", "US"),
+    ("US Remote", "Remote US", "US"),
+    ("United States Remote", "Remote United States", "US"),
+    ("Canada Remote", "Remote Canada", "CA"),
+    ("USA - Remote", "Remote - USA", "US"),
+])
+def test_a_country_written_before_remote_reads_the_same_as_after_it(text, mirror, country):
+    """Boards write the pair in either order. "USA Remote" is the country
+    first, and it answers exactly as "Remote US" does: the country, no city,
+    remote. "USAVAReston" carries no arrangement word, so the run-together
+    Workday segment is still left alone."""
+    result = parse(text)
+    assert (result["country"], result["region"], result["city"]) == (country, None, None)
+    assert result["arrangement"] == "remote"
+    assert result == parse(mirror)
+
+
+# ── "Multiple Locations" is never a city ─────────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "Multiple Locations", "Multiple locations", "multiple locations",
+    "Various locations", "Various", "Multiple Offices", "Several Locations",
+])
+def test_a_multiple_locations_phrase_carries_no_place(text):
+    result = parse(text)
+    assert (result["country"], result["region"], result["city"]) == (None, None, None)
+
+
+def test_the_phrase_is_stripped_as_a_token_and_leaves_the_country():
+    """Workday repeats it once per site: "United States, Multiple Locations,
+    Multiple Locations" is the United States and nothing more."""
+    result = parse("United States, Multiple Locations, Multiple Locations")
+    assert (result["country"], result["region"], result["city"]) == ("US", None, None)
+
+
+# ── a bare board label is not a place ────────────────────────────────────────
+
+@pytest.mark.parametrize("text", ["Location:", "Locations:", "Office:",
+                                  "Job Location:", "Location", "Offices:"])
+def test_a_bare_label_carries_no_place(text):
+    """A scraper that read the label cell and not the place beside it wrote
+    "Location:" into seven live rows."""
+    result = parse(text)
+    assert (result["country"], result["region"], result["city"]) == (None, None, None)
+
+
+def test_a_label_in_front_of_a_place_leaves_the_place():
+    result = parse("Location: Austin, TX")
+    assert (result["country"], result["region"], result["city"]) == ("US", "TX", "Austin")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Location: Austin, TX", "Austin, TX"),
+    ("Locations: Austin, TX", "Austin, TX"),
+    ("Location - Sunnyvale", "Sunnyvale"),
+    ("Location\nSunnyvale", "Sunnyvale"),
+    ("Location:", ""),
+    ("Locations:", ""),
+    ("Office:", ""),
+    ("", ""),
+    (None, ""),
+    # not a label, and not touched
+    ("Austin, TX", "Austin, TX"),
+    ("Locarno", "Locarno"),
+])
+def test_the_card_helper_strips_the_label_before_the_place_is_stored(text, expected):
+    from backend.scraper.ats.generic import strip_place_label
+    assert strip_place_label(text) == expected
+
+
+# ── a comma between two places, not inside one ───────────────────────────────
+
+@pytest.mark.parametrize("text,expected", [
+    ("New York, San Francisco, Seattle",
+     ["New York", "San Francisco", "Seattle"]),
+    ("London, Paris, Berlin", ["London", "Paris", "Berlin"]),
+    ("Austin, TX, Dallas, TX", ["Austin, TX", "Dallas, TX"]),
+    # a country written first claims every city behind it
+    ("IRL, Dublin, Cork", ["IRL, Dublin", "IRL, Cork"]),
+])
+def test_a_comma_list_of_places_is_split(text, expected):
+    from backend.analyzer.location import split_places
+    assert split_places(text) == expected
+
+
+def test_every_place_in_a_comma_list_answers_its_own_filter():
+    from backend.analyzer.location import _places_of
+    assert _places_of(["New York, San Francisco, Seattle"]) == [
+        ("US", "NY", "new york"), ("US", "CA", "san francisco"),
+        ("US", "WA", "seattle")]
+    assert _places_of(["IRL, Dublin, Cork"]) == [
+        ("IE", None, "dublin"), ("IE", None, "cork")]
+
+
+def test_a_comma_list_parses_to_the_first_of_its_places():
+    assert parse("New York, San Francisco, Seattle")["city"] == "New York"
+    assert parse("Austin, TX, Dallas, TX")["city"] == "Austin"
+
+
+@pytest.mark.parametrize("text", [
+    # every one of these is one place whose parts are separated by commas
+    "Washington, DC", "Austin, TX", "Cambridge, MA USA", "IN, KA, Bengaluru",
+    "Bay Area, CA, United States of America", "Bengaluru, Karnataka, India",
+    "New York, New York, United States", "Costa Mesa, California, United States",
+    "Saint-Jean-sur-Richelieu, Quebec, Canada", "US, CA, Santa Clara",
+    "Frankfurt, Hesse, Germany", "Sao Paulo, Sao Paulo, Brazil",
+    # the trailing name is the building, not a second city
+    "IRL, Dublin, Dockline",
+])
+def test_a_comma_inside_one_place_is_not_a_split(text):
+    from backend.analyzer.location import split_places
+    assert split_places(text) == [text]

@@ -31,7 +31,23 @@ _PLACE_WORDS = (set(COUNTRY_NAMES) | set(CA_REGIONS) | set(US_REGIONS)
 
 # The label a card prints before the place ("… | Location | Sunnyvale").
 _PLACE_LABELS = {"location", "locations", "office", "offices", "job location"}
-_HINT_LABEL = re.compile(r"^(job\s+)?locations?\s*[:\-]?\s+", re.I)
+# The same label printed in front of the place instead of above it: "Location:
+# Austin, TX". Stripping it is what keeps a city called "Location: Austin" - and
+# a bare "Location:" - out of the column.
+# "Office" only with its colon: "Office Park" is a name, "Location Sunnyvale"
+# is Apple's label above the place.
+_HINT_LABEL = re.compile(
+    r"^\s*(?:job\s+)?(?:locations?\b\s*[:\-]?\s*|offices?\b\s*[:\-]\s*)", re.I)
+
+
+def strip_place_label(text: str) -> str:
+    """One card's place text without the label in front of it.
+
+    "Location: Austin, TX" is "Austin, TX"; a bare "Location:" is "", which is
+    the caller's signal that the segment was the label and nothing else.
+    """
+    collapsed = re.sub(r"\s+", " ", text or "").strip()
+    return _HINT_LABEL.sub("", collapsed).strip()
 
 # Card furniture: a button, a badge, an employment type. None of it is a place.
 _NOISE_SEGMENTS = {
@@ -107,9 +123,13 @@ def _place_segments(segments: list) -> list:
         if not text:
             continue
         folded = fold(text)
-        if folded in _PLACE_LABELS:
+        if folded in _PLACE_LABELS or not strip_place_label(text):
             labelled = True
             continue
+        # "Location: Austin, TX" prints the label in front of the place instead
+        # of above it; what is stored is the place.
+        text = strip_place_label(text)
+        folded = fold(text)
         if folded in _NOISE_SEGMENTS or _is_date(text) or len(text) > _MAX_SEGMENT:
             labelled = False
             continue
@@ -175,7 +195,7 @@ def _hint_place(hint: str) -> str | None:
     ambiguous. The label itself ("Location") and the furniture are still refused.
     """
     # Apple's cell prints its own label above the place: "Location\nSunnyvale".
-    text = _HINT_LABEL.sub("", re.sub(r"\s+", " ", hint or "").strip())
+    text = strip_place_label(hint)
     folded = fold(text)
     if (not text or len(text) > _MAX_SEGMENT or _is_date(text)
             or folded in _PLACE_LABELS or folded in _NOISE_SEGMENTS

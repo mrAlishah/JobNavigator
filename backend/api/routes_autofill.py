@@ -1,4 +1,5 @@
 """Application-question autofill: generate an answer from persona + qa_bank."""
+from backend.analyzer.prompt_fence import fence, fence_notice
 import json as _json
 import logging
 import re as _re
@@ -370,7 +371,8 @@ def _build_autofill_prompt(body: dict, *, want_provider: bool = False) -> dict:
         "{max_chars}": str(max_chars),
         "{company}": company,
         "{position}": position,
-        "{question}": question,
+        # The question is read off the application page: fenced so it is data, never an instruction.
+        "{question}": fence(question, "APPLICATION QUESTION", note=False),
     }
 
     def _fill(chunk: str) -> str:
@@ -379,7 +381,7 @@ def _build_autofill_prompt(body: dict, *, want_provider: bool = False) -> dict:
         return chunk
 
     cached_prefix = _fill(before) or None
-    suffix = _fill(suffix_template)
+    suffix = _fill(suffix_template) + "\n\n" + fence_notice("APPLICATION QUESTION")
     return {"cached_prefix": cached_prefix, "suffix": suffix,
             "max_chars": max_chars, "provider": provider, "model": model}
 

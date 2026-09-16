@@ -345,6 +345,22 @@ def record_transition(app, new_status: str, source: str):
     app.status = new_status
 
 
+def revert_transition(app, back_to: str) -> bool:
+    """Undo the last status change: when the newest transition took the row from
+    `back_to` to its current status, drop it and restore `back_to`, so an undo leaves
+    no trace (a misclick to Interview and back must not count as an interview in Stats).
+    Returns False, and records a normal transition instead, when the history does not
+    end with that move."""
+    transitions = list(app.status_transitions or [])
+    last = transitions[-1] if transitions else None
+    if last and last.get("to") == app.status and last.get("from") == back_to:
+        app.status_transitions = transitions[:-1]
+        app.status = back_to
+        return True
+    record_transition(app, back_to, "ui")
+    return False
+
+
 # ── Scrape Log ───────────────────────────────────────────────────────────────
 class ScrapeLog(Base):
     __tablename__ = "scrape_log"

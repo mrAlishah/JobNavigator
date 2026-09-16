@@ -146,7 +146,9 @@ ARRANGEMENT_WORDS = {"remote": "remote", "hybrid": "hybrid",
                      "global": "remote"}
 
 JUNK = {"", "-", "--", "n/a", "na", "none", "unknown", "tbd", "various",
-        "multiple", "locations", "multiple locations", "various locations",
+        "multiple", "location", "locations", "multiple locations",
+        "various locations", "multiple location", "several locations",
+        "multiple offices",
         # office labels boards append in brackets: "New York, NY (HQ)"
         "hq", "headquarters", "head office", "office", "corporate", "main office",
         # a region of the world, not a place: "Americas-United States-Boston"
@@ -173,6 +175,20 @@ _OFFICE_TAIL = re.compile(r"\s+(office|campus|hq|headquarters|site)$", re.I)
 _STATE_TAIL = re.compile(r"\s+state$", re.I)
 # A postcode or a building code carries no place and must not reach a city.
 _CODE_ONLY = re.compile(r"\d[\d\- ]*|[A-Z]{1,4}\d[A-Z0-9]*")
+# The label a card prints before the place, kept by a scraper that read the
+# label cell and nothing else: "Location:", "Locations:", "Job Location: Austin".
+# A bare label is junk once the colon is off it; a label with a place behind it
+# loses only the label.
+_LABEL_TAIL = re.compile(r"\s*:\s*$")
+_LABEL_HEAD = re.compile(r"^\s*(job\s+)?(locations?|offices?|sites?)\s*:\s*", re.I)
+# "Remote US", "Remote in Canada", "Remote - Germany": an arrangement word and a
+# country, with nothing between them that `_SPLIT` would cut.
+_REMOTE_COUNTRY = re.compile(
+    r"^(?:fully\s+|100%\s+)?remote(?:\s+(?:in|from|within))?\s*[-–—:,]?\s+(.+)$", re.I)
+# The same pair written the other way round: "USA Remote", "Canada Remote".
+# A separator would have split these too, so only the spaced form reaches here.
+_COUNTRY_REMOTE = re.compile(
+    r"^(.+?)\s*[-–—:,]?\s+(?:fully\s+|100%\s+)?remote$", re.I)
 
 # A metro name maps to its anchor city. `None` for the city means the phrase
 # names an area too wide for one city - it still answers the country filter,
@@ -333,10 +349,22 @@ _BARE = [
     ("Minneapolis", "US", "MN"), ("Phoenix", "US", "AZ"),
     ("Portland", "US", "OR"), ("Nashville", "US", "TN"),
     ("Washington DC", "US", "DC"),
+    # The Bay Area and the Seattle east side, which boards write bare far more
+    # often than any other US city: "Cupertino", "Sunnyvale", "Redmond". Each of
+    # these names one place in a job posting, which is what this table asks.
+    ("Cupertino", "US", "CA"), ("Sunnyvale", "US", "CA"),
+    ("Santa Clara", "US", "CA"), ("Mountain View", "US", "CA"),
+    ("Menlo Park", "US", "CA"), ("Palo Alto", "US", "CA"),
+    ("Redwood City", "US", "CA"), ("San Jose", "US", "CA"),
+    ("San Mateo", "US", "CA"), ("Fremont", "US", "CA"),
+    ("Milpitas", "US", "CA"),
+    ("Redmond", "US", "WA"), ("Bellevue", "US", "WA"),
+    ("Kirkland", "US", "WA"),
     ("Toronto", "CA", "ON"), ("Vancouver", "CA", "BC"), ("Montreal", "CA", "QC"),
     ("Ottawa", "CA", "ON"), ("Calgary", "CA", "AB"),
     ("London", "GB", None), ("Manchester", "GB", None),
-    ("Edinburgh", "GB", None), ("Dublin", "IE", None), ("Berlin", "DE", None),
+    ("Edinburgh", "GB", None), ("Dublin", "IE", None), ("Cork", "IE", None),
+    ("Berlin", "DE", None),
     ("Munich", "DE", None), ("Frankfurt", "DE", None), ("Hamburg", "DE", None),
     ("Cologne", "DE", None), ("Paris", "FR", None), ("Amsterdam", "NL", None),
     ("Brussels", "BE", None), ("Zurich", "CH", None), ("Geneva", "CH", None),
@@ -483,8 +511,53 @@ def _metro_of(token: str):
 
 def _core(token: str) -> str:
     """One token with the labels a board appends stripped off."""
+    token = _LABEL_HEAD.sub("", token or "")
     trimmed = _OFFICE_TAIL.sub("", _METRO_TAIL.sub("", token.strip())).strip()
     return trimmed or token.strip()
+
+
+def _is_junk(token: str) -> bool:
+    """True when this token names no place - including a bare board label.
+
+    "Location:" and "Locations:" arrive whole from a scraper that read the label
+    cell rather than the place beside it. The colon is what keeps them out of
+    `JUNK`, so it comes off before the lookup.
+    """
+    folded = fold(token)
+    return folded in JUNK or _LABEL_TAIL.sub("", folded) in JUNK
+
+
+def _plain_country(token: str) -> str | None:
+    """The country this token names outright, or None.
+
+    Only the readings that cannot be a region as well: "IRL", "US" and "Ireland"
+    qualify, "CA" and "IN" do not.
+    """
+    text = (token or "").strip()
+    upper = text.upper()
+    return (COUNTRY_NAMES.get(fold(text)) or ISO3.get(upper)
+            or SAFE_COUNTRY_CODES.get(upper))
+
+
+def _remote_country(text: str) -> str | None:
+    """The country of "Remote US", "Remote in Canada", "Remote - Germany", and
+    of the same pair written country first: "USA Remote", "Canada Remote".
+
+    A separator would have split these already; written with a space or with
+    "in" they reached the city column as a city called "Remote US". The rest of
+    the string has to be a country outright - "Remote CA" stays unread, the same
+    way "Richmond, CA" does, and "USAVAReston" names no country at all so the
+    run-together Workday segment is still returned as written.
+    """
+    stripped = (text or "").strip()
+    for pattern in (_REMOTE_COUNTRY, _COUNTRY_REMOTE):
+        match = pattern.match(stripped)
+        if not match:
+            continue
+        country = _plain_country(match.group(1).strip().strip("()").strip())
+        if country:
+            return country
+    return None
 
 
 def _classify(token: str) -> tuple[str, object]:
@@ -598,19 +671,84 @@ def _split_dashed(tokens: list) -> list:
     return out
 
 
+def _city_region_pair(city: str, region: str) -> bool:
+    """True for a "City, ST" pair - a name followed by a region of its own.
+
+    The city half may be a region's name as well: "New York, NY" and
+    "Washington, DC" are the shape this exists for. It may not be a region's
+    *code* - "US, CA, Santa Clara" is a country, a region and a city, not a
+    place called "US".
+    """
+    city, region = city.strip(), region.strip()
+    if not city or _classify(region)[0] not in ("region", "ambiguous"):
+        return False
+    if len(city) <= 3 and city == city.upper():
+        return False
+    return _classify(city)[0] in ("text", "metro", "region") or _known_city(city)
+
+
+def _comma_groups(parts: list) -> list | None:
+    """Comma parts regrouped into one string per place, or None.
+
+    Every part has to land in a place for the split to happen at all: a list of
+    cities ("New York, San Francisco, Seattle") and a list of pairs ("Austin,
+    TX, Dallas, TX") both do, while "Bengaluru, Karnataka, India" does not -
+    "Karnataka" is neither a city this module knows nor a region code, so the
+    string is left whole and read as the one place it is.
+    """
+    groups, index = [], 0
+    while index < len(parts):
+        if (index + 1 < len(parts)
+                and _city_region_pair(parts[index], parts[index + 1])):
+            groups.append("%s, %s" % (parts[index], parts[index + 1]))
+            index += 2
+        elif _known_city(parts[index]):
+            groups.append(parts[index])
+            index += 1
+        else:
+            return None
+    return groups if len(groups) > 1 else None
+
+
+def _comma_places(text: str) -> list | None:
+    """The several places a comma-joined string names, or None for the one.
+
+    A comma is the separator inside a place far more often than between two, so
+    this only fires when every part is itself a place: three parts at least, and
+    each one a city a gazetteer knows or a "City, ST" pair. A country written
+    first claims the rest ("IRL, Dublin, Cork" is two Irish cities), which is
+    the same shape `_leading_country` reads for a single place.
+    """
+    parts = [p.strip() for p in (text or "").split(",") if p.strip()]
+    # Two parts are "Austin, TX" - one place, whatever else they might be.
+    if len(parts) < 3:
+        return None
+    lead = _plain_country(parts[0])
+    if lead and all(_known_city(p) for p in parts[1:]):
+        return ["%s, %s" % (parts[0], p) for p in parts[1:]]
+    return _comma_groups(parts)
+
+
+def _expand(segments: list) -> list:
+    """Each segment split again where its commas separate whole places."""
+    return [place for s in segments for place in (_comma_places(s) or [s])]
+
+
 def split_places(text: str) -> list:
     """One string into the several places it names.
 
     Boards list places with a semicolon, a pipe, a bullet or a slash. Each of
     those is one more filter the posting has to answer, so they are kept apart
-    instead of being joined into a city name no map has.
+    instead of being joined into a city name no map has. A comma does the same
+    job when every part it separates is a place of its own (see `_comma_places`).
     """
     if not isinstance(text, str) or not text.strip():
         return []
     cleaned = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text)).strip()
-    if fold(cleaned) in JUNK:
+    if _is_junk(cleaned):
         return []
-    segments = [s.strip() for s in _LIST_SPLIT.split(cleaned) if s and s.strip()]
+    segments = _expand([s.strip() for s in _LIST_SPLIT.split(cleaned)
+                        if s and s.strip()])
     if len(segments) < 2:
         return [cleaned]
     carrying = [s for s in segments if _has_place(_parse_one(s))]
@@ -646,10 +784,11 @@ def parse(text, text_joiner: str = ", ", country_hint: str = None) -> dict:
         result["alt"] = int(alt.group(1))
         cleaned = _ALT.sub("", cleaned).strip()
 
-    if COUNT_ONLY.match(cleaned) or fold(cleaned) in JUNK:
+    if COUNT_ONLY.match(cleaned) or _is_junk(cleaned):
         return result
 
-    segments = [s.strip() for s in _LIST_SPLIT.split(cleaned) if s and s.strip()]
+    segments = _expand([s.strip() for s in _LIST_SPLIT.split(cleaned)
+                        if s and s.strip()])
     parsed = [_parse_one(s, text_joiner, country_hint) for s in segments]
     # The first place the list settles. A place whose code stayed unread is
     # skipped while another one in the same list can be read: "San Francisco,
@@ -667,6 +806,14 @@ def parse(text, text_joiner: str = ", ", country_hint: str = None) -> dict:
 def _parse_one(cleaned: str, text_joiner: str = ", ", country_hint: str = None) -> dict:
     """Read one place - one segment of `parse`'s input."""
     result = _empty()
+
+    # "Remote US", "Remote in Canada": an arrangement and a country, written
+    # with nothing between them that the splitter would cut.
+    remote = _remote_country(cleaned)
+    if remote:
+        result["arrangement"] = "remote"
+        result["country"] = remote
+        return result
 
     # The whole string is one city the table knows: "San Francisco",
     # "Frankfurt Rhine-Main Metropolitan Area". Nothing else in the string can
@@ -693,7 +840,7 @@ def _parse_one(cleaned: str, text_joiner: str = ", ", country_hint: str = None) 
             return result
 
     classified = [(t, _classify(t)) for t in tokens
-                  if fold(t) not in JUNK and not _CODE_ONLY.fullmatch(t.strip())]
+                  if not _is_junk(t) and not _CODE_ONLY.fullmatch(t.strip())]
     if not classified:
         if forced_country:
             result["country"], result["region"] = forced_country, forced_region

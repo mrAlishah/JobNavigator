@@ -3,11 +3,56 @@
 via <a aria-label="Go to next page">."""
 import asyncio
 import logging
+import re
 
 from backend.scraper._shared.browser import _get_browser, _new_page, _close_page
 from backend.scraper._shared.filters import _validate_job
 
 logger = logging.getLogger("jobnavigator.scraper.ats.google")
+
+# The material icon's own word, still leading the line when the icon element was
+# read as text rather than removed. "Placerville" keeps its P: the word only
+# counts as the icon when a space follows it.
+_ICON_WORD = re.compile(r"^place\s+", re.I)
+# "+5 more" is a count of the places the card did not print, not a place.
+_MORE = re.compile(r"^\+\s*\d+\s+more$", re.I)
+
+# The card's place line, read off the span whose first <i> is the `place` icon.
+# Google's class names rotate, so the icon's text and the card's structure are
+# the only stable handles; the <i> is removed before the text is taken.
+_PLACES_JS = """
+el => {
+  const card = el.closest('li') || el.parentElement;
+  if (!card) return '';
+  for (const span of card.querySelectorAll('span')) {
+    const icon = span.querySelector('i');
+    if (!icon) continue;
+    if ((icon.textContent || '').trim().toLowerCase() !== 'place') continue;
+    const clone = span.cloneNode(true);
+    clone.querySelectorAll('i').forEach(n => n.remove());
+    return clone.textContent || '';
+  }
+  return '';
+}
+"""
+
+
+def _places_from_text(text: str | None) -> list[str]:
+    """Every place one Google card names, in the order the card prints them.
+
+    The line reads "place New York, NY, USA ; Atlanta, GA, USA ; +5 more":
+    semicolons separate the entries, the icon's own word may still lead them,
+    and the trailing "+N more" is a count of the rest, not a place of its own.
+    """
+    raw = _ICON_WORD.sub("", (text or "").strip())
+    out: list[str] = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part or _MORE.match(part):
+            continue
+        if part not in out:
+            out.append(part)
+    return out
 
 
 def is_google(url: str) -> bool:
@@ -73,9 +118,16 @@ async def scrape(url: str, browser=None, max_pages: int | None = None, debug: bo
 
                 job_url = f"https://www.google.com/about/careers/applications/jobs/results/{path_part}"
 
+                try:
+                    places = _places_from_text(await link.evaluate(_PLACES_JS))
+                except Exception:
+                    places = []
+
                 reason = _validate_job(title, job_url)
                 if reason is None:
-                    jobs.append({"title": title, "url": job_url})
+                    jobs.append({"title": title, "url": job_url,
+                                 "location": places[0] if places else None,
+                                 "locations": places})
                 elif debug:
                     rejected.append({"title": title, "url": job_url, "selector": "google_careers", "reason": reason})
 

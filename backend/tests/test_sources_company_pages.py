@@ -82,6 +82,7 @@ async def test_dispatch_falls_back_to_generic(monkeypatch):
 
     async def fake_generic(url, **kw):
         called["which"] = "generic"
+        called["kw"] = kw
         return []
 
     monkeypatch.setattr("backend.scraper.ats.generic.scrape", fake_generic)
@@ -89,6 +90,10 @@ async def test_dispatch_falls_back_to_generic(monkeypatch):
     from backend.scraper.sources.company_pages import _dispatch_ats
     await _dispatch_ats("https://unknown-ats-vendor.example.com/careers")
     assert called["which"] == "generic"
+    assert "max_pages" not in called["kw"]  # no cap given: generic keeps its own default
+
+    await _dispatch_ats("https://unknown-ats-vendor.example.com/careers", max_pages=12)
+    assert called["kw"]["max_pages"] == 12  # the company's cap reaches the fallback too
 
 
 def test_company_pages_module_exports():

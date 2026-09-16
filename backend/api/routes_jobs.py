@@ -162,13 +162,13 @@ def list_jobs(
     total = q.count()
 
     if sort_by == "score":
-        q = q.order_by(desc(Job.best_cv_score).nullslast())
+        q = q.order_by(desc(Job.best_cv_score).nullslast(), Job.id)
     elif sort_by == "salary":
-        q = q.order_by(desc(Job.salary_max).nullslast())
+        q = q.order_by(desc(Job.salary_max).nullslast(), Job.id)
     elif sort_by == "company":
-        q = q.order_by(asc(Job.company))
+        q = q.order_by(asc(Job.company), Job.id)
     else:  # "date" (default)
-        q = q.order_by(desc(Job.discovered_at))
+        q = q.order_by(desc(Job.discovered_at), Job.id)   # id tiebreak: LIMIT/OFFSET over a tie-heavy sort is not stable without one
 
     jobs = q.offset(offset).limit(limit).all()
 

@@ -22,6 +22,9 @@ services:
       retries: 5
 
   backend:
+    # Prebuilt on every release (ghcr.io, .github/workflows/images.yml): `docker compose pull`
+    # skips the Chromium build. `docker compose up --build` still builds from source.
+    image: ghcr.io/vesaias/jobnavigator-backend:${JN_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -47,6 +50,7 @@ services:
       - codex_auth:/root/.codex
 
   frontend:
+    image: ghcr.io/vesaias/jobnavigator-frontend:${JN_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.frontend
@@ -57,7 +61,7 @@ services:
         max-size: "20m"
         max-file: "5"
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"   # the frontend container alone; everything external goes through Caddy
     depends_on:
       - backend
 

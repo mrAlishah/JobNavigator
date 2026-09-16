@@ -49,7 +49,8 @@ async def _dispatch_ats(url: str, debug: bool = False, shared_browser=None, max_
         return await meta.scrape(url, browser=shared_browser, max_pages=max_pages, debug=debug)
     if google.is_google(url):
         return await google.scrape(url, browser=shared_browser, max_pages=max_pages, debug=debug)
-    return await generic.scrape(url, browser=shared_browser, debug=debug)
+    # The fallback honours the same per-company page cap as every other handler; None keeps generic's own default.
+    return await generic.scrape(url, browser=shared_browser, debug=debug, **({'max_pages': max_pages} if max_pages else {}))
 
 
 def _refresh_known_jobs(db, known: dict) -> int:

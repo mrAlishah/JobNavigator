@@ -43,13 +43,7 @@ async def _login_and_save(email, password) -> int:
         await asyncio.sleep(2)
 
         if "/feed" not in page.url and "/jobs" not in page.url:
-            # Login form fields expose only autocomplete=username/current-password (no <form>,
-            # localized submit button) — fill by autocomplete attr and submit with Enter.
-            await page.locator('input[autocomplete="username"]:visible').first.fill(email)
-            await asyncio.sleep(0.4)
-            await page.locator('input[autocomplete="current-password"]:visible').first.fill(password)
-            await asyncio.sleep(0.4)
-            await page.locator('input[autocomplete="current-password"]:visible').first.press("Enter")
+            await lp._fill_login_form(page, email, password)
             try:
                 await page.wait_for_url(
                     lambda u: "/feed" in u or "/jobs" in u or "/checkpoint" in u,
@@ -64,12 +58,7 @@ async def _login_and_save(email, password) -> int:
                 return 1
 
         # Verify against Voyager before saving (csrf-token header is required).
-        me = await page.evaluate(
-            "async () => {"
-            "  const csrf=(document.cookie.match(/JSESSIONID=\"?([^;\"]+)/)||[])[1]||'';"
-            "  return (await fetch('https://www.linkedin.com/voyager/api/me',"
-            "    {credentials:'include', headers:{'csrf-token':csrf}})).status;"
-            "}")
+        me = await lp._voyager_me_status(page)
         if me != 200:
             print(f"Session check failed (voyager /me = {me}); not saving.")
             return 1

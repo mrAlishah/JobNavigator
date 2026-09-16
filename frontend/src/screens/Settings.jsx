@@ -165,6 +165,12 @@ export default function Settings() {
   const [resumes, setResumes] = useState([])
   const [personaAvailable, setPersonaAvailable] = useState(false)
   const [query, setQuery] = useState('')
+  const [backendVersion, setBackendVersion] = useState('')  // from /health; the colophon notes it only when it differs from this build
+  useEffect(() => {
+    let on = true
+    fetch('/health').then((r) => r.ok ? r.json() : null).then((h) => { if (on && h?.version) setBackendVersion(String(h.version)) }).catch(() => {})
+    return () => { on = false }
+  }, [])
   // Anchor rail highlights where the scroller is parked; opens at the top (Display, the first section).
   const [active, setActive] = useState('appearance')
   const [info, setInfo] = useState(null)      // which row's info panel is open
@@ -344,6 +350,10 @@ export default function Settings() {
         { kind: 'appearance', label: 'Appearance', help: 'Light, dark, or follow your OS. Saved in this browser.' },
         { kind: 'theme', label: 'Theme', help: 'The app’s look: colours, fonts and shapes. Saved in this browser.' },
         BT('Classic dashboard', 'Open the previous (v1) interface.', 'Open classic UI', null, { href: '/classic' }),
+      ]],
+      ['feed', '', 'Feed', '', [
+        SW('Zoom control on postings', 'The small + / − floater top-right of a posting.', 'Hidden — postings open at last selected zoom level.', 'feed_zoom_floater',
+          { dflt: true, info: 'Zoom is remembered per browser, not per job: set it once and every posting opens at that size. Both the live page and the cached copy are frames, so zoom scales the frame and the page reflows to the new width.' }),
       ]],
       ['models', 'AI', 'Models', '', [
         { kind: 'pair', label: 'Primary provider · model', help: 'Every AI feature uses this pair unless overridden below.',
@@ -586,7 +596,8 @@ export default function Settings() {
             <Helper style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '34px 0 6px' }}>
               <span style={{ fontStyle: 'italic' }}>
                 {/* ui: keep — serif 12 wordmark, below the 18/19 Heading scale */}
-                <span style={{ color: 'var(--muted)', fontFamily: 'var(--serif)', fontSize: 12, fontStyle: 'normal' }}>JobNavigator</span>&nbsp;v.2.0
+                <span style={{ color: 'var(--muted)', fontFamily: 'var(--serif)', fontSize: 12, fontStyle: 'normal' }}>JobNavigator</span>&nbsp;v{__APP_VERSION__}
+                {backendVersion && backendVersion !== __APP_VERSION__ && <> · backend v{backendVersion}</>}
               </span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 14 }}>
                 {/* These use Link (not hand-written anchors) but keep the colophon's ink/size, not the link scale —
@@ -595,6 +606,8 @@ export default function Settings() {
                   style={{ color: 'var(--muted)', fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 400, textDecoration: 'none' }}>API docs ↗</Link>
                 <Link href="https://github.com/vesaias/JobNavigator" target="_blank" rel="noopener noreferrer"
                   style={{ color: 'var(--muted)', fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 400, textDecoration: 'none' }}>github.com/vesaias/JobNavigator ↗</Link>
+                <Link href="https://viktoresadze.com" target="_blank" rel="noopener noreferrer"
+                  style={{ color: 'var(--muted)', fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 400, textDecoration: 'none' }}>viktoresadze.com ↗</Link>
               </span>
             </Helper>
           </div>
