@@ -82,6 +82,13 @@ def test_ollama_is_free():
     assert cost == 0.0
 
 
+def test_lmstudio_is_free():
+    """lmstudio is local — always $0."""
+    cost = calc_cost("lmstudio", "qwen2.5-7b-instruct",
+                     input_tokens=10000, output_tokens=5000)
+    assert cost == 0.0
+
+
 def test_unknown_provider_returns_zero():
     cost = calc_cost("some-unknown-provider", "claude-sonnet-4-6",
                      input_tokens=1000, output_tokens=200)
@@ -119,3 +126,4 @@ def test_free_providers_set():
     assert "claude_code" in FREE_PROVIDERS
     assert "codex_cli" in FREE_PROVIDERS
     assert "ollama" in FREE_PROVIDERS
+    assert "lmstudio" in FREE_PROVIDERS

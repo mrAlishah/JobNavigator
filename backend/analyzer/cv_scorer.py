@@ -55,6 +55,9 @@ def _flatten_resume(json_data: dict) -> str:
     if experience:
         parts.append("## Experience")
         for exp in experience:
+            if not isinstance(exp, dict):
+                parts.append(str(exp))
+                continue
             title = exp.get("title", "")
             company = exp.get("company", "")
             # schema field is "date"; keep "dates" as back-compat
@@ -85,6 +88,9 @@ def _flatten_resume(json_data: dict) -> str:
     if education:
         parts.append("## Education")
         for edu in education:
+            if not isinstance(edu, dict):
+                parts.append(str(edu))
+                continue
             degree = edu.get("degree", "")
             school = edu.get("school", "")
             loc = edu.get("location", "")
@@ -96,6 +102,9 @@ def _flatten_resume(json_data: dict) -> str:
     if projects:
         parts.append("## Projects")
         for proj in projects:
+            if not isinstance(proj, dict):
+                parts.append(str(proj))
+                continue
             name = proj.get("name", "")
             desc = proj.get("description", "")
             line = f"{name}: {desc}".strip(": ")
@@ -108,6 +117,9 @@ def _flatten_resume(json_data: dict) -> str:
     if publications:
         parts.append("## Publications")
         for pub in publications:
+            if not isinstance(pub, dict):
+                parts.append(str(pub))
+                continue
             title = pub.get("title", "")
             # schema is {title, description}; keep venue/year as back-compat
             detail = pub.get("description") or " ".join(x for x in (pub.get("venue"), pub.get("year")) if x)

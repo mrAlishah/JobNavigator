@@ -1230,6 +1230,20 @@ def check_pdf_size(pdf_bytes: bytes) -> None:
         raise HTTPException(status_code=400, detail="PDF too large (max 10 MB)")
 
 
+def _parse_model_json(raw_response: str) -> dict:
+    """The first balanced {...} in a raw model reply (string/escape aware), falling back to the whole reply; raises json.JSONDecodeError when neither parses."""
+    from backend.api.routes_autofill import _first_json_object
+    last_err = None
+    for candidate in (_first_json_object(raw_response), raw_response.strip()):
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as e:
+            last_err = e
+    raise last_err or json.JSONDecodeError("no JSON object found", raw_response or "", 0)
+
+
 async def parse_resume_pdf(pdf_bytes: bytes, db: Session) -> dict:
     """PDF bytes → structured résumé json_data via pdfplumber + one LLM call; shared by the résumé-shelf import and POST /api/persona/import so both use the same schema/prompt/tracking, raising 422 for unusable PDF text or invalid model JSON and 500 if the LLM call itself fails."""
     extracted_text = ""
@@ -1265,22 +1279,16 @@ async def parse_resume_pdf(pdf_bytes: bytes, db: Session) -> dict:
         _cfg = resolve_llm_config("", db=db)
         _provider, _model = _cfg["provider"], _cfg["model"]
         async with track_llm_call("pdf", _provider, _model) as _tracker:
-            _resp = await call_llm(prompt=user_prompt, system=system_prompt, max_tokens=2000)
+            # A full resume JSON routinely exceeds 2k tokens on verbose local models; 2000 truncated the reply mid-object.
+            _resp = await call_llm(prompt=user_prompt, system=system_prompt, max_tokens=8000)
             _tracker.record(_resp)
             raw_response = _resp["text"]
 
-        cleaned = raw_response.strip()
-        if cleaned.startswith("```"):
-            first_newline = cleaned.index("\n")
-            cleaned = cleaned[first_newline + 1:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        logger.error(f"LLM returned invalid JSON for PDF import: {e}\nRaw: {raw_response[:500]}")
-        raise HTTPException(status_code=422, detail="LLM returned invalid JSON. Try again or enter data manually.")
+        try:
+            return _parse_model_json(raw_response)
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM returned invalid JSON for PDF import: {e}\nRaw: {raw_response[:500]}")
+            raise HTTPException(status_code=422, detail="LLM returned invalid JSON. Try again or enter data manually.")
     except HTTPException:
         raise
     except Exception as e:

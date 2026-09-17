@@ -4,7 +4,6 @@
   "version": "2.1.0",
   "description": "Job navigation automation - application tracking & LinkedIn capture",
   "permissions": ["activeTab", "storage", "scripting", "declarativeNetRequest"],
-  "externally_connectable": { "ids": [] },
   "host_permissions": ["http://*/*", "https://*/*", "<all_urls>"],
   "action": {
     "default_popup": "popup.html",

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **LM Studio provider** (by @brycecollison, #15): local inference through LM Studio's OpenAI-compatible endpoint, no key; `LMSTUDIO_BASE_URL` for the containerised backend; thinking models run with reasoning off for these structured calls; cost counts as $0.
 - **Posting zoom:** a + / − floater top-right of the posting steps the frame from 50 to 200 %; the level is remembered per browser. Double-click resets. Settings › General › Feed hides it.
 
 ### Changed
@@ -15,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend port 3000** binds to 127.0.0.1; the dashboard is reached through Caddy on port 80 only.
 
 ### Fixed
+- **PDF résumé import** (by @brycecollison, #15): the reply is parsed from the first balanced JSON object (bare, fenced or wrapped in prose) and the token budget is 8000, so a verbose local model no longer truncates mid-object. "Cambridge, MA USA" style strings split into state and country.
 - **Location parser, second pass:** bare Bay Area and Puget Sound cities resolve to their state; "Remote US" / "Remote in Canada" give the country with the remote flag; "Multiple Locations" and a stray "Location:" label never become a city; comma-joined city lists ("New York, San Francisco, Seattle", "IRL, Dublin, Cork") split into one place each. Corpus grown to 706 strings; existing rows re-parsed (unparsed 421 → 124).
 - **Google and Meta handlers emit the card's location** (first place plus every listed one), so those jobs answer the Location filter; "USA Remote" and other country-first remote strings parse to the country with the remote flag.
 - **Company page cap:** the ATS-dispatch fallback now honours the company's "Pages to read" like every other path.

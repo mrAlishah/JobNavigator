@@ -1,5 +1,5 @@
 """LLM pricing and cost calculation, in USD per million tokens, keyed by (provider, model) since the same model can be billed differently across providers (e.g. Anthropic API vs. Claude Code subscription).
-claude_api/openai use static tables (update when models change); openrouter is fetched live (refresh_openrouter_prices); claude_code/codex_cli/ollama are always $0."""
+claude_api/openai use static tables (update when models change); openrouter is fetched live (refresh_openrouter_prices); claude_code/codex_cli/ollama/lmstudio are always $0."""
 import time as _time
 import logging
 from typing import Optional
@@ -58,7 +58,7 @@ PRICING: dict[str, dict[str, dict]] = {
 }
 
 # Providers whose calls are covered by flat subscription / local compute — always $0.
-FREE_PROVIDERS: set[str] = {"claude_code", "codex_cli", "ollama"}
+FREE_PROVIDERS: set[str] = {"claude_code", "codex_cli", "ollama", "lmstudio"}
 
 # ── OpenRouter live pricing ──────────────────────────────────────────────────
 _OR_PRICES: dict[str, dict] = {}   # slug -> per-Mtok pricing dict

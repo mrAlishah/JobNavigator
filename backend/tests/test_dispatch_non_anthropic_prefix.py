@@ -136,6 +136,36 @@ async def test_dispatch_claude_api_still_uses_cache_control(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_lmstudio_routes_to_openai_client(monkeypatch):
+    """lmstudio is OpenAI-API-compatible — routes to _call_openai with the :1234 base URL and a dummy key when none is set."""
+    captured = {}
+
+    async def fake_openai(prompt, system, model, api_key, max_tokens, base_url=None, extra_body=None):
+        captured["prompt"] = prompt
+        captured["api_key"] = api_key
+        captured["base_url"] = base_url
+        captured["extra_body"] = extra_body
+        return {"text": "ok",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_read_tokens": 0, "cache_write_tokens": 0}}
+
+    monkeypatch.setattr("backend.analyzer.llm_client._call_openai", fake_openai)
+    monkeypatch.delenv("LMSTUDIO_BASE_URL", raising=False)
+
+    from backend.analyzer.llm_client import _dispatch
+    await _dispatch(
+        provider="lmstudio", model="qwen2.5-7b-instruct",
+        api_key="", prompt="JD text", system="sys", max_tokens=600,
+        cached_prefix="RUBRIC HERE",
+    )
+
+    assert captured["base_url"] == "http://localhost:1234/v1"
+    assert captured["api_key"] == "lm-studio"  # dummy — LM Studio ignores it
+    assert captured["prompt"] == "RUBRIC HERE\n\nJD text"  # prefix concatenated, like other non-Anthropic providers
+    assert captured["extra_body"] == {"reasoning_effort": "none"}
+
+
+@pytest.mark.asyncio
 async def test_dispatch_openai_compat_removed():
     """openai_compat provider was removed 2026-07 — _dispatch rejects it."""
     from backend.analyzer.llm_client import _dispatch

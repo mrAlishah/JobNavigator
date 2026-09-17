@@ -1,6 +1,7 @@
 """Provider-agnostic LLM client for scoring and analysis with automatic fallback."""
 import asyncio
 import logging
+import os
 import re
 from backend.models.db import SessionLocal, Setting
 
@@ -248,6 +249,16 @@ async def _dispatch(provider: str, model: str, api_key: str,
         # One key reaches every vendor's models (model slug is vendor-prefixed).
         return await _call_openai(combined, system, model, api_key, max_tokens,
                                   base_url=OPENROUTER_BASE_URL)
+    elif provider == "lmstudio":
+        # LM Studio serves an OpenAI-compatible API on :1234; no key (client wants a non-empty string).
+        # Override with LMSTUDIO_BASE_URL when the backend is containerized (e.g. http://host.docker.internal:1234/v1).
+        base = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+        # Thinking models (e.g. Qwen3) burn the whole max_tokens budget on reasoning and
+        # return empty content; disable thinking for these structured-output calls.
+        # LM Studio's OpenAI-compatible endpoint takes reasoning_effort="none" to turn it off.
+        return await _call_openai(combined, system, model, api_key or "lm-studio", max_tokens,
+                                  base_url=base,
+                                  extra_body={"reasoning_effort": "none"})
     elif provider == "ollama":
         return await _call_ollama(combined, system, model, max_tokens)
     else:
@@ -419,9 +430,10 @@ async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int)
 
 
 async def _call_openai(prompt: str, system: str, model: str, api_key: str, max_tokens: int,
-                       base_url: str | None = None) -> dict:
+                       base_url: str | None = None, extra_body: dict | None = None) -> dict:
     """Call the OpenAI API, or any OpenAI-compatible endpoint via base_url."""
     client = _openai_client(api_key, base_url)  # base_url=None → OpenAI default
+    kwargs = {"extra_body": extra_body} if extra_body else {}
     response = await client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
@@ -429,6 +441,7 @@ async def _call_openai(prompt: str, system: str, model: str, api_key: str, max_t
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
+        **kwargs,
     )
     usage = response.usage
     return {

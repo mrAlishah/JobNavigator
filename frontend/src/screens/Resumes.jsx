@@ -333,7 +333,7 @@ function AddModal({ onClose, onCreated }) {
       }
       const { data } = await api.post('/resumes', { name: name.trim() || file.name.replace(/\.pdf$/i, ''), is_base: true, json_data: parsed.json_data || parsed })
       onCreated(data.id)
-    } catch (e) { setErr(e.response?.data?.detail || 'Import failed. The PDF must contain selectable text, not a scanned image.'); setBusy('') }
+    } catch (e) { setErr(e.response?.data?.detail || 'Import failed with no response from the server (request timed out or backend unreachable).'); setBusy('') }
   }
 
   const canCreate = !!name.trim() && !busy

@@ -168,6 +168,9 @@ _SPLIT = re.compile(r"\s*[,;·•|()]\s*|\s+[-–—]\s+"
 # worth of filter answers, not a city called "New York, London, Tokyo". The
 # "or" is deliberately case-sensitive: "OR" is Oregon, "or" is a separator.
 _LIST_SPLIT = re.compile(r"\s*[;|·•]\s*|\s*/\s*|\s+or\s+")
+# A state code and a country name space-joined into one token: "Cambridge,
+# MA USA". The comma split leaves "MA USA" whole, where it reads as city text.
+_CODE_COUNTRY = re.compile(r"^([A-Za-z]{2})\s+(USA|US|United States)$", re.I)
 _METRO_TAIL = re.compile(r"\s+(metropolitan\s+area|metro(politan)?\s+area|area)$", re.I)
 # A site label a board appends to a city: "Redwood City Office", "Seattle Campus".
 _OFFICE_TAIL = re.compile(r"\s+(office|campus|hq|headquarters|site)$", re.I)
@@ -825,6 +828,13 @@ def _parse_one(cleaned: str, text_joiner: str = ", ", country_hint: str = None) 
 
     tokens = _split_dashed([t.strip() for t in _SPLIT.split(cleaned)
                             if t and t.strip()])
+    # "MA USA" is a code plus the country it pins, not one name: split it so
+    # each half can be read on its own.
+    expanded = []
+    for tok in tokens:
+        m = _CODE_COUNTRY.match(tok)
+        expanded.extend([m.group(1), "USA"] if m else [tok])
+    tokens = expanded
     if not tokens:
         return result
 

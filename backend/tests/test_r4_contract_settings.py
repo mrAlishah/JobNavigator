@@ -144,7 +144,7 @@ def test_patch_settings_rejects_an_unknown_provider(client, key):
 
 
 @pytest.mark.parametrize("provider", ["claude_api", "claude_code", "codex_cli", "openai",
-                                      "ollama", "openrouter", ""])
+                                      "ollama", "lmstudio", "openrouter", ""])
 def test_patch_settings_accepts_every_known_provider(client, provider):
     assert_clean(client.patch("/api/settings", json={"llm_provider": provider}), 200)
 
