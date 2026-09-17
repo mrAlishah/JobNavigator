@@ -1,0 +1,24 @@
+# Local override for Elsa's isolated JobNavigator instance.
+# Use only together with docker-compose.yml and project name jobnavigator-elsa.
+# The named volumes are therefore jobnavigator-elsa_* and cannot mix with Alish's.
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:15433:5432"
+
+  backend:
+    ports: !override
+      - "127.0.0.1:18001:8000"
+    volumes:
+      - ./backups-elsa:/app/backups
+      - ./backend/.linkedin_api-elsa:/root/.linkedin_api
+
+  frontend:
+    # Diagnostic only. Use Caddy at http://elsa.localhost:8081 for the app.
+    ports: !override
+      - "127.0.0.1:13001:80"
+
+  caddy:
+    ports: !override
+      - "127.0.0.1:8081:80"
+      - "127.0.0.1:8444:443"
