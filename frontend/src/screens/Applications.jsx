@@ -907,6 +907,8 @@ function LogModal({ onClose, onSaved, onJobSaved, pushToast, onDirty }) {
       if (urlRef.current !== target) return                                  // a newer URL is in the field
       if (data.title && !draftRef.current.title.trim()) setTitle(data.title)
       if (data.company && !draftRef.current.company.trim()) setCompany(data.company)
+      // an empty field after a refused read is the site's doing, not a parser miss
+      if (data.blocked && !(data.title && data.company)) pushToast({ kind: 'progress', spin: false, msg: 'This site blocks automatic reading. Type the title and company.' })
     } catch (e) {
       if (urlRef.current !== target) return
       console.error(e); pushToast({ kind: 'error', msg: 'Could not read job details from that URL' + errSuffix(e) })

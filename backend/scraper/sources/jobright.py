@@ -159,6 +159,14 @@ async def _fetch_recommendations(session_id: str, position: int, count: int = 20
 async def _fetch_search_ssr(keyword: str, location: str = "") -> tuple[list[dict], int]:
     """Fetch jobs via SSR search page (__NEXT_DATA__). Returns (jobs, total_count)."""
     params = {"titleKeyword": keyword, "visit": "search"}
+    # A jobright search has no location input: neither form shows the field for
+    # this mode. So a stored row carries "United States" only as the old column
+    # default or as a leftover from a mode change, and a new row carries "".
+    # The two populations send different requests, and that is accepted: they
+    # get the same answer. Measured with "program manager", no location gave
+    # totalJobs=2026 and "United States" gave 2027, and the one extra job was
+    # posted between the two requests. The stored text is sent as it is, so a
+    # location that an API client sets on purpose still reaches jobright.
     if location:
         params["location"] = location
 

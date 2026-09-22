@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.countries import DEFAULT_COUNTRY, compose_location
 from backend.models.db import SessionLocal, Search, Job, Setting, get_existing_external_ids
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
 
@@ -96,21 +97,77 @@ def _condense_error(msg: str) -> str:
     return text[:120]
 
 
+# Known blocks: the board refuses this scraper on every measured run, and no query
+# change helps. Each signature maps to a stable text. Every other failure keeps
+# its condensed text, so a failure nobody diagnosed stays visible as it is.
+# The frontend flags the same two boards in frontend/src/sourceBlocks.js.
+ZIP_RECRUITER_BLOCKED = "the server refuses the requests that this scraper sends: HTTP 403"
+# The capture sees the log line, not the page. A real page with zero jobs logs the
+# same warning, so the Google text names the likely cause, not a certain one.
+GOOGLE_BLOCKED = "the server returned no job data, which is usually a JavaScript check page that this scraper cannot read"
+_KNOWN_BLOCKS = {
+    # jobspy/ziprecruiter/__init__.py logs the 403 body at ERROR. "forbidden aa"
+    # comes from the server, "forbidden cf-waf" from Cloudflare in front of it.
+    "zip_recruiter": (re.compile(r"forbidden (aa|cf-waf)", re.I), ZIP_RECRUITER_BLOCKED),
+    # jobspy/google/__init__.py logs this at WARNING when page 1 has no cursor.
+    "google": (re.compile(r"initial cursor not found", re.I), GOOGLE_BLOCKED),
+}
+
+
+def _describe_error(key: str, msg: str) -> str:
+    """The stable text for a known block signature of this board, else _condense_error(msg)."""
+    signature, text = _KNOWN_BLOCKS.get(key, (None, None))
+    if signature and signature.search(str(msg)):
+        return text
+    return _condense_error(msg)
+
+
+def _board_errors(errors: dict, jobs_df, sources) -> dict:
+    """The captured errors to report for one scrape_jobs() call.
+
+    The capture handler sees every JobSpy logger in the process, so a run that
+    overlaps another run also receives that run's records. Only the boards this
+    run asked for are kept. Cross-talk on a board that both runs use stays.
+
+    jobspy logs the Google cursor warning also when page 1 held up to 10 jobs
+    (jobspy/google/__init__.py). A Google board that returned rows was not
+    blocked, so it gets no error. A different Google failure, for example on
+    page 2, keeps its text.
+    """
+    returned = set()
+    if jobs_df is not None and not jobs_df.empty and "site" in jobs_df.columns:
+        returned = {str(s).lower() for s in jobs_df["site"].unique()}
+    return {k: v for k, v in (errors or {}).items()
+            if k in sources and not (k == "google" and v == GOOGLE_BLOCKED and k in returned)}
+
+
+# The Indeed scraper reports an HTTP failure through log.info, not log.warning
+# (jobspy/indeed/__init__.py: "responded with status code: <code>"), so a
+# WARNING threshold never saw an Indeed failure. The threshold is INFO now, and
+# this pattern — not the level — decides what an INFO record has to say to count
+# as a failure, so ordinary progress lines ("finished scraping") stay out of
+# source_breakdown.
+_INFO_FAILURE_RE = re.compile(r"responded with status code:\s*\d+", re.IGNORECASE)
+
+
 class _SourceLogCapture(logging.Handler):
-    """Keeps the first WARNING+ record each JobSpy board logger emits."""
+    """Keeps the first failure record each JobSpy board logger emits."""
 
     def __init__(self):
-        super().__init__(level=logging.WARNING)
+        super().__init__(level=logging.INFO)
         self.errors = {}
 
     def emit(self, record):
         try:
             if not str(record.name).startswith("JobSpy"):
                 return
+            message = record.getMessage()
+            if record.levelno < logging.WARNING and not _INFO_FAILURE_RE.search(message):
+                return
             key = _site_key(record.name)
             if not key or key in self.errors:
                 return
-            self.errors[key] = _condense_error(record.getMessage())
+            self.errors[key] = _describe_error(key, message)
         except Exception:  # a logging handler must never break the scrape
             pass
 
@@ -146,6 +203,26 @@ def _merge_source_errors(breakdown: dict, errors: dict) -> dict:
     """Fold captured per-board errors into the seen/new breakdown."""
     for key, err in (errors or {}).items():
         breakdown.setdefault(key, {"seen": 0, "new": 0})["error"] = err
+    return breakdown
+
+
+def _count_returned(breakdown: dict, jobs_df) -> dict:
+    """Write `returned`, the unfiltered row count, for every configured board.
+
+    An empty frame is real evidence, so every board gets 0. A frame that holds
+    rows but no `site` column is no evidence at all: the key is left off
+    entirely, because empty_sources() skips an entry without it, and a run that
+    stored jobs must never report "no rows from linkedin, indeed".
+    """
+    empty = jobs_df is None or jobs_df.empty
+    if not empty and "site" not in jobs_df.columns:
+        return breakdown
+    counts = {} if empty else {
+        str(site).lower(): int(n)
+        for site, n in jobs_df["site"].value_counts().items()
+    }
+    for key in set(breakdown) | set(counts):
+        breakdown.setdefault(key, {"seen": 0, "new": 0})["returned"] = counts.get(key, 0)
     return breakdown
 
 
@@ -203,11 +280,11 @@ def _run_sync(search, proxy_url: str = None) -> dict:
         kwargs = {
             "site_name": sources,
             "search_term": search.search_term or "",
-            "location": search.location or "United States",
+            "location": compose_location(search.location, search.country),
             "results_wanted": search.results_wanted or 50,
             "hours_old": search.hours_old or 24,
             "job_type": search.job_type or "fulltime",
-            "country_indeed": "USA",
+            "country_indeed": search.country or DEFAULT_COUNTRY,
             "verbose": 2,
         }
 
@@ -220,7 +297,14 @@ def _run_sync(search, proxy_url: str = None) -> dict:
         logger.info(f"Running JobSpy search: {search.name} — term='{search.search_term}', sources={sources}")
         with _capture_source_errors(sources) as capture:
             jobs_df = scrape_jobs(**kwargs)
-        _merge_source_errors(breakdown, capture.errors)
+        _merge_source_errors(breakdown, _board_errors(capture.errors, jobs_df, sources))
+        # Rows each board returned, counted here — before the title filter, the
+        # company allow-list and the company exclude. It is the only truthful
+        # answer to "did this board deliver anything at all?": `seen` counts what
+        # survived the filters, and `filtered` counts only rejected rows that
+        # were new enough to store, so a rejected row already in the database
+        # leaves both at 0 on every run after the first.
+        _count_returned(breakdown, jobs_df)
 
         if jobs_df is None or jobs_df.empty:
             duration = time.time() - start_time
@@ -320,9 +404,11 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                     location=_clean(row.get("location")),
                     # JobSpy's own `is_remote` is a substring test over the whole
                     # description, so "remote state" (Terraform) and "remote dev
-                    # environments" mark a job remote. It is deliberately unused;
-                    # `work_from_home_type` below is Indeed's structured field and
-                    # is trustworthy. Everything else falls to the JD cascade.
+                    # environments" mark a job remote. It is deliberately unused.
+                    # `work_from_home_type` below is no help either: in
+                    # python-jobspy 1.1.82 only the Naukri scraper sets that field.
+                    # Indeed, LinkedIn, ZipRecruiter and Google rows always carry
+                    # None there, so the arrangement comes from the JD cascade.
                     remote=None,
                     status="new",
                     seen=False,

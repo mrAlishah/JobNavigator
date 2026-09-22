@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import api from '../api'
 import InfoTip from './InfoTip'
+import { BLOCKED_BADGE, SOURCE_BLOCKS } from '../sourceBlocks'
 import { Plus, Play, Trash2, Edit2, Check, X, FlaskConical, ExternalLink, Loader2, AlertTriangle } from 'lucide-react'
 
 const SOURCES = [
@@ -17,6 +18,9 @@ const SOURCES = [
 const EXTENSION_MODES = ['linkedin_extension', 'extension']
 const isExtensionMode = (mode) => EXTENSION_MODES.includes(mode)
 
+// Matches backend/countries.py DEFAULT_COUNTRY — jobspy's own alias for the US.
+const DEFAULT_COUNTRY = 'usa'
+
 const SOURCE_COLORS = {
   linkedin: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
   indeed: 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300',
@@ -30,7 +34,7 @@ const SOURCE_COLORS = {
 
 const DEFAULT_FORM = {
   name: '', search_mode: 'keyword', search_term: '', direct_url: '',
-  location: 'United States', is_remote: '', job_type: 'fulltime',
+  location: '', country: DEFAULT_COUNTRY, is_remote: '', job_type: 'fulltime',
   hours_old: 24, results_wanted: 50,
   sources: ['linkedin', 'indeed', 'zip_recruiter', 'google'],
   title_include_keywords: '', title_exclude_keywords: 'intern, junior, associate',
@@ -46,6 +50,12 @@ export default function SearchManager() {
     api.get('/health/entities').then(({ data }) => {
       const m = {}; (data.searches || []).forEach(s => { m[s.id] = s.reason }); setDownMap(m)
     }).catch(() => {})
+  }, [])
+  // The country list belongs to the jobspy library — the backend serves it so
+  // this screen keeps no copy of its own.
+  const [countries, setCountries] = useState([])
+  useEffect(() => {
+    api.get('/searches/countries').then(({ data }) => setCountries(data || [])).catch(() => {})
   }, [])
   const [editing, setEditing] = useState(null) // null | 'new' | search_id
   const [editData, setEditData] = useState({})
@@ -70,7 +80,8 @@ export default function SearchManager() {
     setEditing(s.id)
     setEditData({
       name: s.name, search_mode: s.search_mode, search_term: s.search_term || '',
-      direct_url: s.direct_url || '', location: s.location || 'United States',
+      direct_url: s.direct_url || '', location: s.location || '',
+      country: s.country || DEFAULT_COUNTRY,
       is_remote: s.is_remote === true ? 'true' : s.is_remote === false ? 'false' : '',
       job_type: s.job_type || 'fulltime', hours_old: s.hours_old || 24,
       results_wanted: s.results_wanted || 50, sources: s.sources || [],
@@ -332,8 +343,17 @@ export default function SearchManager() {
           <>
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Location</label>
-              <input type="text" value={ed.location} onChange={e => setEd({ location: e.target.value })}
+              <input type="text" value={ed.location} onChange={e => setEd({ location: e.target.value })} placeholder="e.g. Toronto"
                 className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600" />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">A city or a region. Country adds the country. For remote work set Remote and leave this empty.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Country</label>
+              <select value={ed.country} onChange={e => setEd({ country: e.target.value })}
+                className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
+                {countries.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">The only country source. Every board receives it.</p>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Remote</label>
@@ -370,7 +390,7 @@ export default function SearchManager() {
       {ed.search_mode === 'keyword' && (
         <div className="mt-3">
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Sources</label>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {SOURCES.map(s => (
               <label key={s.value} className="flex items-center gap-1 text-xs">
                 <input type="checkbox" checked={(ed.sources || []).includes(s.value)}
@@ -381,9 +401,13 @@ export default function SearchManager() {
                     setEd({ sources: newSources })
                   }} />
                 {s.label}
+                {SOURCE_BLOCKS[s.value] && (
+                  <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 px-1 rounded">{BLOCKED_BADGE}</span>
+                )}
               </label>
             ))}
           </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{BLOCKED_BADGE}: {Object.values(SOURCE_BLOCKS).join(' ')}</p>
         </div>
       )}
 
@@ -547,14 +571,19 @@ export default function SearchManager() {
                 </div>
 
                 {/* Source & Company breakdowns */}
-                {(Object.keys(testResult.source_breakdown || {}).length > 0 || Object.keys(testResult.company_breakdown || {}).length > 0) && (
+                {(Object.keys(testResult.source_breakdown || {}).length > 0 || Object.keys(testResult.source_errors || {}).length > 0 || Object.keys(testResult.company_breakdown || {}).length > 0) && (
                   <div className="px-5 py-2 border-b border-gray-200 dark:border-gray-700 bg-blue-50/50 dark:bg-gray-700/50 flex gap-8 text-xs">
-                    {Object.keys(testResult.source_breakdown || {}).length > 0 && (
+                    {(Object.keys(testResult.source_breakdown || {}).length > 0 || Object.keys(testResult.source_errors || {}).length > 0) && (
                       <div>
                         <span className="font-medium text-gray-600 dark:text-gray-400">By source: </span>
-                        {Object.entries(testResult.source_breakdown).map(([source, count]) => (
+                        {Object.entries(testResult.source_breakdown || {}).map(([source, count]) => (
                           <span key={source} className={`inline-block px-1.5 py-0.5 rounded mr-1 ${SOURCE_COLORS[source] || 'bg-gray-100 text-gray-600'}`}>
                             {source} ({count})
+                          </span>
+                        ))}
+                        {Object.entries(testResult.source_errors || {}).map(([source, error]) => (
+                          <span key={`${source}-error`} className="inline-block px-1.5 py-0.5 rounded mr-1 bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                            {source} failed: {error}
                           </span>
                         ))}
                       </div>

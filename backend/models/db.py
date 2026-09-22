@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import backref, column_property, declarative_base, deferred, relationship, sessionmaker
 
 from backend.config import DATABASE_URL
+from backend.countries import DEFAULT_COUNTRY
 
 # Pool args are Postgres-specific; SQLite (used in CI tests via DATABASE_URL=sqlite:///:memory:)
 # rejects pool_size/max_overflow.
@@ -67,7 +68,16 @@ class Search(Base):
     search_mode = Column(String, default="keyword")  # keyword | levels_fyi | linkedin_personal | jobright | freehire | extension | linkedin_extension
     search_term = Column(String, nullable=True)
     direct_url = Column(String, nullable=True)
-    location = Column(String, default="United States")
+    # A city or a region, never a country: `country` is the single country
+    # source and the scraper appends its label. The old default was
+    # "United States", which the write path now refuses next to any other
+    # country. An empty location composes to the country label alone.
+    location = Column(String, default="")
+    # Picks the Indeed domain and the `indeed-co` API header. A US domain answers
+    # a question about a Canadian city with HTTP 200 and an empty result list, so
+    # the country is an explicit field instead of a literal. Values are jobspy
+    # Country aliases — see backend/countries.py.
+    country = Column(String, default=DEFAULT_COUNTRY)
     is_remote = Column(Boolean, nullable=True)  # null=any
     job_type = Column(String, default="fulltime")
     hours_old = Column(Integer, default=24)
@@ -417,7 +427,7 @@ class LlmCallLog(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     purpose = Column(String, nullable=False)  # score_light, score_full, tailor, email, pdf
-    provider = Column(String, nullable=False, default="")  # claude_api, claude_code, codex_cli, openai, ollama
+    provider = Column(String, nullable=False, default="")  # claude_api, claude_code, codex_cli, antigravity_cli, openai, ollama
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     model = Column(String, nullable=False, default="")
     input_tokens = Column(Integer, default=0, nullable=False)

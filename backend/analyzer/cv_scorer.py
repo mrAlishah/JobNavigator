@@ -6,6 +6,7 @@ import logging
 import time
 from backend.analyzer.llm_client import call_llm
 from backend.analyzer.llm_logger import log_llm_call
+from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, parse_model_json
 from backend.models.db import SessionLocal, Job, Setting
 
 logger = logging.getLogger("jobnavigator.cv_scorer")
@@ -392,13 +393,8 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         provider_for_log = resp.get("provider") or provider_for_log
         model_for_log = resp.get("model") or model_for_log
 
-        # Parse JSON — handle markdown wrapping and trailing commentary
-        import re
-        cleaned = text.strip()
-        match = re.search(r'\{[\s\S]*\}', cleaned)
-        if match:
-            cleaned = match.group(0)
-        result = json.loads(cleaned)
+        # Parse JSON — handles markdown wrapping and trailing commentary
+        result = parse_model_json(text)
 
         # A confused model can emit {"scores": null}; .get's default doesn't catch
         # an explicit null, so validate the shape and treat malformed output as a transient failure.
@@ -428,7 +424,7 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
 
     except json.JSONDecodeError as e:
         call_success = False
-        call_error = f"JSON decode: {e}"
+        call_error = UNPARSEABLE_MESSAGE
         logger.error(f"Failed to parse LLM response as JSON: {e}")
     except Exception as e:
         call_success = False

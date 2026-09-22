@@ -26,6 +26,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && npm install -g @anthropic-ai/claude-code @openai/codex@0.154.0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Antigravity CLI (Google subscription). The installer pins no version and the
+# binary updates itself, so switch the auto-updater off for reproducible builds.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+
+# agy ships 57 tools and reads files unasked. `--sandbox` restricts the terminal
+# only, so the deny list is the lever that keeps the agent inside plain text.
+# It sits outside /root/.gemini because agy rewrites settings.json as it starts
+# and the volume mounts over that path; the adapter installs it before each call.
+COPY backend/antigravity-settings.json /opt/antigravity-settings.json
+
 COPY backend/ ./backend/
 # .env is passed via docker-compose env_file, not baked into image
 

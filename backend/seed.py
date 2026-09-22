@@ -42,7 +42,7 @@ DEFAULT_SETTINGS = {
     "scoring_rubric": ("Score each resume using these criteria (each 0-20, sum to 0-100):\n1. SKILLS MATCH (weight: 20): How many required technical skills/tools does the candidate have?\n2. EXPERIENCE LEVEL (weight: 20): Does seniority/years match? (entry-level resume for senior role = low)\n3. DOMAIN FIT (weight: 20): Has the candidate worked in the same industry/domain?\n4. ROLE ALIGNMENT (weight: 20): Does the candidate's career trajectory match this role type?\n5. REQUIREMENTS MET (weight: 20): Does the candidate meet stated requirements (education, certs, clearance)?\n\nUse the FULL 0-100 range. 90+ = perfect match. 50-70 = decent with gaps. Below 30 = poor match.\nAvoid clustering scores — differentiate meaningfully between resumes and jobs.", "Editable resume scoring rubric"),
     "scoring_output_light": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME"\n}', "Light scoring output schema"),
     "scoring_output_full": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME",\n  "breakdown": {"skills": 0-20, "experience": 0-20, "domain": 0-20, "role": 0-20, "requirements": 0-20},\n  "summary": "2-3 sentence assessment of candidate-job fit",\n  "requirement_mapping": [\n    {"requirement": "JD requirement text", "cv_match": "matching CV line or null", "matched": true/false, "severity": "required or preferred"}\n  ],\n  "keyword_coverage_pct": 0-100,\n  "matched_keywords": ["keyword1", "keyword2"],\n  "missing_keywords": ["keyword3", "keyword4"],\n  "hard_blockers": ["blocker if any"],\n  "ats_tip": "one actionable ATS optimization suggestion"\n}', "Full scoring output schema with keyword analysis"),
-    "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, codex_cli, openai, ollama, lmstudio, openrouter"),
+    "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, codex_cli, antigravity_cli, openai, ollama, lmstudio, openrouter"),
     "llm_model": ("claude-sonnet-5", "LLM model name"),
     "llm_api_key": ("", "API key for API-backed providers (not needed for subscription CLIs or Ollama)"),
     "llm_fallback_provider": ("", "Fallback LLM provider (empty = no fallback)"),
@@ -72,6 +72,18 @@ DEFAULT_SETTINGS = {
         {"provider": "codex_cli", "model": "gpt-5.6-terra"},
         {"provider": "codex_cli", "model": "gpt-5.6-luna"},
         {"provider": "codex_cli", "model": "gpt-5.5"},
+        # Antigravity CLI — Google subscription. Slugs carry the reasoning effort;
+        # `agy models` is the live catalog and it also serves non-Google models.
+        {"provider": "antigravity_cli", "model": "gemini-3.8-flash-high"},
+        {"provider": "antigravity_cli", "model": "gemini-3.8-flash-medium"},
+        {"provider": "antigravity_cli", "model": "gemini-3.8-flash-low"},
+        {"provider": "antigravity_cli", "model": "gemini-3.7-flash-medium"},
+        {"provider": "antigravity_cli", "model": "gemini-3.6-flash-medium"},
+        {"provider": "antigravity_cli", "model": "gemini-3.1-pro-high"},
+        {"provider": "antigravity_cli", "model": "gemini-3.1-pro-low"},
+        {"provider": "antigravity_cli", "model": "claude-sonnet-4-6"},
+        {"provider": "antigravity_cli", "model": "claude-opus-4-6-thinking"},
+        {"provider": "antigravity_cli", "model": "gpt-oss-120b-medium"},
         {"provider": "openai", "model": "gpt-5.4"},
         {"provider": "openai", "model": "gpt-5.4-mini"},
         {"provider": "openai", "model": "gpt-5.4-nano"},
@@ -361,7 +373,7 @@ INT_SETTING_KEYS = _int_setting_keys()
 
 # Providers the LLM dispatcher knows how to call. "" means "inherit the primary
 # llm_provider", which every per-feature prefix does.
-_LLM_PROVIDERS = {"", "claude_api", "claude_code", "codex_cli", "openai", "ollama", "lmstudio", "openrouter"}
+_LLM_PROVIDERS = {"", "claude_api", "claude_code", "codex_cli", "antigravity_cli", "openai", "ollama", "lmstudio", "openrouter"}
 
 # Depth words. `tailor_auto_quick_score` also honours legacy boolean spellings
 # (see routes_resumes._resolve_chain_score_depth).
@@ -533,6 +545,11 @@ def run_migration_statements(db, statements) -> list:
     return failed
 
 
+# Named, because run_migrations() must be able to tell whether this one statement
+# failed before it lets the backfill query the column.
+_ADD_COUNTRY_COLUMN = "ALTER TABLE searches ADD COLUMN IF NOT EXISTS country VARCHAR"
+
+
 def run_migrations(db):
     """Run ALTER TABLE migrations for columns that create_all() won't add to existing tables."""
     migrations = [
@@ -697,10 +714,118 @@ END $$;""",
         # counting it while its newest ScrapeLog row is no newer than this stamp.
         "ALTER TABLE searches ADD COLUMN IF NOT EXISTS warning_acknowledged_at TIMESTAMPTZ",
         "ALTER TABLE companies ADD COLUMN IF NOT EXISTS warning_acknowledged_at TIMESTAMPTZ",
+        # searches.country picks the Indeed domain and API country header. The
+        # column arrives WITHOUT a default on purpose: `ADD COLUMN ... DEFAULT x`
+        # writes x into every existing row, and the NULL rows are exactly the
+        # ones _backfill_search_country() below must still read. `SET DEFAULT`
+        # applies to later inserts only, so the two statements are safe in this order.
+        _ADD_COUNTRY_COLUMN,
+        "ALTER TABLE searches ALTER COLUMN country SET DEFAULT 'usa'",
     ]
-    run_migration_statements(db, migrations)
+    failed = run_migration_statements(db, migrations)
+
+    # The backfill reads searches.country. Without the column the SELECT raises
+    # out of run_seeds() and out of the FastAPI lifespan, and the container
+    # restarts forever — the exact whole-list abort run_migration_statements()
+    # exists to prevent. Skip the backfill instead, and say so.
+    if _ADD_COUNTRY_COLUMN in failed:
+        logger.warning("searches.country was not added — skipping the country backfill")
+    else:
+        try:
+            # Order matters: the backfill reads the country out of the location
+            # text, so it must run before the strip removes that text.
+            _backfill_search_country(db)
+            _strip_country_from_search_location(db)
+        except Exception as e:
+            db.rollback()
+            logger.warning("Country migration skipped: %s", str(e).strip()[:300])
 
     _rewrite_retired_status_transitions(db)
+
+
+def _backfill_search_country(db):
+    """One-shot: read a country out of each existing search's location text.
+
+    Only rows whose country is still NULL are visited, so this runs once per
+    row. Rows written after the migration carry the column default.
+    """
+    from backend.countries import DEFAULT_COUNTRY, country_from_location, split_country_suffix
+    from backend.models.db import Search
+
+    rows = db.query(Search).filter(Search.country.is_(None)).all()
+    if not rows:
+        return
+    for search in rows:
+        search.country = country_from_location(search.location)
+        # A region code is not a country: "Toronto, ON" reads as no country at
+        # all and falls to DEFAULT_COUNTRY. That guess used to be nearly
+        # harmless, because LinkedIn still received the region. The scraper now
+        # appends the guessed country to it, so an operator must be able to see
+        # which rows were guessed and correct them.
+        if str(search.location or "").strip() and split_country_suffix(search.location)[1] is None:
+            logger.warning(
+                "Search %s: location %r names no country — the backfill guessed %s",
+                search.name, search.location, DEFAULT_COUNTRY,
+            )
+    db.commit()
+    logger.info("Backfilled searches.country for %d row(s)", len(rows))
+
+
+def _strip_country_from_search_location(db):
+    """Remove the country segment from each keyword search's location text.
+
+    The migration needs this once. It is idempotent afterwards, and it also
+    cleans a country a user types into the field later.
+
+    `location` holds a city or a region, and `country` is the single country
+    source. The scraper appends the label of `country` to the location, so a
+    country left in the text would appear twice.
+
+    Three rules keep the result stable and honest:
+
+    1. `normalize_country()` decides what a country segment is, so "Toronto, ON"
+       stays whole and "Toronto, Canada" becomes "Toronto".
+    2. The last segment always stays. "Luxembourg, Luxembourg" becomes
+       "Luxembourg" and stops there; without this rule every restart would strip
+       one more segment and widen the search to the whole country.
+    3. A row whose text disagrees with the stored country keeps the country,
+       because the user picked that field, and the row is logged.
+
+    Only `keyword` rows are touched. They are the only rows the jobspy
+    composition reads. `jobright` reads `search.location` raw and drops the
+    parameter when the text is empty, so rewriting its rows would move this same
+    defect to a board this change never measured.
+    """
+    from backend.countries import split_country_suffix
+    from backend.models.db import Search
+
+    changed = 0
+    rows = db.query(Search).filter(
+        Search.location.isnot(None), Search.search_mode == "keyword"
+    ).all()
+    for search in rows:
+        place, found = split_country_suffix(search.location)
+        if found is None:
+            continue
+        if search.country and found != search.country:
+            logger.warning(
+                "Search %s: location said %s but country is %s — keeping country",
+                search.name, found, search.country,
+            )
+        if not place:
+            continue      # only a country name: there is no place to keep
+        # Repeat inside this one pass, so a name that repeats itself settles now
+        # instead of losing a segment on every later restart.
+        while True:
+            inner, more = split_country_suffix(place)
+            if more is None or not inner:
+                break
+            place = inner
+        search.location = place
+        changed += 1
+    if changed:
+        db.commit()
+        logger.info("Removed the country from searches.location for %d row(s)", changed)
 
 
 _RETIRED_STATUS_REMAP = {

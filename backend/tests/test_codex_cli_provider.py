@@ -119,12 +119,17 @@ async def test_cli_runner_kills_on_timeout(monkeypatch):
         def __init__(self):
             super().__init__()
             self.killed = False
+            self.dead = asyncio.Event()
 
         async def communicate(self, input=None):
-            await asyncio.sleep(10)
+            # A real process stops when it is killed, and _run_cli now reads what it
+            # printed before that. Sleeping through the kill would not.
+            await self.dead.wait()
+            return b"", b""
 
         def kill(self):
             self.killed = True
+            self.dead.set()
 
         async def wait(self):
             return 0

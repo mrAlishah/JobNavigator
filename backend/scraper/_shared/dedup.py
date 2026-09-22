@@ -51,16 +51,31 @@ _IDENTITY_PARAMS = {
 # path, so `currentJobId` is noise there — it's an identity only on search shapes.
 _LINKEDIN_ID_IN_PATH = re.compile(r"/jobs/view/\d+")
 
+# Hosts whose identity params are the WHOLE identity: once one is present, every
+# other param is search context (`vjs`, `advn`, `tk`, ...) that no tracking list
+# can enumerate, so it is dropped. Without this, a /viewjob URL copied off an
+# Indeed search page hashes apart from the same posting the scraper stored.
+_IDENTITY_ONLY_HOSTS = ("indeed.com",)
+
+
+def _host_of(parsed) -> str:
+    return (parsed.netloc or "").lower().split(":")[0]
+
 
 def _identity_params_for(parsed) -> set:
     """Query params that must survive normalization for this host."""
-    host = (parsed.netloc or "").lower().split(":")[0]
+    host = _host_of(parsed)
     for domain, keys in _IDENTITY_PARAMS.items():
         if host == domain or host.endswith("." + domain):
             if domain == "linkedin.com" and _LINKEDIN_ID_IN_PATH.search(parsed.path or ""):
                 return set()
             return keys
     return set()
+
+
+def _is_identity_only_host(parsed) -> bool:
+    host = _host_of(parsed)
+    return any(host == d or host.endswith("." + d) for d in _IDENTITY_ONLY_HOSTS)
 
 
 # Module-level cache — loaded from DB on first use or reload
@@ -114,9 +129,12 @@ def _normalize_url(url: str) -> str:
         # Remove tracking params + utm_* except the ones that ARE the posting's
         # identity on this host — stripping those merges unrelated jobs onto one id.
         keep = _identity_params_for(parsed)
-        cleaned = {k: v for k, v in qs.items()
-                   if k.lower() in keep
-                   or (k.lower() not in params and not k.lower().startswith("utm_"))}
+        if _is_identity_only_host(parsed) and keep & {k.lower() for k in qs}:
+            cleaned = {k: v for k, v in qs.items() if k.lower() in keep}
+        else:
+            cleaned = {k: v for k, v in qs.items()
+                       if k.lower() in keep
+                       or (k.lower() not in params and not k.lower().startswith("utm_"))}
         # Param ORDER is deliberately preserved here: this value is stored as
         # Job.url by the company-page scraper, and a board can be picky about the
         # URL it handed out. Order-independence belongs to the hash, and is done

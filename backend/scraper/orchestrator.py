@@ -105,8 +105,49 @@ def source_errors(breakdown) -> list:
 
 
 def describe_source_errors(breakdown) -> str:
-    """"zip_recruiter: 403 · google: initial cursor not found" (empty when clean)."""
+    """"zip_recruiter: 403 · indeed: 503" (empty when clean)."""
     return " · ".join(f"{key}: {err}" for key, err in source_errors(breakdown))
+
+
+def empty_sources(breakdown) -> list:
+    """Configured boards that returned no rows at all and reported no failure.
+
+    The test reads `returned`, the count the source module takes before any
+    filter runs. `seen` and `filtered` cannot answer this: a board whose rows the
+    title filter rejects leaves `seen` at 0, and `filtered` counts only rejected
+    rows that were new enough to store, so both read 0 from the second run on
+    while the board keeps delivering rows.
+
+    A row written before `returned` existed carries no such key. Those entries
+    are skipped, because an old row holds no evidence either way.
+    """
+    if not isinstance(breakdown, dict):
+        return []
+    return [
+        str(key) for key, val in breakdown.items()
+        if isinstance(val, dict) and not val.get("error")
+        and "returned" in val and not (val.get("returned") or 0)
+    ]
+
+
+def run_is_warning(result: dict, breakdown) -> bool:
+    """True when one run needs a human look.
+
+    Three conditions, any of which is enough:
+    | Condition                             | Example                          |
+    | ------------------------------------- | -------------------------------- |
+    | A board refused the request           | ZipRecruiter 403                 |
+    | A configured board returned no rows   | Indeed 0 while LinkedIn gave 40  |
+    | The run found nothing and said nothing| every board empty, error is None |
+
+    The per-board test matters because the total hides it: LinkedIn 40 plus
+    Indeed 0 sums to 40, and the run used to be recorded as healthy.
+    """
+    return bool(
+        source_errors(breakdown)
+        or empty_sources(breakdown)
+        or (result.get("jobs_found", 0) == 0 and not result.get("error"))
+    )
 
 
 def filtered_count(breakdown) -> int:
@@ -146,7 +187,14 @@ def summarize_search_run(label: str, result: dict) -> str:
     # Name the boards that hard-failed, so "9 seen, +0 new" can't be mistaken
     # for a quiet day on every configured source.
     failed = describe_source_errors(breakdown)
-    return f"{summary} · {failed}" if failed else summary
+    if failed:
+        summary += f" · {failed}"
+    # A board that answered with an empty list is the silent case the total
+    # hides, so name it too.
+    empty = empty_sources(breakdown)
+    if empty:
+        summary += f" · no rows from {', '.join(empty)}"
+    return summary
 
 
 def _source_for_search(search: Search) -> str:
@@ -231,12 +279,7 @@ async def run_all(force: bool = False):
                 jobs_found=result.get("jobs_found", 0),
                 new_jobs=result.get("new_jobs", 0),
                 error=result.get("error"),
-                # A board that refused the request is a warning even when the
-                # other boards returned rows.
-                is_warning=bool(
-                    failed_sources
-                    or (result.get("jobs_found", 0) == 0 and not result.get("error"))
-                ),
+                is_warning=run_is_warning(result, breakdown),
                 source_breakdown=breakdown,
                 duration_seconds=result.get("duration", 0),
             )
@@ -319,12 +362,8 @@ async def _run_search_by_id(search_id: str, auto_score: Optional[bool] = None) -
             jobs_found=result.get("jobs_found", 0),
             new_jobs=result.get("new_jobs", 0),
             error=result.get("error"),
-            # R3-A-03: a board that refused the request is a warning even when
-            # the other boards returned rows.
-            is_warning=bool(
-                failed_sources
-                or (result.get("jobs_found", 0) == 0 and not result.get("error"))
-            ),
+            # R3-A-03 plus the silent zero: see run_is_warning().
+            is_warning=run_is_warning(result, breakdown),
             source_breakdown=breakdown,
             duration_seconds=result.get("duration", 0),
         )

@@ -46,6 +46,13 @@ def test_parse_raises_on_garbage():
         parse_cover_letter_response("no json here at all")
 
 
+def test_parse_takes_the_first_object_not_a_span_over_two():
+    """The old greedy brace regex ran from the first "{" to the last "}" and parsed neither."""
+    from backend.analyzer.cover_letter_generator import parse_cover_letter_response
+    raw = '{"greeting": "Dear Team,", "body_paragraphs": ["One."]} — or maybe {"greeting": "Hi,"}'
+    assert parse_cover_letter_response(raw)["greeting"] == "Dear Team,"
+
+
 # ── build_cover_letter_prompt ────────────────────────────────────────────────
 
 def test_build_prompt_splits_prefix_and_suffix():
@@ -141,3 +148,23 @@ async def test_generate_body_calls_llm_with_cached_prefix(monkeypatch):
     assert "JD text here." in captured["prompt"]
     assert out["body_paragraphs"] == ["P1", "P2", "P3"]
     assert out["_usage"]["input_tokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_generate_body_words_an_unparseable_reply(monkeypatch):
+    """The letter run's error reaches the user; a decoder offset into a reply they never saw does not."""
+    from backend.analyzer import cover_letter_generator as gen
+    from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError
+
+    async def _fake_llm(prompt, system, max_tokens=1500, cached_prefix=None):
+        return {"text": "I'd rather not write that letter.", "usage": {}}
+
+    monkeypatch.setattr(gen, "call_cover_letter_llm", _fake_llm)
+
+    with pytest.raises(ModelReplyError) as exc:
+        await gen.generate_cover_letter_body(
+            SAMPLE_RESUME, {}, "JD text here.", "Be bold.", "standard",
+            "Voice: {voice_instruction}\nLength: {length_instruction}\nJD: {job_description}",
+        )
+    assert str(exc.value) == UNPARSEABLE_MESSAGE
+    assert "Expecting value" not in str(exc.value)

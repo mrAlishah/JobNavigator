@@ -100,6 +100,8 @@ def test_title_slug(slug, expected):
 # ── end-to-end through /extract's handler (no network, no backend.main) ──────
 
 class _FakeResp:
+    status_code = 200
+
     def __init__(self, text):
         self.text = text
 
@@ -108,8 +110,8 @@ class _FakeResp:
 
 
 @pytest.fixture
-def _offline_fetch(monkeypatch):
-    """Stub the SSRF-guarded fetcher so extract_posting never touches DNS/HTTP."""
+def _offline_fetch(monkeypatch, test_db):
+    """Stub the SSRF-guarded fetcher so extract_posting never touches DNS/HTTP; test_db keeps its stored-job lookup off the real database."""
     import backend.scraper._shared.url_safety as us
 
     def _install(html):
@@ -168,7 +170,7 @@ async def test_extract_posting_keeps_jsonld_hiring_organization(_offline_fetch):
     """)
     out = await extract_posting(ExtractRequest(
         url="https://job-boards.greenhouse.io/vercel/jobs/6163585004"))
-    assert out == {"title": "SOX Manager", "company": "Vercel Inc."}
+    assert out == {"title": "SOX Manager", "company": "Vercel Inc.", "blocked": False}
 
 
 # ── HTML entities in the extracted fields ────────────────────────────────────

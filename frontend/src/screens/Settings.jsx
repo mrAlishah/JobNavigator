@@ -12,6 +12,7 @@ const PROVIDERS = [
   ['claude_api', 'Claude API (Anthropic)'],
   ['claude_code', 'Claude Code (Subscription)'],
   ['codex_cli', 'Codex CLI (ChatGPT Subscription)'],
+  ['antigravity_cli', 'Antigravity CLI (Google Subscription)'],
   ['openai', 'OpenAI'],
   ['ollama', 'Ollama (Local)'],
   ['lmstudio', 'LM Studio (Local)'],
@@ -21,7 +22,7 @@ const PROVIDER_LABEL = Object.fromEntries(PROVIDERS)
 // providers whose catalog /api/llm/models can search live
 const SEARCHABLE = ['openrouter', 'openai', 'claude_api', 'claude_code']
 // providers that need no key
-const KEYLESS = ['claude_code', 'codex_cli', 'ollama', 'lmstudio', '']
+const KEYLESS = ['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', '']
 
 // The value rows' fields are `Input` now (adornment slot and all), so the box
 // lives in ui.jsx with every other field. What is left here is the type these

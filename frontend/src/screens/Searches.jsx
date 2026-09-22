@@ -4,7 +4,8 @@ import api from '../api'
 import { useToasts, ToastStack } from '../Toast'
 import ConfirmDialog from '../ConfirmDialog'
 import { useSettled, useWarm, NBSP, DASH } from '../hooks'
-import { Button, Card, Check, CopyGlyph, Dot, FlaskGlyph, FooterRow, HeaderRow, Heading, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, PageTitle, Pill, Rule, Segmented, Select, Spinner, TableHead } from '../ui'
+import { Button, Card, Check, CopyGlyph, Dot, FlaskGlyph, FooterRow, HeaderRow, Heading, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, PageTitle, Pill, Rule, Segmented, Select, Spinner, TableHead, Tag } from '../ui'
+import { BLOCKED_BADGE, SOURCE_BLOCKS } from '../sourceBlocks'
 import '../theme.css'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -134,10 +135,14 @@ const summaryOf = (s) => {
   return `${short(s.direct_url) || 'no URL'}${last}`
 }
 
+// Matches backend/countries.py DEFAULT_COUNTRY — jobspy's own alias for the US.
+const DEFAULT_COUNTRY = 'usa'
+
 const draftOf = (s) => ({
   name: s.name || '', search_mode: s.search_mode || 'keyword',
   search_term: s.search_term || '', direct_url: s.direct_url || '',
-  location: s.location || '', is_remote: s.is_remote === true ? 'true' : s.is_remote === false ? 'false' : '',
+  location: s.location || '', country: s.country || DEFAULT_COUNTRY,
+  is_remote: s.is_remote === true ? 'true' : s.is_remote === false ? 'false' : '',
   job_type: s.job_type || 'fulltime', hours_old: s.hours_old ?? 24, results_wanted: s.results_wanted ?? 50,
   max_pages: s.max_pages ?? 50, min_fit_score: s.min_fit_score ?? 0, require_salary: !!s.require_salary,
   sources: [...(s.sources || [])],
@@ -188,10 +193,29 @@ const toPayload = (d) => {
     auto_scoring_depth: d.auto_scoring_depth,
     run_interval_minutes: clamp(d.run_interval_minutes, 'run_interval_minutes') ?? 0,
   }
-  // location is a keyword-search field only — sending it for
+  // location and country are keyword-search fields only — sending them for
   // levels_fyi / jobright / freehire / extension searches means nothing.
-  if (d.search_mode === 'keyword') p.location = d.location || 'United States'
+  if (d.search_mode === 'keyword') {
+    p.location = d.location || ''
+    p.country = d.country || DEFAULT_COUNTRY
+  }
   return p
+}
+
+// The country list belongs to the jobspy library, so the backend serves it and
+// this screen keeps no copy. It never changes while the page is open — one fetch
+// per page load, shared by the new-search form and every edit form.
+let countryCache = null
+
+function useCountries() {
+  const [list, setList] = useState(countryCache || [])
+  useEffect(() => {
+    if (countryCache) return
+    api.get('/searches/countries')
+      .then(({ data }) => { countryCache = (data || []).map((c) => [c.value, c.label]); setList(countryCache) })
+      .catch(() => { /* silent — the Select shows its placeholder and the stored value stays untouched */ })
+  }, [])
+  return list
 }
 
 // ── small pieces ─────────────────────────────────────────────────────────────
@@ -208,9 +232,10 @@ function Cell({ label, value, onChange, mono, placeholder, span, sub, disabled, 
     </div>
   )
 }
-const Chip = ({ on, label, onClick }) => (
+const Chip = ({ on, label, badge, onClick }) => (
   <Pill size="sm" on={on} onClick={onClick}>
     <span>{on ? '✓' : '○'}</span>{label}
+    {badge && <Tag tone="warn">{badge}</Tag>}
   </Pill>
 )
 // The two call sites live inside the edit form, whose own wrapper already calls
@@ -225,6 +250,7 @@ const DepthPills = ({ value, onPick }) => (
 function ConfigForm({ d, set }) {
   const m = d.search_mode
   const ext = isExt(m)
+  const countries = useCountries()
   const toggleSrc = (id) => set({ sources: d.sources.includes(id) ? d.sources.filter((x) => x !== id) : [...d.sources, id] })
   const note = noteFor(m)
 
@@ -245,7 +271,10 @@ function ConfigForm({ d, set }) {
   if (m === 'keyword') {
     fields.push(
       <Cell key="term" label="Search term" mono value={d.search_term} onChange={(v) => set({ search_term: v })} placeholder="e.g. technical program manager" />,
-      <Cell key="loc" label="Location" value={d.location} onChange={(v) => set({ location: v })} placeholder="United States" />,
+      <Cell key="loc" label="Location" value={d.location} onChange={(v) => set({ location: v })} placeholder="e.g. Toronto"
+        sub="A city or a region. Country adds the country. For remote work set Remote and leave this empty." />,
+      <Cell key="ctry" label="Country" value={d.country} options={countries} onChange={(v) => set({ country: v })}
+        sub="The only country source. Every board receives it." />,
       <Cell key="rem" label="Remote" value={d.is_remote} options={[['', 'Any'], ['true', 'Remote only'], ['false', 'On-site only']]} onChange={(v) => set({ is_remote: v })} />,
       <Cell key="jt" label="Job type" value={d.job_type} options={[['fulltime', 'Full-time'], ['parttime', 'Part-time'], ['contract', 'Contract']]} onChange={(v) => set({ job_type: v })} />,
       <Cell key="ho" label="Hours old · 0–720" mono type="number" min={BOUNDS.hours_old[0]} max={BOUNDS.hours_old[1]} value={d.hours_old} onChange={(v) => set({ hours_old: v })} />,
@@ -285,7 +314,9 @@ function ConfigForm({ d, set }) {
       {m === 'keyword' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
           <Label style={{ marginRight: 3 }}>Sources</Label>
-          {SOURCES.map(([id, label]) => <Chip key={id} on={d.sources.includes(id)} label={label} onClick={() => toggleSrc(id)} />)}
+          {SOURCES.map(([id, label]) => <Chip key={id} on={d.sources.includes(id)} label={label} badge={SOURCE_BLOCKS[id] && BLOCKED_BADGE} onClick={() => toggleSrc(id)} />)}
+          {/* Visible text, not a hover title, so keyboard and screen-reader users get the reason too. */}
+          <Helper style={{ flexBasis: '100%' }}>{BLOCKED_BADGE}: {Object.values(SOURCE_BLOCKS).join(' ')}</Helper>
         </div>
       )}
       {m === 'linkedin_personal' && (
@@ -784,6 +815,8 @@ function TestModal({ test, tab, setTab, onClose }) {
   // (routes_searches.py:391/:621, jobright.py:730, freehire.py:330,
   // linkedin_personal.py:1123); `by_source` never existed.
   const bySource = d.source_breakdown || d.by_source || {}
+  // {board: text} for each board that failed; only the keyword preview sends it.
+  const srcErrors = Object.entries(d.source_errors || {})
   // per-board chip colours from the design: linkedin blue, indeed plum, zip amber, google red
   const srcChip = (k) => {
     if (k === 'linkedin') return { className: 'sm-keyword' }
@@ -839,6 +872,14 @@ function TestModal({ test, tab, setTab, onClose }) {
                 })}
               </span>
             </HeaderRow>
+
+            {srcErrors.length > 0 && (
+              <HeaderRow pad="7px 22px" soft align="center" style={{ flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--bad)' }}>
+                {srcErrors.map(([k, e]) => (
+                  <span key={k}><span style={{ fontFamily: 'var(--mono)' }}>{k}</span> failed: {e}</span>
+                ))}
+              </HeaderRow>
+            )}
 
             <HeaderRow pad="9px 22px" soft style={{ gap: 6 }}>
               {[['all', `All (${jobs.length})`], ['kept', `Kept (${kept.length})`], ['filtered', `Filtered (${filtered.length})`]].map(([id, label]) => {

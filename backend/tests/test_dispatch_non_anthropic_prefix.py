@@ -54,6 +54,25 @@ async def test_dispatch_concatenates_prefix_for_codex_cli(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_concatenates_prefix_for_antigravity_cli(monkeypatch):
+    """antigravity_cli receives cached_prefix + prompt combined (a CLI cannot cache)."""
+    seen = {}
+
+    async def fake_agy(prompt, system, model, max_tokens):
+        seen["prompt"] = prompt
+        return {"text": "ok", "usage": {"input_tokens": 1, "output_tokens": 1,
+                                        "cache_read_tokens": 0, "cache_write_tokens": 0}}
+
+    monkeypatch.setattr("backend.analyzer.llm_client._call_antigravity_cli", fake_agy)
+    from backend.analyzer.llm_client import _dispatch
+    await _dispatch(
+        provider="antigravity_cli", model="gemini-3.8-flash-medium", api_key="",
+        prompt="the question", system="s", max_tokens=10, cached_prefix="the resume",
+    )
+    assert seen["prompt"] == "the resume\n\nthe question"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_concatenates_prefix_for_openai(monkeypatch):
     """openai provider receives cached_prefix + prompt combined."""
     captured = {}

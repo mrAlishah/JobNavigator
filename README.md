@@ -62,7 +62,8 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              AI RESUME SCORING                              │
 │                                                                             │
-│   Providers ── Claude API/CLI, Codex CLI, OpenAI, OpenRouter, Ollama        │
+│   Providers ── Claude API/CLI, Codex CLI, Antigravity CLI, OpenAI,          │
+│                OpenRouter, Ollama                                           │
 │   Depths ───── Light (scores only) or Full (report + keyword analysis)      │
 │   Multi ────── Score against multiple resumes, compare fit per role         │
 │                                                                             │
@@ -97,7 +98,7 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 | Feature | Description |
 |---------|-------------|
 | **Discovery** | Career pages (Playwright + 11 ATS handlers), JobSpy (LinkedIn, Indeed, ZipRecruiter, Google), LinkedIn collections, Levels.fyi, Jobright.ai, freehire.me, the Chrome extension |
-| **Scoring** | Claude, OpenAI, OpenRouter, Ollama, Claude Code or Codex CLI; live model search, a model per feature; Light (score) or Full (report, keyword coverage, requirement mapping) against every base résumé; prompt caching on Anthropic |
+| **Scoring** | Claude, OpenAI, OpenRouter, Ollama, Claude Code, Codex CLI or Antigravity CLI; live model search, a model per feature; Light (score) or Full (report, keyword coverage, requirement mapping) against every base résumé; prompt caching on Anthropic |
 | **Résumés** | Structured base résumés, tailoring per job with a review step, 8 PDF templates (drop in your own), tracked links that record opens |
 | **Cover letters** | Generated from the paired résumé and persona; voice and length presets, 8 templates, PDF |
 | **Dedup** | URL identity hash (tracking params stripped) plus company + title hash across sources |
@@ -134,8 +135,9 @@ Any API key goes straight into Settings › AI. A subscription needs one login i
 |---|---|---|
 | Claude Pro / Max | `docker compose exec backend claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` | **Claude Code** |
 | ChatGPT | `docker compose exec backend codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) | **Codex CLI** |
+| Google Antigravity | `docker compose exec -it backend agy` — the container has no browser, so the CLI prints a URL and asks for the code it shows (the login lives in the `antigravity_auth` volume) | **Antigravity CLI** |
 
-No API key needed for either. A plan limit fails over to the fallback provider without retrying.
+No API key needed for any of them. A plan limit fails over to the fallback provider without retrying.
 
 **3. First steps**
 
@@ -168,7 +170,7 @@ Install: `chrome://extensions` › Developer mode › Load unpacked › `extensi
 | Frontend | React 18, Vite, Recharts, a token-based design system ([DESIGN-SYSTEM.md](frontend/src/DESIGN-SYSTEM.md)) |
 | Database | PostgreSQL 16 |
 | Infrastructure | Docker Compose, Caddy, nginx |
-| AI | Anthropic SDK, OpenAI SDK, Ollama, Claude Code CLI, Codex CLI |
+| AI | Anthropic SDK, OpenAI SDK, Ollama, Claude Code CLI, Codex CLI, Antigravity CLI |
 | Extension | Chrome Manifest V3 |
 
 ## Contributing

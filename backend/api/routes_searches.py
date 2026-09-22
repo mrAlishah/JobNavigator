@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from backend.countries import (DEFAULT_COUNTRY, compose_location, normalize_country,
+                               split_country_suffix, supported_countries)
 from backend.models.db import get_db, Search, Setting, ScrapeLog, Job, is_acknowledged
 
 logger = logging.getLogger("jobnavigator.routes_searches")
@@ -29,7 +31,8 @@ class SearchCreate(BaseModel):
     search_mode: str = "keyword"
     search_term: Optional[str] = None
     direct_url: Optional[str] = None
-    location: str = "United States"
+    location: str = ""
+    country: str = DEFAULT_COUNTRY
     is_remote: Optional[bool] = None
     job_type: str = "fulltime"
     # Optional so the editor can clear the field: an explicit null falls back to
@@ -69,9 +72,52 @@ def list_searches(db: Session = Depends(get_db)):
     return [_search_to_dict(s, last_log.get(str(s.id))) for s in searches]
 
 
+@router.get("/countries")
+def list_countries():
+    """The countries Indeed supports, straight from the installed jobspy library, so the search form offers exactly what the scraper accepts."""
+    return [{"value": value, "label": label} for value, label in supported_countries()]
+
+
+def _validated_country(value) -> str:
+    """The stored form of a country name, or 400. An unknown name would otherwise reach jobspy and raise mid-scrape."""
+    name = normalize_country(value)
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown country '{value}' — pick one from GET /api/searches/countries",
+        )
+    return name
+
+
+def _validated_location(location, country) -> str:
+    """The location text, or 400 when its own country segment names another country.
+
+    The scraper appends the label of `country` to `location`, so the pair must
+    agree. It used to fail loudly when it did not: Indeed answered a Canadian
+    city on the US site with zero rows. Composed, the same pair becomes a silent
+    wrong-country scrape — "Canada" with country "usa" would query "United
+    States" and store US rows. The write path refuses the pair instead of
+    choosing one side for the user.
+    """
+    named = split_country_suffix(location)[1]
+    if named and named != country:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Location '{location}' names {named}, but Country is {country} "
+                   f"— leave the country out of Location, or change Country",
+        )
+    return location
+
+
 @router.post("")
 def create_search(data: SearchCreate, db: Session = Depends(get_db)):
-    search = Search(**data.model_dump())
+    payload = data.model_dump()
+    payload["country"] = _validated_country(payload["country"])
+    # Only a keyword (JobSpy) search composes location with country; for the URL-driven modes
+    # (Jobright, Levels.fyi, freehire, LinkedIn Personal) country means nothing and must not reject a row.
+    if payload.get("search_mode", "keyword") == "keyword":
+        payload["location"] = _validated_location(payload["location"], payload["country"])
+    search = Search(**payload)
     db.add(search)
     db.commit()
     return _search_to_dict(search)
@@ -85,11 +131,22 @@ def update_search(search_id: str, updates: dict, db: Session = Depends(get_db)):
 
     allowed = {
         "name", "active", "sources", "search_mode", "search_term", "direct_url",
-        "location", "is_remote", "job_type", "hours_old", "results_wanted",
+        "location", "country", "is_remote", "job_type", "hours_old", "results_wanted",
         "title_include_keywords", "title_exclude_keywords", "company_filter",
         "company_exclude", "exclude_active_companies", "max_pages", "min_fit_score",
         "require_salary", "auto_scoring_depth", "run_interval_minutes",
     }
+    if "country" in updates:
+        updates["country"] = _validated_country(updates["country"])
+    # The pair is validated, not one field: a patch may carry either one, and the
+    # other keeps its stored value. This runs before the writes, so a rejected
+    # patch leaves the row alone.
+    mode = updates.get("search_mode", search.search_mode) or "keyword"
+    if mode == "keyword" and ("location" in updates or "country" in updates):
+        _validated_location(
+            updates.get("location", search.location),
+            updates.get("country", search.country) or DEFAULT_COUNTRY,
+        )
     for key, value in updates.items():
         if key in allowed:
             setattr(search, key, value)
@@ -242,11 +299,11 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
     kwargs = {
         "site_name": sources,
         "search_term": search.search_term or "",
-        "location": search.location or "United States",
+        "location": compose_location(search.location, search.country),
         "results_wanted": search.results_wanted or 50,
         "hours_old": search.hours_old or 24,
         "job_type": search.job_type or "fulltime",
-        "country_indeed": "USA",
+        "country_indeed": search.country or DEFAULT_COUNTRY,
         "verbose": 2,
     }
 
@@ -256,9 +313,14 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
     if proxy_url:
         kwargs["proxies"] = [proxy_url]
 
+    from backend.scraper.sources.jobspy import _board_errors, _capture_source_errors
+
     start = time.time()
     try:
-        jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
+        # The same capture as the scheduled run: jobspy reports a failed board
+        # only in its log, so without it a failed board just disappears here.
+        with _capture_source_errors(sources) as capture:
+            jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
     except Exception:
         logger.exception("JobSpy scrape_jobs failed during test for search %s", search.name)
         return {
@@ -277,6 +339,8 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         }
 
     duration = round(time.time() - start, 1)
+    # {board: text} for each board that failed; source_breakdown keeps its shape.
+    source_errors = _board_errors(capture.errors, jobs_df, sources)
 
     if jobs_df is None or jobs_df.empty:
         return {
@@ -291,6 +355,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             "body_unchecked_count": 0,
             "body_phrase_count": 0,
             "source_breakdown": {},
+            "source_errors": source_errors,
             "company_breakdown": {},
             "include_keywords": search.title_include_keywords or [],
             "exclude_keywords": search.title_exclude_keywords or [],
@@ -479,6 +544,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         "body_unchecked_count": body_unchecked_count,
         "body_phrase_count": len(body_phrases),
         "source_breakdown": source_breakdown,
+        "source_errors": source_errors,
         "company_breakdown": company_breakdown,
         "include_keywords": include_kw,
         "exclude_keywords": exclude_kw,
@@ -735,6 +801,7 @@ def _search_to_dict(s: Search, last_log=None) -> dict:
         "search_term": s.search_term,
         "direct_url": s.direct_url,
         "location": s.location,
+        "country": s.country,
         "is_remote": s.is_remote,
         "job_type": s.job_type,
         "hours_old": s.hours_old,

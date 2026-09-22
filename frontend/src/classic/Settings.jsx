@@ -273,6 +273,7 @@ export default function SettingsPage() {
                     <option value="claude_api">Claude API (Anthropic)</option>
                     <option value="claude_code">Claude Code (Subscription)</option>
                     <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
                     <option value="openai">OpenAI</option>
                     <option value="ollama">Ollama (Local)</option>
                     <option value="lmstudio">LM Studio (Local)</option>
@@ -289,7 +290,7 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
-              {!['claude_code', 'codex_cli', 'ollama', 'lmstudio'].includes(provider) && (
+              {!['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(provider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
                   <div className="relative">
@@ -309,7 +310,7 @@ export default function SettingsPage() {
         {/* Custom Models — shared across primary & fallback */}
         {(() => {
           const models = Array.isArray(settings.llm_models_list) ? settings.llm_models_list : []
-          const providerLabels = { claude_api: 'Claude API', claude_code: 'Claude Code', codex_cli: 'Codex CLI', openai: 'OpenAI', ollama: 'Ollama', lmstudio: 'LM Studio', openrouter: 'OpenRouter' }
+          const providerLabels = { claude_api: 'Claude API', claude_code: 'Claude Code', codex_cli: 'Codex CLI', antigravity_cli: 'Antigravity CLI', openai: 'OpenAI', ollama: 'Ollama', lmstudio: 'LM Studio', openrouter: 'OpenRouter' }
           const canSearch = SEARCHABLE_PROVIDERS.includes(customProvider)
           const liveModels = providerModels[customProvider] || []
           const loadingModels = modelsLoading[customProvider]
@@ -333,6 +334,7 @@ export default function SettingsPage() {
                   <option value="claude_api">Claude API</option>
                   <option value="claude_code">Claude Code</option>
                   <option value="codex_cli">Codex CLI</option>
+                  <option value="antigravity_cli">Antigravity CLI</option>
                   <option value="openai">OpenAI</option>
                   <option value="ollama">Ollama</option>
                   <option value="lmstudio">LM Studio</option>
@@ -427,6 +429,7 @@ export default function SettingsPage() {
                     <option value="claude_api">Claude API (Anthropic)</option>
                     <option value="claude_code">Claude Code (Subscription)</option>
                     <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
                     <option value="openai">OpenAI</option>
                     <option value="ollama">Ollama (Local)</option>
                     <option value="lmstudio">LM Studio (Local)</option>
@@ -444,7 +447,7 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
-              {scProvider && !['claude_code', 'codex_cli', 'ollama', 'lmstudio'].includes(scProvider) && (
+              {scProvider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(scProvider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
                   <div className="relative">
@@ -481,6 +484,7 @@ export default function SettingsPage() {
                     <option value="claude_api">Claude API (Anthropic)</option>
                     <option value="claude_code">Claude Code (Subscription)</option>
                     <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
                     <option value="openai">OpenAI</option>
                     <option value="ollama">Ollama (Local)</option>
                     <option value="lmstudio">LM Studio (Local)</option>
@@ -499,7 +503,7 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
-              {provider && !['claude_code', 'codex_cli', 'ollama', 'lmstudio'].includes(provider) && (
+              {provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(provider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
                   <div className="relative">
@@ -619,6 +623,7 @@ export default function SettingsPage() {
               <option value="claude_api">Claude API (Anthropic)</option>
               <option value="claude_code">Claude Code (Subscription)</option>
               <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
               <option value="openai">OpenAI</option>
               <option value="ollama">Ollama (Local)</option>
               <option value="lmstudio">LM Studio (Local)</option>
@@ -646,7 +651,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {settings.cv_tailor_llm_provider && !['claude_code', 'codex_cli', 'ollama', 'lmstudio', ''].includes(settings.cv_tailor_llm_provider) && (
+        {settings.cv_tailor_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.cv_tailor_llm_provider) && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API Key</label>
             <div className="relative">
@@ -734,6 +739,7 @@ export default function SettingsPage() {
               <option value="claude_api">Claude API (Anthropic)</option>
               <option value="claude_code">Claude Code (Subscription)</option>
               <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
               <option value="openai">OpenAI</option>
               <option value="ollama">Ollama (Local)</option>
               <option value="lmstudio">LM Studio (Local)</option>
@@ -761,7 +767,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {settings.cover_letter_llm_provider && !['claude_code', 'codex_cli', 'ollama', 'lmstudio', ''].includes(settings.cover_letter_llm_provider) && (
+        {settings.cover_letter_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.cover_letter_llm_provider) && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API Key</label>
             <div className="relative">
@@ -837,6 +843,7 @@ export default function SettingsPage() {
               <option value="claude_api">Claude API (Anthropic)</option>
               <option value="claude_code">Claude Code (Subscription)</option>
               <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
               <option value="openai">OpenAI</option>
               <option value="ollama">Ollama (Local)</option>
               <option value="lmstudio">LM Studio (Local)</option>
@@ -980,6 +987,7 @@ export default function SettingsPage() {
               <option value="claude_api">Claude API (Anthropic)</option>
               <option value="claude_code">Claude Code (Subscription)</option>
               <option value="codex_cli">Codex CLI (ChatGPT Subscription)</option>
+                    <option value="antigravity_cli">Antigravity CLI (Google Subscription)</option>
               <option value="openai">OpenAI</option>
               <option value="ollama">Ollama (Local)</option>
               <option value="lmstudio">LM Studio (Local)</option>
@@ -1007,7 +1015,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {settings.email_llm_provider && !['claude_code', 'codex_cli', 'ollama', 'lmstudio', ''].includes(settings.email_llm_provider) && (
+        {settings.email_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.email_llm_provider) && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API Key</label>
             <div className="relative">

@@ -125,5 +125,6 @@ def test_get_pricing_unknown_provider():
 def test_free_providers_set():
     assert "claude_code" in FREE_PROVIDERS
     assert "codex_cli" in FREE_PROVIDERS
+    assert "antigravity_cli" in FREE_PROVIDERS
     assert "ollama" in FREE_PROVIDERS
     assert "lmstudio" in FREE_PROVIDERS

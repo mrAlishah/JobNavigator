@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from backend.models.db import SessionLocal, Setting, Persona
 from backend.analyzer.llm_client import call_autofill_llm, call_autofill_llm_stream
+from backend.analyzer.model_json import first_json_object
 from backend.analyzer.llm_logger import track_llm_call
 from backend.autofill_schema import ANSWER_SCHEMA, project_answers
 
@@ -53,33 +54,10 @@ def _strip_code_fences(text: str) -> str:
     return t
 
 
-def _first_json_object(text: str):
-    r"""Return the first balanced {...} in text (string/escape aware), or None; a naive brace regex would span to the last "}" in the reply and break on trailing prose."""
-    depth = 0
-    start = -1
-    in_str = False
-    esc = False
-    for i, ch in enumerate(text or ""):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            if depth:
-                depth -= 1
-                if depth == 0 and start >= 0:
-                    return text[start:i + 1]
-    return None
+# Lives in analyzer/model_json.py now, so cv_scorer and the cover-letter
+# generator can read a reply the same way; kept under its old name here because
+# callers and tests import it from this module.
+_first_json_object = first_json_object
 
 
 def _last_unescaped_quote(body: str) -> int:

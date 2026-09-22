@@ -111,7 +111,7 @@ def _scrape_summary(since) -> str:
     from backend.models.db import ScrapeLog, Search, Company
     db = SessionLocal()
     try:
-        from backend.scraper.orchestrator import source_errors
+        from backend.scraper.orchestrator import empty_sources, source_errors
         rows = db.query(ScrapeLog).filter(ScrapeLog.ran_at >= since).all()
         if not rows:
             return "No sources ran"
@@ -129,15 +129,22 @@ def _scrape_summary(since) -> str:
         live = [r for r in rows if _live(r)]
         found = sum(r.new_jobs or 0 for r in rows)
         failed = sum(1 for r in live if r.error)
-        # A run where one configured board refused the request sets is_warning, but it is not
-        # "empty" — say which it is.
+        # is_warning has three causes and they are not the same thing. A refused
+        # board, a board that returned nothing while the others worked, and a run
+        # that found nothing each get their own count — a run with 40 jobs from
+        # LinkedIn and 0 from Indeed is not "empty".
         bad_source = {r.id for r in live if not r.error and source_errors(r.source_breakdown)}
-        warned = sum(1 for r in live if r.is_warning and not r.error and r.id not in bad_source)
+        quiet_source = {r.id for r in live if not r.error and r.id not in bad_source
+                        and empty_sources(r.source_breakdown)}
+        warned = sum(1 for r in live if r.is_warning and not r.error
+                     and r.id not in bad_source and r.id not in quiet_source)
         parts = [f"{len(rows)} source{'' if len(rows) == 1 else 's'}", f"+{found} new"]
         if failed:
             parts.append(f"{failed} failed")
         if bad_source:
             parts.append(f"{len(bad_source)} with a failed board")
+        if quiet_source:
+            parts.append(f"{len(quiet_source)} with a board that returned nothing")
         if warned:
             parts.append(f"{warned} empty")
         return " - ".join(parts)
