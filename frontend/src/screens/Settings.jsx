@@ -393,6 +393,10 @@ export default function Settings() {
         SEL('Auto-score after tailoring', 'Scores a tailored résumé as soon as tailoring finishes.', 'tailor_auto_quick_score',
           [['off', "Off — don't score after tailoring"], ['light', 'Light — score only'], ['full', 'Full — score + keywords + report']], { w: '260px', dflt: 'light' }),
       ]],
+      ['resumes', '', 'Resumes', '', [
+        { kind: 'profile-image', label: 'Profile image', help: 'Image for templates that support it (Professional, etc.). Stored globally and used by all resumes.',
+          info: 'Upload a PNG, JPEG, GIF or WebP image (max 2MB). The image appears in resume templates that have profile image support.' },
+      ]],
       ['letters', '', 'Cover letters', '', [
         SEL('Default voice', 'The list comes from the voice presets below.', 'cover_letter_default_voice', voiceOpts, { w: '260px' }),
         E('Voice presets', 'One label and prompt per voice. Add more if you want.', 'cover_letter_voice_presets', { json: true, sub: 'JSON — id, label, instruction per voice' }),
@@ -762,6 +766,8 @@ function Row({ r, ctx }) {
       }
       case 'linkedin':
         return <LinkedInRow li={li} setLi={setLi} flash={flash} />
+      case 'profile-image':
+        return <ProfileImageRow value={val('profile_image_path')} save={save} flash={flash} />
       default:
         return null
     }
@@ -895,6 +901,58 @@ function LinkedInRow({ li, setLi, flash }) {
         </>
       )}
       {phase !== 'awaiting_pin' && <ActionBtn label="Refresh cookie" state={busy ? 'running' : ''} onClick={start} />}
+    </>
+  )
+}
+
+// ── Profile image upload ─────────────────────────────────────────────────────
+function ProfileImageRow({ value, save, flash }) {
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef(null)
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await api.post('/settings/profile-image', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+      if (data.profile_image_path) {
+        await save('profile_image_path', data.profile_image_path)
+        flash('Profile image uploaded')
+      }
+    } catch (e) {
+      flash(e?.response?.data?.detail || 'Failed to upload image', true)
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  return (
+    <>
+      {value && (
+        <>
+          <img src={value} alt="Current profile" style={{ width: 40, height: 40, objectFit: 'cover' }} />
+          <ActionBtn label="Remove" state="" onClick={() => save('profile_image_path', '')} ariaLabel="Remove profile image" />
+        </>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+        onChange={handleUpload}
+        style={{ display: 'none' }}
+        ariaLabel="Upload profile image"
+      />
+      <ActionBtn
+        label={value ? 'Change' : 'Upload'}
+        state={uploading ? 'running' : ''}
+        onClick={() => fileRef.current?.click()}
+        ariaLabel={`${value ? 'Change' : 'Upload'} profile image`}
+      />
     </>
   )
 }

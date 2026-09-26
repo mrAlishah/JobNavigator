@@ -240,6 +240,7 @@ def _discover_templates() -> list[dict]:
                     meta["id"] = name  # folder name is always the ID
             except Exception:
                 pass
+        meta["has_profile_image"] = "profile_image_path" in (d / "template.html.j2").read_text(encoding="utf-8")
         templates.append(meta)
     return templates
 
@@ -261,7 +262,7 @@ def _load_template_fonts(fonts_dir_str: str) -> dict:
     return fonts
 
 
-def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0) -> str:
+def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0, profile_image_path: Optional[str] = None, profile_image_enabled: bool = True) -> str:
     """Render a resume to HTML using its Jinja2 template.
 
     `footer_reserved_in` sets the template's own `@page` bottom margin (inches), so
@@ -271,6 +272,9 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     lay out flush to the physical page edge, landing on top of a footer drawn there
     by page.pdf()'s own `margin` option, which does not itself shrink the CSS layout
     area. 0 (preview, base/freeform PDFs, no footer) keeps the exact current layout.
+
+    `profile_image_path` and `profile_image_enabled` control whether to show the profile
+    image in templates that support it.
     """
     from jinja2 import Environment, FileSystemLoader
 
@@ -294,13 +298,17 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     # json_data may carry internal metadata under "_"-prefixed keys (_tailor_context,
     # _score) that are never résumé content — keep them out of the template namespace so they can't render or collide with a template global.
     content = {k: v for k, v in (json_data or {}).items() if not str(k).startswith("_")}
-    html = template.render(
-        **content,
+    # dict(content, ...) so the explicit values win over a same-named key stored in json_data
+    # (the editor saves profile_image_enabled there); `**content, k=v` raises on the duplicate.
+    html = template.render(**dict(
+        content,
         page_format=page_format,
         fonts_base="",
         fonts=fonts,
         footer_reserved_in=footer_reserved_in,
-    )
+        profile_image_path=profile_image_path,
+        profile_image_enabled=profile_image_enabled,
+    ))
     return html
 
 
@@ -1207,8 +1215,20 @@ def preview_resume(resume_id: str, db: Session = Depends(get_db)):
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
+    # Query global profile image from settings
+    profile_image_setting = db.query(Setting).filter(Setting.key == "profile_image_path").first()
+    profile_image_path = profile_image_setting.value if profile_image_setting else None
+    # Convert web URL to data URI for server-side rendering (preview in browser still shows web URL)
+    # Get per-resume profile image enabled flag (defaults to True, handle both bool and string values)
+    profile_image_val = resume.json_data.get("profile_image_enabled", True) if resume.json_data else True
+    # Convert string values to boolean (in case saved as JSON string)
+    if isinstance(profile_image_val, str):
+        profile_image_enabled = profile_image_val.lower() not in ('false', '0', 'no')
+    else:
+        profile_image_enabled = bool(profile_image_val)
+
     json_data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
-    html = _render_html(json_data, resume.template, resume.page_format)
+    html = _render_html(json_data, resume.template, resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
     return HTMLResponse(content=html)
 
 
@@ -1237,7 +1257,19 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
     bottom_margin_in = 0.4 if footer_text else 0
     bottom_margin = f"{bottom_margin_in}in" if footer_text else "0"
 
-    html = _render_html(pdf_data, tpl, fmt, footer_reserved_in=bottom_margin_in)
+    # Query global profile image from settings (stored as base64 data URI)
+    profile_image_setting = db.query(Setting).filter(Setting.key == "profile_image_path").first()
+    profile_image_path = profile_image_setting.value if profile_image_setting else None
+
+    # Get per-resume profile image enabled flag (defaults to True, handle both bool and string values)
+    profile_image_val = resume.json_data.get("profile_image_enabled", True) if resume.json_data else True
+    # Convert string values to boolean (in case saved as JSON string)
+    if isinstance(profile_image_val, str):
+        profile_image_enabled = profile_image_val.lower() not in ('false', '0', 'no')
+    else:
+        profile_image_enabled = bool(profile_image_val)
+
+    html = _render_html(pdf_data, tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
 
     try:
         browser = await _get_browser()

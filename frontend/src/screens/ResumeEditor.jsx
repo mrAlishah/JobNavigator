@@ -602,7 +602,7 @@ export default function ResumeEditor() {
           {SECTION_ORDER.map((name) => (
             <SectionShell key={name} name={name} count={counts[name]} open={open.has(name)} onToggle={() => toggle(name)}
               meta={changedSections.has(name) ? <span title="Contains unreviewed tailoring changes" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--warn)' }}>● changed by tailoring</span> : null}>
-              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} onError={(msg) => pushToast({ kind: 'error', msg })}
+              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={templates.find((item) => item.id === template)?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
                 onRemoved={(msg, undo) => pushToast({ kind: 'undo', msg, action: 'Undo', onAction: undo })} />
             </SectionShell>
           ))}

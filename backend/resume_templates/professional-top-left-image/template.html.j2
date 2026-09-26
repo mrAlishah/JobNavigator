@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ header.name }} — Resume</title>
+<style>
+/* Follows the ATS reference résumé: Arial (Arimo is its metric-compatible web twin, so wraps match),
+   #232323 text, #5A5A5A secondary, #1F4E79 ruled section titles, "Title - Company" entries. */
+@import url('https://fonts.googleapis.com/css2?family=Arimo:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+@page {
+  size: {{ 'letter' if page_format == 'letter' else 'A4' }};
+  margin: 0.41in 0 {{ footer_reserved_in | default(0) }}in 0;
+}
+
+html, body {
+  font-family: 'Arial', 'Arimo', 'Liberation Sans', Helvetica, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.15;
+  color: #232323;
+  background: #fff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.page {
+  width: {{ '8.5in' if page_format == 'letter' else '210mm' }};
+  padding: 0.41in 0.53in;
+  margin: 0 auto;
+}
+
+@media print {
+  .page { padding-top: 0; padding-bottom: 0; }
+  .entry:last-child, .edu-entry:last-child, .skill-line:last-child { margin-bottom: 0; }
+  .section-title { break-after: avoid; }
+  ul.bullets li, .entry, .edu-entry { break-inside: avoid; }
+}
+
+/* --- Header (with optional profile image) --- */
+.header {
+  display: flex;
+  gap: 14pt;
+  margin-bottom: 4pt;
+  align-items: flex-start;
+}
+
+.header-profile-image {
+  flex-shrink: 0;
+  width: 120px;
+  height: 120px;
+}
+
+.header-profile-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.header-content {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.header h1 {
+  font-size: 19pt;
+  font-weight: 700;
+  color: #232323;
+  line-height: 1.15;
+}
+
+.header .title-line {
+  font-size: 11.5pt;
+  font-weight: 700;
+  color: #000;
+}
+
+.header .contact {
+  font-size: 8pt;
+  color: #000;
+  margin-top: 2pt;
+}
+
+.header .contact a { color: #000; text-decoration: none; }
+
+.header .contact .sep { margin: 0 4pt; }
+
+/* --- Section --- */
+.section-title {
+  font-size: 11.5pt;
+  font-weight: 700;
+  color: #1F4E79;
+  border-bottom: 1pt solid #1F4E79;
+  padding-bottom: 1pt;
+  margin: 6pt 0 3pt 0;
+}
+
+/* --- Entries (experience / projects / publications) --- */
+.entry { margin-bottom: 3pt; }
+
+.entry-title, .entry-name { font-weight: 700; font-size: 9.5pt; color: #232323; }
+
+.entry-meta { font-size: 9pt; color: #5A5A5A; margin-bottom: 0.6pt; }
+
+.entry-description {
+  font-size: 9pt;
+  font-style: italic;
+  color: #5A5A5A;
+  margin-bottom: 0.9pt;
+}
+
+.entry-url { font-size: 9pt; color: #5A5A5A; }
+.entry-url a { color: #5A5A5A; text-decoration: none; }
+
+ul.bullets { list-style: none; }
+
+ul.bullets li {
+  font-size: 9.5pt;
+  padding-left: 9.7pt;
+  text-indent: -6.5pt;
+  margin-bottom: 0.45pt;
+}
+
+ul.bullets li::before { content: '• '; }
+
+/* --- Skills --- */
+.skill-line { font-size: 9pt; margin-bottom: 0.4pt; }
+.skill-label { font-weight: 700; }
+
+/* --- Education --- */
+.edu-entry { margin-bottom: 2pt; }
+
+.edu-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.edu-school { font-weight: 700; font-size: 9.5pt; }
+.edu-location { color: #5A5A5A; text-align: right; white-space: nowrap; margin-left: 8pt; font-size: 9pt; }
+.edu-degree { font-size: 9pt; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header with optional profile image -->
+  {% if header %}
+  <div class="header">
+    {% if profile_image_enabled and profile_image_path %}
+    <div class="header-profile-image">
+      <img src="{{ profile_image_path }}" alt="Profile" />
+    </div>
+    {% endif %}
+    <div class="header-content">
+      <h1>{{ header.name }}</h1>
+      {% if header.title %}<div class="title-line">{{ header.title }}</div>{% endif %}
+      <div class="contact">
+        {% set contact_parts = [] %}
+        {% for item in (header.contact_items or []) %}
+          {% if item.url %}
+            {% set href = item.url if (item.url.startswith('http') or item.url.startswith('mailto')) else 'https://' ~ item.url %}
+            {% set _ = contact_parts.append('<a href="' ~ href ~ '">' ~ item.text ~ '</a>') %}
+          {% else %}
+            {% set _ = contact_parts.append(item.text) %}
+          {% endif %}
+        {% endfor %}
+        {{ contact_parts | join('<span class="sep">|</span>') }}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Summary -->
+  {% if summary %}
+  <div class="section">
+    <div class="section-title">PROFESSIONAL SUMMARY</div>
+    <div class="summary-text">{{ summary | bold }}</div>
+  </div>
+  {% endif %}
+
+  <!-- Skills -->
+  {% if skills %}
+  <div class="section">
+    <div class="section-title">CORE SKILLS</div>
+    {% for label, value in skills.items() %}
+    <div class="skill-line"><span class="skill-label">{{ label }}:</span> {{ value }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Experience -->
+  {% if experience %}
+  <div class="section">
+    <div class="section-title">PROFESSIONAL EXPERIENCE</div>
+    {% for job in experience %}
+    <div class="entry">
+      <div class="entry-title">{{ job.title }}{% if job.title and job.company %} - {% endif %}{{ job.company }}</div>
+      {% if job.location or job.date %}
+      <div class="entry-meta">{{ job.location }}{% if job.location and job.date %} | {% endif %}{{ job.date }}</div>
+      {% endif %}
+      {% if job.description %}
+      <div class="entry-description">{{ job.description }}</div>
+      {% endif %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for bullet in job.bullets %}
+        <li>{{ bullet | bold }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Education -->
+  {% if education %}
+  <div class="section">
+    <div class="section-title">EDUCATION &amp; TRAINING</div>
+    {% for edu in education %}
+    <div class="edu-entry">
+      <div class="edu-row">
+        <span class="edu-school">{{ edu.school }}</span>
+        <span class="edu-location">{{ edu.location }}</span>
+      </div>
+      {% if edu.degree %}
+      <div class="edu-degree">{{ edu.degree }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Projects -->
+  {% if projects %}
+  <div class="section">
+    <div class="section-title">PROJECTS</div>
+    {% for project in projects %}
+    <div class="entry">
+      <div class="entry-name">{{ project.name or project.title }}</div>
+      {% if project.url %}
+      <div class="entry-url"><a href="{{ project.url }}">{{ project.url }}</a></div>
+      {% endif %}
+      {% if project.description %}
+      <div class="entry-description">{{ project.description }}</div>
+      {% endif %}
+      {% if project.bullets %}
+      <ul class="bullets">
+        {% for bullet in project.bullets %}
+        <li>{{ bullet | bold }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Publications -->
+  {% if publications %}
+  <div class="section">
+    <div class="section-title">PUBLICATIONS</div>
+    {% for pub in publications %}
+    <div class="entry">
+      <div class="entry-name">{{ pub.name or pub.title }}</div>
+      {% if pub.description %}
+      <div class="entry-description">{{ pub.description }}</div>
+      {% endif %}
+      {% if pub.bullets %}
+      <ul class="bullets">
+        {% for bullet in pub.bullets %}
+        <li>{{ bullet | bold }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+</body>
+</html>
