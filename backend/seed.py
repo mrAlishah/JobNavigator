@@ -25,6 +25,7 @@ DEFAULT_SETTINGS = {
     "proxy_url": ("", "Optional rotating proxy for scraping"),
     "dashboard_api_key": ("", "Dashboard password — changeable from dashboard"),
     "default_resume_id": ("", "Default base Resume ID used for scoring when no company-level Resumes are configured"),
+    "profile_image_path": ("", "Global profile image path/URL for resume templates that support it"),
     "company_exclude_global": (json.dumps([]), "Global company ignore list — applies to all searches"),
     "title_exclude_global": (json.dumps([]), "Global title exclude keywords — applies to all searches and companies"),
     "linkedin_email": ("", "LinkedIn account email for personal scrape mode"),

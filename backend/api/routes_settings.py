@@ -1,7 +1,7 @@
 """GET /settings and PATCH /settings endpoints."""
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from backend.models.db import get_db, Setting
 from backend.scheduler import configure_scheduler
@@ -109,3 +109,48 @@ def get_defaults():
     """Seeded defaults, so an editor can offer "Reset to default" without hardcoding a second copy of every prompt in the frontend."""
     from backend.seed import DEFAULT_SETTINGS
     return {k: v[0] for k, v in DEFAULT_SETTINGS.items()}
+
+
+@router.post("/profile-image")
+async def upload_profile_image(file: UploadFile = File(...)):
+    """Upload a profile image for use in resume templates. Returns optimized base64 data URI."""
+    import base64
+    from io import BytesIO
+    from PIL import Image
+
+    # Validate file type
+    allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only image files (PNG, JPEG, GIF, WebP) are allowed")
+
+    # Read and validate file size (max 2MB)
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size must be less than 2MB")
+
+    try:
+        # Open image and optimize
+        img = Image.open(BytesIO(content))
+        # Convert RGBA to RGB if needed (for JPEG compatibility)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            bg.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+            img = bg
+        # Keep the stored image small enough for PDF rendering.
+        img.thumbnail((120, 120), Image.Resampling.LANCZOS)
+        # Save as JPEG for smaller size
+        output = BytesIO()
+        img.save(output, format='JPEG', quality=85, optimize=True)
+        optimized_content = output.getvalue()
+        mime_type = "image/jpeg"
+    except Exception as e:
+        logger.error(f"Image processing failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to process image: {str(e)}")
+
+    # Convert to base64 data URI
+    data_uri = f"data:{mime_type};base64,{base64.b64encode(optimized_content).decode()}"
+
+    # Return the data URI that can be stored directly in settings
+    return {"profile_image_path": data_uri}
