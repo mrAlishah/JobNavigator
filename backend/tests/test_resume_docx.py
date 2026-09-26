@@ -119,6 +119,6 @@ def test_docx_reads_legacy_dates_key(api_client, test_db):
     assert any("1999 - 2001" in paragraph.text for paragraph in document.paragraphs)
 
 
-def test_docx_does_not_embed_global_profile_image(api_client, test_db):
-    _, document = _fetch(api_client, _resume(test_db, image=True, template="professional-top-left-image"))
+def test_generic_docx_does_not_embed_global_profile_image(api_client, test_db):
+    _, document = _fetch(api_client, _resume(test_db, image=True))
     assert not document.inline_shapes and not document.tables
