@@ -312,6 +312,131 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     return html
 
 
+DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _build_docx(json_data: dict, fmt: str) -> bytes:
+    """Build an editable, template-neutral Word résumé from its JSON sections."""
+    from docx import Document
+    from docx.enum.text import WD_TAB_ALIGNMENT
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Emu, Inches, Pt, RGBColor
+
+    data = json_data or {}
+    doc = Document()
+    page = doc.sections[0]
+    page.page_width, page.page_height = (Emu(7560310), Emu(10692130)) if fmt.lower() == "a4" else (Inches(8.5), Inches(11))
+    page.top_margin = page.bottom_margin = page.left_margin = page.right_margin = Inches(0.7)
+    body_width = page.page_width - page.left_margin - page.right_margin
+    doc.styles["Normal"].font.size = Pt(10.5)
+    doc.styles["Heading 2"].font.size = Pt(12)
+    doc.styles["Heading 2"].font.color.rgb = RGBColor(0, 0, 0)
+
+    def runs(paragraph, value, bold=False):
+        for index, part in enumerate(re.split(r"\*\*(.+?)\*\*", value or "")):
+            if part:
+                paragraph.add_run(part).bold = bold or bool(index % 2)
+
+    def link(paragraph, label, url):
+        href = url if url.startswith(("http", "mailto")) else "https://" + url
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), doc.part.relate_to(href, RT.HYPERLINK, is_external=True))
+        run = OxmlElement("w:r")
+        properties = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "0563C1")
+        underline = OxmlElement("w:u")
+        underline.set(qn("w:val"), "single")
+        properties.extend((color, underline))
+        text = OxmlElement("w:t")
+        text.text = label
+        text.set(qn("xml:space"), "preserve")
+        run.extend((properties, text))
+        hyperlink.append(run)
+        paragraph._p.append(hyperlink)
+
+    def row(left, right=""):
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
+        runs(paragraph, left, bold=True)
+        if right:
+            paragraph.add_run("\t" + right)
+
+    def details(item):
+        if item.get("description"):
+            runs(doc.add_paragraph(), item["description"])
+        for bullet in item.get("bullets") or []:
+            runs(doc.add_paragraph(style="List Bullet"), bullet)
+
+    header = data.get("header") or {}
+    name = doc.add_paragraph().add_run(header.get("name") or "")
+    name.bold = True
+    name.font.size = Pt(20)
+    if header.get("title"):
+        runs(doc.add_paragraph(), header["title"])
+    contact = doc.add_paragraph()
+    for index, item in enumerate(header.get("contact_items") or []):
+        if index:
+            runs(contact, " | ")
+        if item.get("url"):
+            link(contact, item.get("text") or item["url"], item["url"])
+        else:
+            runs(contact, item.get("text") or "")
+
+    if data.get("summary"):
+        runs(doc.add_paragraph(), data["summary"])
+    if data.get("skills"):
+        doc.add_heading("Skills", level=2)
+        skills = data["skills"]
+        pairs = skills.items() if isinstance(skills, dict) else [(s.get("category"), s.get("items")) for s in skills]
+        for label, value in pairs:
+            paragraph = doc.add_paragraph()
+            runs(paragraph, f"{label}: ", bold=True)
+            runs(paragraph, str(value or ""))
+    if data.get("experience"):
+        doc.add_heading("Experience", level=2)
+        for job in data["experience"]:
+            row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}",
+                job.get("date") or job.get("dates") or "")
+            if job.get("location"):
+                doc.add_paragraph(job["location"])
+            details(job)
+    if data.get("education"):
+        doc.add_heading("Education", level=2)
+        for education in data["education"]:
+            row(education.get("school") or "", education.get("location") or "")
+            if education.get("degree"):
+                runs(doc.add_paragraph(), education["degree"])
+    for key, title in (("projects", "Projects"), ("publications", "Publications")):
+        if data.get(key):
+            doc.add_heading(title, level=2)
+            for item in data[key]:
+                row(item.get("name") or item.get("title") or "")
+                if item.get("url"):
+                    link(doc.add_paragraph(), item["url"], item["url"])
+                details(item)
+
+    output = io.BytesIO()
+    doc.save(output)
+    return output.getvalue()
+
+
+def _resume_download_name(resume: "Resume", db: Session) -> str:
+    """{Name}_{Type}_Resume_{number} for a download's filename (no extension). Name is the candidate
+    header name, Type is the base resume name, number is the linked job's short_id (omitted when none)."""
+    header_name = (resume.json_data or {}).get("header", {}).get("name", "Resume").replace(" ", "")
+    base_name = (resume.name.split(" → ")[0] if " → " in (resume.name or "") else resume.name) or "Resume"
+    base_name = base_name.replace(" ", "")
+    number = ""
+    if resume.job_id:
+        job_for_name = db.query(Job).filter(Job.id == resume.job_id).first()
+        if job_for_name and job_for_name.short_id:
+            number = f"_{job_for_name.short_id}"
+    return f"{header_name}_{base_name}_Resume{number}".encode("ascii", "replace").decode()
+
+
 # Anything that already names a scheme: `tel:`, `mailto:`, `sms:`, `skype:`…
 _SCHEME_RE = re.compile(r'^([a-zA-Z][a-zA-Z0-9+.\-]*):')
 
@@ -1292,17 +1417,7 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
         logger.error(f"PDF generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
-    # Filename: {Name}_{Type}_Resume_{number}.pdf \u2014 Name is the candidate header name,
-    # Type is the base resume name, number is the linked job's short_id (omitted for base resumes with none).
-    header_name = (resume.json_data or {}).get("header", {}).get("name", "Resume").replace(" ", "")
-    base_name = (resume.name.split(" \u2192 ")[0] if " \u2192 " in (resume.name or "") else resume.name) or "Resume"
-    base_name = base_name.replace(" ", "")
-    number = ""
-    if resume.job_id:
-        job_for_name = db.query(Job).filter(Job.id == resume.job_id).first()
-        if job_for_name and job_for_name.short_id:
-            number = f"_{job_for_name.short_id}"
-    filename = f"{header_name}_{base_name}_Resume{number}".encode("ascii", "replace").decode()
+    filename = _resume_download_name(resume, db)
 
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}.pdf"',
@@ -1315,6 +1430,28 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
         content=pdf_bytes,
         media_type="application/pdf",
         headers=headers,
+    )
+
+
+@router.get("/{resume_id}/docx")
+def export_docx(resume_id: str, template: Optional[str] = None, format: Optional[str] = None, db: Session = Depends(get_db)):
+    """Export editable Word text; the template parameter is accepted for parity with PDF."""
+    resume = db.query(Resume).filter(Resume.id == resume_id).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    fmt = format or resume.page_format or "letter"
+    data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
+    try:
+        content = _build_docx(data, fmt)
+    except Exception as error:
+        logger.error("DOCX generation failed: %s", error)
+        raise HTTPException(status_code=500, detail="DOCX generation failed")
+
+    return Response(
+        content=content,
+        media_type=DOCX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{_resume_download_name(resume, db)}.docx"'},
     )
 
 
