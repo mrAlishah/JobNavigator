@@ -702,6 +702,8 @@ def copy_resume_for_job(body: dict, db: Session = Depends(get_db)):
         raise HTTPException(404, "Job not found")
 
     job_name = f"{job.company} \u2014 {job.title}" if job.company else job.title or ""
+    copy_data = _json.loads(_json.dumps(base.json_data or {}))
+    copy_data.pop("footer_enabled", None)
     copy = Resume(
         name=f"{base.name} \u2192 {job_name}",
         is_base=False,
@@ -709,7 +711,7 @@ def copy_resume_for_job(body: dict, db: Session = Depends(get_db)):
         job_id=job_id,
         template=base.template,
         page_format=base.page_format,
-        json_data=_json.loads(_json.dumps(base.json_data or {})),
+        json_data=copy_data,
     )
     db.add(copy)
     db.commit()
@@ -977,6 +979,7 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
                     raise ModelReplyError(UNPARSEABLE_MESSAGE)
 
         tailored_data = _json.loads(_json.dumps(base_data))
+        tailored_data.pop("footer_enabled", None)
         if "summary" in llm_result:
             tailored_data["summary"] = llm_result["summary"]
         if "experience" in llm_result:
@@ -1224,7 +1227,7 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
     paper_format = "A4" if fmt.lower() == "a4" else "Letter"
 
     job_for_footer = db.query(Job).filter(Job.id == resume.job_id).first() if resume.job_id else None
-    footer_text = _tailored_resume_footer_text(resume, job_for_footer)
+    footer_text = _tailored_resume_footer_text(resume, job_for_footer) if json_data.get("footer_enabled", True) is not False else ""
     # A nonzero bottom margin gives the footer its own reserved space on every page,
     # independent of resume content — a page.pdf() footer with a "0" bottom margin
     # would be clipped/overlapping instead of shown. Left at "0" (no footer) so

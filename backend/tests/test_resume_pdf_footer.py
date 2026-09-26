@@ -193,6 +193,37 @@ async def test_pdf_export_has_no_footer_for_a_freeform_tailor(test_db, monkeypat
     assert "margin: 0.5in 0 0in 0" in captured["html"]
 
 
+@pytest.mark.asyncio
+async def test_pdf_export_respects_disabled_footer(test_db, monkeypatch):
+    job = _job()
+    test_db.add(job)
+    resume = _resume(job_id=job.id, json_data={"header": {"name": CANDIDATE}, "footer_enabled": False})
+    test_db.add(resume)
+    test_db.commit()
+
+    captured = {}
+    _fake_browser(monkeypatch, captured)
+    await export_pdf(str(resume.id), db=test_db)
+
+    assert captured["display_header_footer"] is False
+    assert captured["margin"]["bottom"] == "0"
+
+
+def test_copy_for_job_does_not_inherit_base_footer_setting(api_client, test_db):
+    from backend.models.db import Setting
+
+    test_db.add(Setting(key="dashboard_api_key", value=""))
+    job = _job()
+    test_db.add(job)
+    base = _resume(is_base=True, job_id=None, json_data={"header": {"name": CANDIDATE}, "footer_enabled": False})
+    test_db.add(base)
+    test_db.commit()
+
+    response = api_client.post("/api/resumes/copy", json={"base_resume_id": str(base.id), "job_id": str(job.id)})
+    assert response.status_code == 200
+    assert "footer_enabled" not in response.json()["json_data"]
+
+
 # ── Template pagination safety (regressions for two footer/content overlaps) ────
 # A resume tailored against a real job and rendered with Playwright's footerTemplate
 # reproduced content painting on top of the footer in production: a page.pdf()
