@@ -460,6 +460,10 @@ export default function ResumeEditor() {
     const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
     return `${base}/api/resumes/${id}/pdf?template=${encodeURIComponent(template)}&format=${encodeURIComponent(format)}`
   }, [id, template, format])
+  const docxDownloadUrl = useMemo(() => {
+    const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
+    return `${base}/api/resumes/${id}/docx?template=${encodeURIComponent(template)}&format=${encodeURIComponent(format)}`
+  }, [id, template, format])
 
   // Reserves the chrome's shape while the document loads, instead of a bare "Loading…"
   // that collapses the screen then jumps to the real layout once the doc lands.
@@ -635,11 +639,7 @@ export default function ResumeEditor() {
                   </Menu>
               )}
             </div>}
-            {/* round 9: `Button href` renders the real download anchor, on the
-                primary paint this toolbar drew by hand (--accent / --accent-ink /
-                500). Overrides restore the toolbar's own 29px height and 12px label. */}
-            <Button size="sm" href={pdfDownloadUrl} target="_blank"
-              style={{ marginLeft: 'auto', minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download PDF</Button>
+            <DownloadMenu pdfUrl={pdfDownloadUrl} docxUrl={docxDownloadUrl} />
           </HeaderRow>
           <Surface radius="none" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             {pdfUrl && <iframe title="pdf" src={`${pdfUrl}#view=FitH`} style={{ width: '100%', height: '100%', border: 'none' }} />}
@@ -729,6 +729,28 @@ function RetailorModal({ doc, job, chain, onClose, onRun, pushToast }) {
 
 // The tailor endpoint chains a score of the copy it just made — a second LLM call the
 // modals should mention. Reads the setting that controls it; the control itself stays in Settings › AI.
+// Toolbar Download button + its PDF / Word menu — same open/backdrop/Escape shape as the ⋯ actions menu.
+export function DownloadMenu({ pdfUrl, docxUrl }) {
+  const [open, setOpen] = useState(false)
+  useEscape(() => setOpen(false), open)
+  return (
+    <div style={{ position: 'relative', flex: '0 0 auto', marginLeft: 'auto' }}>
+      {/* round 9: `Button` keeps the toolbar's own 29px height and 12px label. */}
+      <Button size="sm" ariaHaspopup="menu" ariaExpanded={open} onClick={() => setOpen((v) => !v)}
+        style={{ minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download</Button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
+          <Menu ariaLabel="Download résumé" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 168 }}>
+            <MenuItem href={pdfUrl} target="_blank" onClick={() => setOpen(false)}>PDF</MenuItem>
+            <MenuItem href={docxUrl} target="_blank" onClick={() => setOpen(false)}>Word (.docx)</MenuItem>
+          </Menu>
+        </>
+      )}
+    </div>
+  )
+}
+
 const chainNote = (chain) => (chain
   ? `Also scores the copy afterwards at ${chain} depth · 1 more LLM call · change under Settings › AI`
   : 'Scoring after tailoring is off')
