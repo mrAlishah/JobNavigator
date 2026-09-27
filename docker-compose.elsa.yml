@@ -22,3 +22,10 @@ services:
     ports: !override
       - "127.0.0.1:8081:80"
       - "127.0.0.1:8444:443"
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18081:8080"
+    depends_on:
+      - db
