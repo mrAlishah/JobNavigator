@@ -12,6 +12,7 @@ openai==1.82.0
 python-telegram-bot==21.9
 python-jobspy==1.1.82
 playwright==1.49.1
+python-docx==1.2.0
 beautifulsoup4==4.12.3
 pydantic==2.10.4
 # Transitive-dep overrides to fix CVEs flagged by pip-audit.
