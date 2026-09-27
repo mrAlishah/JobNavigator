@@ -315,10 +315,10 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _build_docx(json_data: dict, fmt: str) -> bytes:
+def _build_docx(json_data: dict, fmt: str, footer_text: str = "") -> bytes:
     """Build an editable, template-neutral Word résumé from its JSON sections."""
     from docx import Document
-    from docx.enum.text import WD_TAB_ALIGNMENT
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
@@ -333,6 +333,12 @@ def _build_docx(json_data: dict, fmt: str) -> bytes:
     doc.styles["Normal"].font.size = Pt(10.5)
     doc.styles["Heading 2"].font.size = Pt(12)
     doc.styles["Heading 2"].font.color.rgb = RGBColor(0, 0, 0)
+    if footer_text:
+        footer = page.footer.paragraphs[0]
+        footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        footer_run = footer.add_run(footer_text)
+        footer_run.font.size = Pt(8)
+        footer_run.font.color.rgb = RGBColor(153, 153, 153)
 
     def runs(paragraph, value, bold=False):
         for index, part in enumerate(re.split(r"\*\*(.+?)\*\*", value or "")):
@@ -1441,9 +1447,12 @@ def export_docx(resume_id: str, template: Optional[str] = None, format: Optional
         raise HTTPException(status_code=404, detail="Resume not found")
 
     fmt = format or resume.page_format or "letter"
-    data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
+    json_data = resume.json_data or {}
+    data = _rewrite_urls_with_tracers(json_data, str(resume.id), db)
+    job_for_footer = db.query(Job).filter(Job.id == resume.job_id).first() if resume.job_id else None
+    footer_text = _tailored_resume_footer_text(resume, job_for_footer) if json_data.get("footer_enabled", True) is not False else ""
     try:
-        content = _build_docx(data, fmt)
+        content = _build_docx(data, fmt, footer_text)
     except Exception as error:
         logger.error("DOCX generation failed: %s", error)
         raise HTTPException(status_code=500, detail="DOCX generation failed")

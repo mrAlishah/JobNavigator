@@ -5,7 +5,7 @@ import uuid
 import docx
 from docx.shared import Emu
 
-from backend.models.db import Resume, Setting
+from backend.models.db import Job, Resume, Setting
 
 DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DATA = {
@@ -29,7 +29,8 @@ def _resume(test_db, image=False, data=None, **over):
     if image:
         test_db.add(Setting(key="profile_image_path", value=PNG))
     over.setdefault("template", "inter")
-    resume = Resume(name="Base CV", is_base=True, page_format="letter", json_data=data or DATA, **over)
+    over.setdefault("is_base", True)
+    resume = Resume(name="Base CV", page_format="letter", json_data=data or DATA, **over)
     test_db.add(resume)
     test_db.commit()
     return resume
@@ -46,6 +47,29 @@ def test_docx_download_headers(api_client, test_db):
     assert response.headers["content-type"] == DOCX_TYPE
     assert response.content[:2] == b"PK"
     assert 'filename="DanaOkonkwo_BaseCV_Resume.docx"' in response.headers["content-disposition"]
+
+
+def test_docx_repeats_tailored_resume_footer_on_each_page(api_client, test_db):
+    job = Job(external_id="docx-footer", content_hash="docx-footer", title="Staff Engineer", company="Acme")
+    test_db.add(job)
+    test_db.flush()
+    resume = _resume(test_db, is_base=False, job_id=job.id)
+
+    _, document = _fetch(api_client, resume)
+
+    assert document.sections[0].footer.paragraphs[0].text == "Dana Okonkwo - Staff Engineer - Acme"
+
+
+def test_docx_omits_disabled_footer(api_client, test_db):
+    job = Job(external_id="docx-no-footer", content_hash="docx-no-footer", title="Staff Engineer", company="Acme")
+    test_db.add(job)
+    test_db.flush()
+    data = {**DATA, "footer_enabled": False}
+    resume = _resume(test_db, data=data, is_base=False, job_id=job.id)
+
+    _, document = _fetch(api_client, resume)
+
+    assert document.sections[0].footer.paragraphs[0].text == ""
 
 
 def test_docx_contains_every_section_in_order(api_client, test_db):
