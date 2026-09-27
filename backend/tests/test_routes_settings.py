@@ -1,5 +1,8 @@
 """Tests for PATCH /api/settings reconfig error surfacing."""
 import pytest
+from io import BytesIO
+
+from PIL import Image
 
 
 def _seed_first_run(db):
@@ -38,3 +41,19 @@ def test_patch_settings_no_warnings_on_clean_reconfig(api_client, test_db):
     data = resp.json()
     warnings = data.get("warnings") or []
     assert warnings == []
+
+
+def test_profile_image_upload_returns_small_jpeg_data_uri(api_client, test_db):
+    _seed_first_run(test_db)
+    image = Image.new("RGB", (240, 160), "blue")
+    data = BytesIO()
+    image.save(data, format="PNG")
+    response = api_client.post("/api/settings/profile-image", files={"file": ("photo.png", data.getvalue(), "image/png")})
+    assert response.status_code == 200
+    assert response.json()["profile_image_path"].startswith("data:image/jpeg;base64,")
+
+
+def test_profile_image_upload_rejects_non_image(api_client, test_db):
+    _seed_first_run(test_db)
+    response = api_client.post("/api/settings/profile-image", files={"file": ("x.txt", b"not image", "text/plain")})
+    assert response.status_code == 400

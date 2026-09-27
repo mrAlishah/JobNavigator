@@ -144,7 +144,7 @@ export function SectionShell({ name, count, open, onToggle, meta, children }) {
 
 // Renders the right section editor for a SECTION_ORDER name. Tailoring props are
 // optional — Persona passes none, so nothing renders as changed.
-export function SectionEditor({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved }) {
+export function SectionEditor({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage }) {
   switch (name) {
     case 'Header': return <HeaderEditor data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Summary': return <SummaryEditor pageHint={pageHint} data={data} setField={setField} baseSummary={baseData?.summary} />
@@ -153,13 +153,16 @@ export function SectionEditor({ name, data, setField, mutate, baseData, emptyNot
     case 'Education': return <EducationEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Projects': return <ProjectsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Publications': return <PublicationsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
-    case 'Settings': return <SettingsEditor data={data} setField={setField} />
+    case 'Settings': return <SettingsEditor data={data} setField={setField} hasProfileImage={hasProfileImage} />
     default: return null
   }
 }
 
-export function SettingsEditor({ data, setField }) {
-  return <div style={{ paddingTop: 10 }}>
+export function SettingsEditor({ data, setField, hasProfileImage }) {
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 10 }}>
+    <Check checked={data.profile_image_enabled !== false} onChange={(value) => setField('profile_image_enabled', value)}
+      disabled={hasProfileImage === false} label="Show profile image"
+      title={hasProfileImage === false ? 'The selected template has no profile image' : 'Show the profile image in templates that support it.'} />
     <Check checked={data.footer_enabled !== false} onChange={(value) => setField('footer_enabled', value)}
       label="Show footer" title="Show name, job title and company at the bottom of each tailored PDF page." />
   </div>
