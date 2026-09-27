@@ -1,4 +1,5 @@
 """Resume builder CRUD, preview, PDF export, and PDF import endpoints."""
+import base64
 import functools as _functools
 import io
 import json
@@ -315,8 +316,19 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
-def _build_docx(json_data: dict, fmt: str, footer_text: str = "") -> bytes:
-    """Build an editable, template-neutral Word résumé from its JSON sections."""
+def _build_docx(
+    json_data: dict,
+    fmt: str,
+    style: Optional[dict] = None,
+    image: Optional[bytes] = None,
+    footer_text: str = "",
+) -> bytes:
+    """Résumé json_data -> .docx bytes. Walks the same sections and fields the HTML templates read,
+    as real Word text (hyperlinks, tab-aligned rows) so it stays editable and ATS-friendly.
+    `style` is the template's meta.json "docx" block (font, sizes, colours, margins, section titles,
+    image side); without one the file gets a plain generic look. `image` is the profile picture,
+    placed beside the name when the style has an image side."""
+    # Lazy import, like _render_html's jinja2: an image without python-docx still boots.
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -324,109 +336,188 @@ def _build_docx(json_data: dict, fmt: str, footer_text: str = "") -> bytes:
     from docx.oxml.ns import qn
     from docx.shared import Emu, Inches, Pt, RGBColor
 
-    data = json_data or {}
+    d = json_data or {}
+    st = style or {}
+    ink, muted, accent = st.get("ink"), st.get("muted"), st.get("accent")
     doc = Document()
-    page = doc.sections[0]
-    page.page_width, page.page_height = (Emu(7560310), Emu(10692130)) if fmt.lower() == "a4" else (Inches(8.5), Inches(11))
-    page.top_margin = page.bottom_margin = page.left_margin = page.right_margin = Inches(0.7)
-    body_width = page.page_width - page.left_margin - page.right_margin
-    doc.styles["Normal"].font.size = Pt(10.5)
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = (Emu(7560310), Emu(10692130)) if fmt.lower() == "a4" else (Inches(8.5), Inches(11))
+    top_bottom, left_right = st.get("margin_in", (0.7, 0.7))
+    sec.top_margin = sec.bottom_margin = Inches(top_bottom)
+    sec.left_margin = sec.right_margin = Inches(left_right)
+    body_width = sec.page_width - sec.left_margin - sec.right_margin
+    normal = doc.styles["Normal"]
+    normal.font.size = Pt(st.get("body_pt", 10.5))
+    if st:
+        normal.font.name = st.get("font")
+        normal.paragraph_format.space_after = Pt(0.5)
+        normal.paragraph_format.line_spacing = 1.0
     doc.styles["Heading 2"].font.size = Pt(12)
     doc.styles["Heading 2"].font.color.rgb = RGBColor(0, 0, 0)
     if footer_text:
-        footer = page.footer.paragraphs[0]
+        footer = sec.footer.paragraphs[0]
         footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
         footer_run = footer.add_run(footer_text)
         footer_run.font.size = Pt(8)
         footer_run.font.color.rgb = RGBColor(153, 153, 153)
+    meta_pt, entry_pt = st.get("meta_pt"), st.get("entry_pt")
 
-    def runs(paragraph, value, bold=False):
-        for index, part in enumerate(re.split(r"\*\*(.+?)\*\*", value or "")):
+    def runs(par, text, bold=False, pt=None, color=None, italic=False):
+        # `**x**` is the bold markup the templates' `bold` filter understands.
+        for i, part in enumerate(re.split(r"\*\*(.+?)\*\*", text or "")):
             if part:
-                paragraph.add_run(part).bold = bold or bool(index % 2)
+                r = par.add_run(part)
+                r.bold = bold or bool(i % 2)
+                r.italic = italic or None
+                if pt:
+                    r.font.size = Pt(pt)
+                if color:
+                    r.font.color.rgb = RGBColor.from_string(color)
 
-    def link(paragraph, label, url):
+    def link(par, text, url):
         href = url if url.startswith(("http", "mailto")) else "https://" + url
-        hyperlink = OxmlElement("w:hyperlink")
-        hyperlink.set(qn("r:id"), doc.part.relate_to(href, RT.HYPERLINK, is_external=True))
-        run = OxmlElement("w:r")
-        properties = OxmlElement("w:rPr")
-        color = OxmlElement("w:color")
-        color.set(qn("w:val"), "0563C1")
-        underline = OxmlElement("w:u")
-        underline.set(qn("w:val"), "single")
-        properties.extend((color, underline))
-        text = OxmlElement("w:t")
-        text.text = label
-        text.set(qn("xml:space"), "preserve")
-        run.extend((properties, text))
-        hyperlink.append(run)
-        paragraph._p.append(hyperlink)
+        h = OxmlElement("w:hyperlink")
+        h.set(qn("r:id"), doc.part.relate_to(href, RT.HYPERLINK, is_external=True))
+        r, rpr, c, t = (OxmlElement(n) for n in ("w:r", "w:rPr", "w:color", "w:t"))
+        if st:      # the templates print links in the text colour, no underline
+            c.set(qn("w:val"), ink)
+            rpr.append(c)
+            sz = OxmlElement("w:sz")
+            sz.set(qn("w:val"), str(int(st.get("contact_pt", 8) * 2)))
+            rpr.append(sz)
+        else:
+            c.set(qn("w:val"), "0563C1")
+            u = OxmlElement("w:u")
+            u.set(qn("w:val"), "single")
+            rpr.append(c)
+            rpr.append(u)
+        t.text = text
+        t.set(qn("xml:space"), "preserve")
+        r.append(rpr)
+        r.append(t)
+        h.append(r)
+        par._p.append(h)
 
-    def row(left, right=""):
-        paragraph = doc.add_paragraph()
-        paragraph.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
-        runs(paragraph, left, bold=True)
+    def section(title):
+        if not st:
+            doc.add_heading(title, level=2)
+            return
+        p = doc.add_paragraph()
+        rule, bottom = OxmlElement("w:pBdr"), OxmlElement("w:bottom")     # first, so python-docx slots the other pPr children in schema order
+        for k, v in (("val", "single"), ("sz", "8"), ("space", "2"), ("color", accent)):
+            bottom.set(qn(f"w:{k}"), v)
+        rule.append(bottom)
+        p._p.get_or_add_pPr().append(rule)
+        p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(4.2), Pt(2.3)
+        p.paragraph_format.keep_with_next = True
+        runs(p, st["titles"].get(title, title), bold=True, pt=st.get("section_pt"), color=accent)
+
+    def row(left, right="", bold=True, color=None, pt=None):
+        # left text, right-aligned text (dates / location) on the same line
+        p = doc.add_paragraph()
+        p.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
+        runs(p, left, bold=bold, color=color, pt=pt)
         if right:
-            paragraph.add_run("\t" + right)
+            r = p.add_run("\t" + right)
+            if st:
+                r.font.size = Pt(meta_pt)
+                r.font.color.rgb = RGBColor.from_string(muted)
 
     def details(item):
         if item.get("description"):
-            runs(doc.add_paragraph(), item["description"])
-        for bullet in item.get("bullets") or []:
-            runs(doc.add_paragraph(style="List Bullet"), bullet)
+            runs(doc.add_paragraph(), item["description"], pt=meta_pt, color=muted, italic=bool(st))
+        for b in item.get("bullets") or []:
+            if st:      # the reference uses a literal • with a hanging indent
+                p = doc.add_paragraph()
+                pf = p.paragraph_format
+                pf.left_indent, pf.first_line_indent, pf.space_after = Pt(9.7), Pt(-6.5), Pt(0.45)
+                runs(p, "• " + b)
+            else:
+                runs(doc.add_paragraph(style="List Bullet"), b)
 
-    header = data.get("header") or {}
-    name = doc.add_paragraph().add_run(header.get("name") or "")
+    header = d.get("header") or {}
+    add = doc.add_paragraph
+    if image and st.get("image") in ("left", "right"):
+        # Same header as the PDF: profile image beside the name block, on the template's side.
+        pic_w = Inches(1.25)        # the PDF's 120px
+        gap = Pt(16)
+        table = doc.add_table(rows=1, cols=2)
+        table.autofit = False
+        cells = table.rows[0].cells
+        pic_i, text_i = (0, 1) if st["image"] == "left" else (1, 0)
+        for i, w in ((pic_i, pic_w + gap), (text_i, body_width - pic_w - gap)):
+            table.columns[i].width = cells[i].width = w
+        pic_par = cells[pic_i].paragraphs[0]
+        pic_par.add_run().add_picture(io.BytesIO(image), width=pic_w)
+        if st["image"] == "right":
+            pic_par.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        cells[text_i]._tc.remove(cells[text_i].paragraphs[0]._p)
+        add = cells[text_i].add_paragraph
+
+    name = add().add_run(header.get("name") or "")
     name.bold = True
-    name.font.size = Pt(20)
+    name.font.size = Pt(st.get("name_pt", 20))
+    if st:
+        name.font.color.rgb = RGBColor.from_string(ink)
     if header.get("title"):
-        runs(doc.add_paragraph(), header["title"])
-    contact = doc.add_paragraph()
-    for index, item in enumerate(header.get("contact_items") or []):
-        if index:
-            runs(contact, " | ")
+        runs(add(), header["title"], bold=bool(st), pt=st.get("title_pt"))
+    contact = add()
+    for i, item in enumerate(header.get("contact_items") or []):
+        if i:
+            runs(contact, " | ", pt=st.get("contact_pt"), color=ink)
         if item.get("url"):
             link(contact, item.get("text") or item["url"], item["url"])
         else:
-            runs(contact, item.get("text") or "")
+            runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
 
-    if data.get("summary"):
-        runs(doc.add_paragraph(), data["summary"])
-    if data.get("skills"):
-        doc.add_heading("Skills", level=2)
-        skills = data["skills"]
+    if d.get("summary"):
+        if "Summary" in st.get("titles", {}):
+            section("Summary")
+        runs(doc.add_paragraph(), d["summary"], color=ink)
+
+    skills = d.get("skills")
+    if skills:
+        section("Skills")
         pairs = skills.items() if isinstance(skills, dict) else [(s.get("category"), s.get("items")) for s in skills]
         for label, value in pairs:
-            paragraph = doc.add_paragraph()
-            runs(paragraph, f"{label}: ", bold=True)
-            runs(paragraph, str(value or ""))
-    if data.get("experience"):
-        doc.add_heading("Experience", level=2)
-        for job in data["experience"]:
-            row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}",
-                job.get("date") or job.get("dates") or "")
-            if job.get("location"):
-                doc.add_paragraph(job["location"])
+            p = doc.add_paragraph()
+            runs(p, f"{label}: ", bold=True, pt=meta_pt)
+            runs(p, str(value or ""), pt=meta_pt)
+
+    if d.get("experience"):
+        section("Experience")
+        for job in d["experience"]:
+            date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
+            if st:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
+                runs(p, " - ".join(x for x in (job.get("title"), job.get("company")) if x), bold=True, pt=entry_pt, color=ink)
+                runs(doc.add_paragraph(), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted)
+            else:
+                row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}", date)
+                if job.get("location"):
+                    doc.add_paragraph(job["location"])
             details(job)
-    if data.get("education"):
-        doc.add_heading("Education", level=2)
-        for education in data["education"]:
-            row(education.get("school") or "", education.get("location") or "")
-            if education.get("degree"):
-                runs(doc.add_paragraph(), education["degree"])
+
+    if d.get("education"):
+        section("Education")
+        for edu in d["education"]:
+            row(edu.get("school") or "", edu.get("location") or "", color=ink)
+            if edu.get("degree"):
+                runs(doc.add_paragraph(), edu["degree"], pt=meta_pt)
+
     for key, title in (("projects", "Projects"), ("publications", "Publications")):
-        if data.get(key):
-            doc.add_heading(title, level=2)
-            for item in data[key]:
-                row(item.get("name") or item.get("title") or "")
+        if d.get(key):
+            section(title)
+            for item in d[key]:
+                row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt)
                 if item.get("url"):
                     link(doc.add_paragraph(), item["url"], item["url"])
                 details(item)
 
-    output = io.BytesIO()
-    doc.save(output)
-    return output.getvalue()
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 def _resume_download_name(resume: "Resume", db: Session) -> str:
@@ -441,6 +532,14 @@ def _resume_download_name(resume: "Resume", db: Session) -> str:
         if job_for_name and job_for_name.short_id:
             number = f"_{job_for_name.short_id}"
     return f"{header_name}_{base_name}_Resume{number}".encode("ascii", "replace").decode()
+
+
+def _profile_image_for(resume: "Resume", db: Session) -> tuple[Optional[str], bool]:
+    """Return the global image data URI and this résumé's visibility choice."""
+    setting = db.query(Setting).filter(Setting.key == "profile_image_path").first()
+    value = (resume.json_data or {}).get("profile_image_enabled", True)
+    enabled = value.lower() not in ("false", "0", "no") if isinstance(value, str) else bool(value)
+    return (setting.value if setting else None), enabled
 
 
 # Anything that already names a scheme: `tel:`, `mailto:`, `sms:`, `skype:`…
@@ -1346,17 +1445,7 @@ def preview_resume(resume_id: str, db: Session = Depends(get_db)):
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    # Query global profile image from settings
-    profile_image_setting = db.query(Setting).filter(Setting.key == "profile_image_path").first()
-    profile_image_path = profile_image_setting.value if profile_image_setting else None
-    # Convert web URL to data URI for server-side rendering (preview in browser still shows web URL)
-    # Get per-resume profile image enabled flag (defaults to True, handle both bool and string values)
-    profile_image_val = resume.json_data.get("profile_image_enabled", True) if resume.json_data else True
-    # Convert string values to boolean (in case saved as JSON string)
-    if isinstance(profile_image_val, str):
-        profile_image_enabled = profile_image_val.lower() not in ('false', '0', 'no')
-    else:
-        profile_image_enabled = bool(profile_image_val)
+    profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
     json_data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
     html = _render_html(json_data, resume.template, resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
@@ -1388,17 +1477,7 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
     bottom_margin_in = 0.4 if footer_text else 0
     bottom_margin = f"{bottom_margin_in}in" if footer_text else "0"
 
-    # Query global profile image from settings (stored as base64 data URI)
-    profile_image_setting = db.query(Setting).filter(Setting.key == "profile_image_path").first()
-    profile_image_path = profile_image_setting.value if profile_image_setting else None
-
-    # Get per-resume profile image enabled flag (defaults to True, handle both bool and string values)
-    profile_image_val = resume.json_data.get("profile_image_enabled", True) if resume.json_data else True
-    # Convert string values to boolean (in case saved as JSON string)
-    if isinstance(profile_image_val, str):
-        profile_image_enabled = profile_image_val.lower() not in ('false', '0', 'no')
-    else:
-        profile_image_enabled = bool(profile_image_val)
+    profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
     html = _render_html(pdf_data, tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
 
@@ -1441,18 +1520,32 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
 
 @router.get("/{resume_id}/docx")
 def export_docx(resume_id: str, template: Optional[str] = None, format: Optional[str] = None, db: Session = Depends(get_db)):
-    """Export editable Word text; the template parameter is accepted for parity with PDF."""
+    """Export editable Word text using Professional styling when the template supplies it."""
     resume = db.query(Resume).filter(Resume.id == resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
+    selected_template = validate_template_name(template, TEMPLATES_DIR) if template is not None else resume.template
     fmt = format or resume.page_format or "letter"
     json_data = resume.json_data or {}
     data = _rewrite_urls_with_tracers(json_data, str(resume.id), db)
     job_for_footer = db.query(Job).filter(Job.id == resume.job_id).first() if resume.job_id else None
     footer_text = _tailored_resume_footer_text(resume, job_for_footer) if json_data.get("footer_enabled", True) is not False else ""
+    style = next((item.get("docx") for item in _discover_templates() if item["id"] == selected_template), None)
     try:
-        content = _build_docx(data, fmt, footer_text)
+        image = None
+        if style and style.get("image"):
+            path, enabled = _profile_image_for(resume, db)
+            if enabled and path and path.startswith("data:image/") and "," in path:
+                try:
+                    candidate = base64.b64decode(path.split(",", 1)[1], validate=True)
+                    from PIL import Image
+                    with Image.open(io.BytesIO(candidate)) as stored_image:
+                        stored_image.verify()
+                    image = candidate
+                except (OSError, ValueError):
+                    logger.warning("Ignoring invalid stored profile image for DOCX export")
+        content = _build_docx(data, fmt, style, image, footer_text)
     except Exception as error:
         logger.error("DOCX generation failed: %s", error)
         raise HTTPException(status_code=500, detail="DOCX generation failed")
