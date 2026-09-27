@@ -1,6 +1,7 @@
 """Professional Word export styling and image placement."""
 import re
 
+from backend.models.db import Setting
 from backend.tests.test_resume_docx import DATA, _fetch, _resume
 
 # ── Professional templates: template-styled Word file ───────────────────────────
@@ -62,6 +63,13 @@ def test_professional_right_template_puts_the_profile_image_right_of_the_name(ap
 def test_professional_docx_has_no_image_when_disabled_or_unset(api_client, test_db):
     d = _prof(api_client, test_db, image=True, data={**DATA, "profile_image_enabled": False})
     assert len(d.inline_shapes) == 0 and not d.tables and d.paragraphs[0].text == "Dana Okonkwo"
+
+
+def test_professional_docx_ignores_invalid_stored_profile_image(api_client, test_db):
+    test_db.add(Setting(key="profile_image_path", value="data:image/png;base64,bm90LWFuLWltYWdl"))
+    test_db.commit()
+    d = _prof(api_client, test_db)
+    assert len(d.inline_shapes) == 0 and not d.tables
 
 
 def test_professional_docx_content_is_larger_than_headers_stay_put(api_client, test_db):

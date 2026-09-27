@@ -113,6 +113,19 @@ def test_docx_unknown_resume_is_404(api_client, test_db):
     assert api_client.get(f"/api/resumes/{uuid.uuid4()}/docx").status_code == 404
 
 
+def test_docx_unknown_template_is_422(api_client, test_db):
+    resume = _resume(test_db)
+    response = api_client.get(f"/api/resumes/{resume.id}/docx?template=does-not-exist")
+    assert response.status_code == 422
+
+
+def test_docx_missing_stored_template_falls_back_to_generic(api_client, test_db):
+    resume = _resume(test_db, template="professional")
+    response, document = _fetch(api_client, resume)
+    assert response.status_code == 200
+    assert document.styles["Normal"].font.name != "Arial"
+
+
 def test_docx_reads_legacy_dates_key(api_client, test_db):
     legacy = {**DATA, "experience": [{"title": "PM", "company": "Acme", "dates": "1999 - 2001", "bullets": []}]}
     _, document = _fetch(api_client, _resume(test_db, data=legacy))

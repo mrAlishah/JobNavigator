@@ -1525,7 +1525,7 @@ def export_docx(resume_id: str, template: Optional[str] = None, format: Optional
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    selected_template = template or resume.template
+    selected_template = validate_template_name(template, TEMPLATES_DIR) if template is not None else resume.template
     fmt = format or resume.page_format or "letter"
     json_data = resume.json_data or {}
     data = _rewrite_urls_with_tracers(json_data, str(resume.id), db)
@@ -1537,7 +1537,14 @@ def export_docx(resume_id: str, template: Optional[str] = None, format: Optional
         if style and style.get("image"):
             path, enabled = _profile_image_for(resume, db)
             if enabled and path and path.startswith("data:image/") and "," in path:
-                image = base64.b64decode(path.split(",", 1)[1], validate=True)
+                try:
+                    candidate = base64.b64decode(path.split(",", 1)[1], validate=True)
+                    from PIL import Image
+                    with Image.open(io.BytesIO(candidate)) as stored_image:
+                        stored_image.verify()
+                    image = candidate
+                except (OSError, ValueError):
+                    logger.warning("Ignoring invalid stored profile image for DOCX export")
         content = _build_docx(data, fmt, style, image, footer_text)
     except Exception as error:
         logger.error("DOCX generation failed: %s", error)
