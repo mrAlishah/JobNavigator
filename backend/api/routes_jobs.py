@@ -4,8 +4,11 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, text, func
-from backend.models.db import get_db, Job, find_company_by_name
+from sqlalchemy import desc, asc, text, func, or_
+from sqlalchemy.exc import IntegrityError
+from backend.models.db import (
+    get_db, Job, Resume, CoverLetter, Application, TracerLink, LlmCallLog, find_company_by_name,
+)
 from backend.api._input import str_field, uuid_filter
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
 from backend.analyzer.salary_extractor import apply_salary_to_job
@@ -956,6 +959,68 @@ def bulk_update_jobs(body: dict, db: Session = Depends(get_db)):
             not_found.append(str(job_id))
     db.commit()
     return {"updated": count, "not_found": not_found}
+
+
+def _delete_job_cascade(db: Session, job: Job) -> None:
+    """Delete a job plus what was created for it: tailored résumés (and their copies), cover letters, applications (interviews cascade) and the tracer links only they used. Base résumés and LLM cost logs outlive the job, unlinked. Callers commit."""
+    tailored = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_base == False).all()  # noqa: E712
+    resumes = {r.id: r for r in tailored}
+    for child in db.query(Resume).filter(Resume.parent_id.in_(list(resumes))).all() if resumes else []:
+        resumes[child.id] = child
+    letters = {c.id: c for c in db.query(CoverLetter).filter(CoverLetter.job_id == job.id).all()}
+
+    # A link shared with a document that survives keeps its row; only our side is released.
+    for link in db.query(TracerLink).filter(
+        or_(TracerLink.resume_id.in_(list(resumes)), TracerLink.cover_letter_id.in_(list(letters)))
+    ).all():
+        resume_gone = link.resume_id is None or link.resume_id in resumes
+        letter_gone = link.cover_letter_id is None or link.cover_letter_id in letters
+        if resume_gone and letter_gone:
+            db.delete(link)
+        elif link.resume_id in resumes:
+            link.resume_id = None
+        else:
+            link.cover_letter_id = None
+
+    for doc in [*letters.values(), *resumes.values()]:
+        db.delete(doc)
+    for app in db.query(Application).filter(Application.job_id == job.id).all():
+        db.delete(app)
+    # SQLite does not enforce ON DELETE SET NULL, so unlink survivors explicitly.
+    db.query(Resume).filter(Resume.job_id == job.id).update({"job_id": None}, synchronize_session=False)
+    db.query(LlmCallLog).filter(LlmCallLog.job_id == job.id).update({"job_id": None}, synchronize_session=False)
+    db.flush()   # applications must be gone before the job, or Job.applications tries to NULL a NOT NULL FK
+    db.delete(job)
+
+
+@router.post("/bulk-delete")
+def bulk_delete_jobs(body: dict, db: Session = Depends(get_db)):
+    """Delete jobs and everything created for them; returns {"deleted": count, "not_found": [<ids>]}."""
+    import uuid as _uuid
+    job_ids = body.get("job_ids") or []
+    if not isinstance(job_ids, (list, tuple)):
+        raise HTTPException(status_code=422, detail="job_ids must be a list")
+    deleted = 0
+    not_found: list[str] = []
+    for raw in job_ids:
+        try:
+            parsed = _uuid.UUID(str(raw))
+        except (ValueError, AttributeError, TypeError):
+            not_found.append(str(raw))
+            continue
+        job = db.query(Job).filter(Job.id == parsed).first()
+        if job is None:
+            not_found.append(str(raw))
+            continue
+        _delete_job_cascade(db, job)
+        deleted += 1
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"bulk_delete_jobs blocked by a foreign key: {e}")
+        raise HTTPException(status_code=409, detail="Could not delete these jobs — another record still references one") from e
+    return {"deleted": deleted, "not_found": not_found}
 
 
 @router.get("/{job_id}")

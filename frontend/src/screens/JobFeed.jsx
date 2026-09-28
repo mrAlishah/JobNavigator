@@ -576,6 +576,28 @@ export default function V2JobFeed() {
       pushToast({ kind: 'success', msg: `Ignoring "${name}" — ${n} job${n === 1 ? '' : 's'} hidden` })
     } catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Couldn't ignore "${name}"` }); fetchJobs() }
   }, [fetchJobs, pushToast])
+  // Delete one job or a selection, with everything made for it (tailored résumés, cover letters, applications).
+  // Not undoable, so it confirms first and only touches the list once the server has answered.
+  const doDeleteJobs = useCallback(async (ids) => {
+    try {
+      await api.post('/jobs/bulk-delete', { job_ids: ids })
+      setChecked(new Set())
+      patchLocalMany(ids, { status: 'deleted' })   // no row has this status, so leavesView() drops them and advances the panel
+      refreshStats()
+      pushToast({ kind: 'success', msg: `Deleted ${ids.length} job${ids.length === 1 ? '' : 's'}` })
+    } catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Couldn't delete ${ids.length} job${ids.length === 1 ? '' : 's'}` }); fetchJobs() }
+  }, [patchLocalMany, refreshStats, pushToast, fetchJobs])
+  const deleteJobs = useCallback((list) => {
+    const n = list.length
+    if (!n) return
+    const applied = list.filter((x) => x.status === 'applied').length
+    setConfirm({
+      title: n === 1 ? `Delete “${list[0].title}”?` : `Delete ${n} jobs?`,
+      body: `This permanently deletes ${n === 1 ? 'the job' : 'these jobs'} with their tailored résumés, cover letters and application history${applied ? ` (${applied} applied)` : ''}. Base résumés are kept. This can't be undone.`,
+      label: 'Delete', danger: true,
+      onConfirm: () => { setConfirm(null); doDeleteJobs(list.map((x) => x.id)) },
+    })
+  }, [doDeleteJobs])
   // One optimistic write for "this job now has a run in flight": both the plain
   // in_flight list the card reads and the in_flight_detail the band and tabs
   // read, on the row AND on the open detail, plus the watch that polls it.
@@ -1214,6 +1236,8 @@ export default function V2JobFeed() {
               {/* ui: keep — RAIL_BTN, as above */}
               <div onClick={bulkScore} className="v2-onrail v2-ctl" style={RAIL_BTN}>Score</div>
               <div onClick={() => setPicker({ mode: 'tailor', jobs: jobs.filter((j) => checked.has(j.id)) })} className="v2-onrail v2-ctl" style={{ ...RAIL_BTN, gap: 5 }}><span style={{ color: 'var(--rail-accent)' }}>✦</span>Tailor</div>
+              {/* ui: keep — RAIL_BTN, as above */}
+              <div onClick={() => deleteJobs(jobs.filter((j) => checked.has(j.id)))} className="v2-onrail v2-ctl" style={RAIL_BTN}>Delete</div>
               <div onClick={() => setChecked(new Set())} className="v2-onrail" style={{ width: 27, height: 27, borderRadius: 'var(--radius-control)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--on-rail-dim)', cursor: 'pointer' }}>✕</div>
             </div>
           )}
@@ -1324,7 +1348,7 @@ export default function V2JobFeed() {
                       <div className="v2-rail-copy v2-rail-cell" title="More" onClick={(ev) => {
                         if (rowMenu?.id === j.id) { setRowMenu(null); return }
                         const r = ev.currentTarget.getBoundingClientRect()
-                        const up = r.bottom + 236 > window.innerHeight
+                        const up = r.bottom + 270 > window.innerHeight
                         setRowMenu({ id: j.id, left: Math.max(8, r.right - 228), top: up ? undefined : r.bottom + 3, bottom: up ? window.innerHeight - r.top + 3 : undefined })
                       }} style={{ flex: 1, fontSize: 12, color: rowMenu?.id === j.id ? 'var(--text)' : 'var(--muted)', background: rowMenu?.id === j.id ? 'var(--surface-2)' : 'transparent' }}>⋯</div>
                       {rowMenu?.id === j.id && (
@@ -1337,6 +1361,7 @@ export default function V2JobFeed() {
                             ))}
                             <MenuItem danger onClick={() => { setRowMenu(null); ignoreCompany(j) }}
                               style={{ display: j.company ? 'flex' : 'none' }}>Ignore {j.company} everywhere</MenuItem>
+                            <MenuItem danger onClick={() => { setRowMenu(null); deleteJobs([j]) }}>Delete job…</MenuItem>
                           </Menu>
                         </>
                       )}
