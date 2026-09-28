@@ -144,7 +144,24 @@ export function SectionShell({ name, count, open, onToggle, meta, children }) {
 
 // Renders the right section editor for a SECTION_ORDER name. Tailoring props are
 // optional — Persona passes none, so nothing renders as changed.
-export function SectionEditor({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage }) {
+const TITLED_SECTIONS = new Set(['Summary', 'Skills', 'Experience', 'Education', 'Projects', 'Publications'])
+
+export function SectionEditor(props) {
+  if (!TITLED_SECTIONS.has(props.name)) return <SectionBody {...props} />
+  const { data, mutate } = props
+  const key = props.name.toLowerCase()
+  // An empty title means "keep the template's own heading". Written with mutate, not setField,
+  // because setField ignores a path whose parent (`section_titles`) doesn't exist yet.
+  return <>
+    <div style={{ paddingTop: 10 }}>
+      <MicroField label="Header title" value={data.section_titles?.[key]} placeholder="Template default"
+        onChange={(v) => mutate((d) => { d.section_titles = { ...d.section_titles, [key]: v } })} />
+    </div>
+    <SectionBody {...props} />
+  </>
+}
+
+function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage }) {
   switch (name) {
     case 'Header': return <HeaderEditor data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Summary': return <SummaryEditor pageHint={pageHint} data={data} setField={setField} baseSummary={baseData?.summary} />

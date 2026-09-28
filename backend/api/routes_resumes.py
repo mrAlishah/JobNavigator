@@ -276,6 +276,15 @@ def _load_template_fonts(fonts_dir_str: str) -> dict:
     return fonts
 
 
+def _section_titles(json_data: Optional[dict]) -> dict:
+    """User-chosen section headings from `json_data["section_titles"]`: only non-blank strings
+    survive, stripped. Anything else falls back to the template default."""
+    raw = (json_data or {}).get("section_titles")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: v.strip() for k, v in raw.items() if isinstance(v, str) and v.strip()}
+
+
 def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0, profile_image_path: Optional[str] = None, profile_image_enabled: bool = True) -> str:
     """Render a resume to HTML using its Jinja2 template.
 
@@ -302,7 +311,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
 
     import re as _re
     env = Environment(loader=FileSystemLoader(str(template_dir)))
-    from markupsafe import Markup
+    from markupsafe import Markup, escape
     env.filters['bold'] = lambda text: Markup(_re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', _re.sub(r'[<>&]', lambda m: {'<':'&lt;','>':'&gt;','&':'&amp;'}[m.group()], text or '')))
     template = env.get_template("template.html.j2")
 
@@ -312,6 +321,11 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     # json_data may carry internal metadata under "_"-prefixed keys (_tailor_context,
     # _score) that are never résumé content — keep them out of the template namespace so they can't render or collide with a template global.
     content = {k: v for k, v in (json_data or {}).items() if not str(k).startswith("_")}
+    # A template's default headings live in its meta.json (docx.titles, shared with the Word export);
+    # the resume's own section_titles win. Templates without them keep their built-in headings.
+    meta = next((t for t in _discover_templates() if t["id"] == template_name), {})
+    defaults = {k.lower(): v for k, v in ((meta.get("docx") or {}).get("titles") or {}).items()}
+    section_titles = {k: escape(v) for k, v in {**defaults, **_section_titles(json_data)}.items()}
     # dict(content, ...) so the explicit values win over a same-named key stored in json_data
     # (the editor saves profile_image_enabled there); `**content, k=v` raises on the duplicate.
     html = template.render(**dict(
@@ -322,6 +336,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
         footer_reserved_in=footer_reserved_in,
         profile_image_path=profile_image_path,
         profile_image_enabled=profile_image_enabled,
+        section_titles=section_titles,
     ))
     return html
 
@@ -411,9 +426,12 @@ def _build_docx(
         h.append(r)
         par._p.append(h)
 
+    custom_titles = _section_titles(d)
+
     def section(title):
+        custom = custom_titles.get(title.lower())
         if not st:
-            doc.add_heading(title, level=2)
+            doc.add_heading(custom or title, level=2)
             return
         p = doc.add_paragraph()
         rule, bottom = OxmlElement("w:pBdr"), OxmlElement("w:bottom")     # first, so python-docx slots the other pPr children in schema order
@@ -423,7 +441,7 @@ def _build_docx(
         p._p.get_or_add_pPr().append(rule)
         p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(4.2), Pt(2.3)
         p.paragraph_format.keep_with_next = True
-        runs(p, st["titles"].get(title, title), bold=True, pt=st.get("section_pt"), color=accent)
+        runs(p, custom or st["titles"].get(title, title), bold=True, pt=st.get("section_pt"), color=accent)
 
     def row(left, right="", bold=True, color=None, pt=None):
         # left text, right-aligned text (dates / location) on the same line
@@ -484,7 +502,7 @@ def _build_docx(
             runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
 
     if d.get("summary"):
-        if "Summary" in st.get("titles", {}):
+        if "Summary" in st.get("titles", {}) or "summary" in custom_titles:
             section("Summary")
         runs(doc.add_paragraph(), d["summary"], color=ink)
 

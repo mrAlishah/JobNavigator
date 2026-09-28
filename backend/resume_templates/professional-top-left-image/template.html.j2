@@ -178,7 +178,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Summary -->
   {% if summary %}
   <div class="section">
-    <div class="section-title">PROFESSIONAL SUMMARY</div>
+    <div class="section-title">{{ section_titles.summary }}</div>
     <div class="summary-text">{{ summary | bold }}</div>
   </div>
   {% endif %}
@@ -186,7 +186,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Skills -->
   {% if skills %}
   <div class="section">
-    <div class="section-title">CORE SKILLS</div>
+    <div class="section-title">{{ section_titles.skills }}</div>
     {% for label, value in skills.items() %}
     <div class="skill-line"><span class="skill-label">{{ label }}:</span> {{ value }}</div>
     {% endfor %}
@@ -196,7 +196,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Experience -->
   {% if experience %}
   <div class="section">
-    <div class="section-title">PROFESSIONAL EXPERIENCE</div>
+    <div class="section-title">{{ section_titles.experience }}</div>
     {% for job in experience %}
     <div class="entry">
       <div class="entry-title">{{ job.title }}{% if job.title and job.company %} - {% endif %}{{ job.company }}</div>
@@ -221,7 +221,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Education -->
   {% if education %}
   <div class="section">
-    <div class="section-title">EDUCATION &amp; TRAINING</div>
+    <div class="section-title">{{ section_titles.education }}</div>
     {% for edu in education %}
     <div class="edu-entry">
       <div class="edu-row">
@@ -239,7 +239,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Projects -->
   {% if projects %}
   <div class="section">
-    <div class="section-title">PROJECTS</div>
+    <div class="section-title">{{ section_titles.projects }}</div>
     {% for project in projects %}
     <div class="entry">
       <div class="entry-name">{{ project.name or project.title }}</div>
@@ -264,7 +264,7 @@ ul.bullets li::before { content: '• '; }
   <!-- Publications -->
   {% if publications %}
   <div class="section">
-    <div class="section-title">PUBLICATIONS</div>
+    <div class="section-title">{{ section_titles.publications }}</div>
     {% for pub in publications %}
     <div class="entry">
       <div class="entry-name">{{ pub.name or pub.title }}</div>

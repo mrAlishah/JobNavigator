@@ -227,14 +227,14 @@ ul.bullets li {
 
   {% if summary %}
   <div class="section" style="margin-top: 0">
-    <div class="section-title">Summary</div>
+    <div class="section-title">{{ section_titles.summary or 'Summary' }}</div>
     <div class="summary-text">{{ summary }}</div>
   </div>
   {% endif %}
 
   {% if experience %}
   <div class="section">
-    <div class="section-title">Experience</div>
+    <div class="section-title">{{ section_titles.experience or 'Experience' }}</div>
     {% for job in experience %}
     <div class="entry">
       <div class="entry-row">
@@ -262,7 +262,7 @@ ul.bullets li {
 
   {% if skills %}
   <div class="section">
-    <div class="section-title">Skills</div>
+    <div class="section-title">{{ section_titles.skills or 'Skills' }}</div>
     {% if skills is mapping %}
       {% for label, value in skills.items() %}
       <div class="skill-line"><span class="skill-label">{{ label }}:</span> {{ value }}</div>
@@ -277,7 +277,7 @@ ul.bullets li {
 
   {% if education %}
   <div class="section">
-    <div class="section-title">Education</div>
+    <div class="section-title">{{ section_titles.education or 'Education' }}</div>
     {% for edu in education %}
     <div class="edu-entry">
       <div class="edu-row">
@@ -294,7 +294,7 @@ ul.bullets li {
 
   {% if projects %}
   <div class="section">
-    <div class="section-title">Projects</div>
+    <div class="section-title">{{ section_titles.projects or 'Projects' }}</div>
     {% for project in projects %}
     <div class="entry">
       <div class="entry-primary">{{ project.name or project.title }}</div>
@@ -312,7 +312,7 @@ ul.bullets li {
 
   {% if publications %}
   <div class="section">
-    <div class="section-title">Publications</div>
+    <div class="section-title">{{ section_titles.publications or 'Publications' }}</div>
     {% for pub in publications %}
     <div class="entry">
       <div class="entry-primary">{{ pub.name or pub.title }}</div>
