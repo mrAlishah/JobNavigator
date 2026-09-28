@@ -62,6 +62,7 @@ const MODE_OPTIONS = [
 // /monitor/active carries every background job; only POST /searches/{id}/run
 // tags its run with job_type 'search_run' (routes_searches.py) — filter on that.
 const isSearchRun = (r) => r?.job_type === 'search_run'
+const isScrapeAll = (r) => r?.job_type === 'scrape_all'
 const EXT_MODES = ['linkedin_extension', 'extension']
 const isExt = (m) => EXT_MODES.includes(m)
 const TESTABLE = ['keyword', 'levels_fyi', 'linkedin_personal', 'jobright', 'freehire']
@@ -370,6 +371,7 @@ export default function Searches() {
   const [searches, setSearches] = useState([])
   const [downMap, setDownMap] = useState({})
   const [running, setRunning] = useState({})
+  const [scrapingAll, setScrapingAll] = useState(false)
   const [editing, setEditing] = useState(null)
   const [menuFor, setMenuFor] = useState(null)
   const [draft, setDraft] = useState(null)
@@ -410,21 +412,26 @@ export default function Searches() {
   const { ready } = useSettled([
     () => load(),
     () => loadAux(),
-    () => api.get('/monitor/active').then(({ data }) => { const m = {}; (data || []).filter(isSearchRun).forEach((r) => { if (r.scope_key) m[r.scope_key] = true }); setRunning(m) }).catch(() => { /* silent: poller — the interval below retries */ }),
+    () => api.get('/monitor/active').then(({ data }) => { const m = {}; (data || []).filter(isSearchRun).forEach((r) => { if (r.scope_key) m[r.scope_key] = true }); setRunning(m); setScrapingAll((data || []).some(isScrapeAll)) }).catch(() => { /* silent: poller — the interval below retries */ }),
   ], reload)
 
   // One interval for the life of the screen — state and callbacks are read via
   // refs so a fresh `running`/`load` value each tick doesn't tear it down.
   const runningRef = useRef(running)
   const cbRef = useRef({ load, loadAux })
+  const scrapingAllRef = useRef(scrapingAll)
   useEffect(() => { runningRef.current = running }, [running])
+  useEffect(() => { scrapingAllRef.current = scrapingAll }, [scrapingAll])
   useEffect(() => { cbRef.current = { load, loadAux } }, [load, loadAux])
   useEffect(() => {
     const h = setInterval(async () => {
-      if (!Object.keys(runningRef.current).length) return
+      if (!Object.keys(runningRef.current).length && !scrapingAllRef.current) return
       try {
         const { data } = await api.get('/monitor/active')
         if (!mounted.current) return
+        const sa = (data || []).some(isScrapeAll)
+        if (scrapingAllRef.current && !sa) { cbRef.current.load(); cbRef.current.loadAux() }
+        setScrapingAll(sa)
         const m = {}; (data || []).filter(isSearchRun).forEach((r) => { if (r.scope_key) m[r.scope_key] = true })
         setRunning((prev) => {
           const pk = Object.keys(prev)
@@ -550,6 +557,18 @@ export default function Searches() {
       setRunning((m) => { const n = { ...m }; delete n[s.id]; return n })
     }
   }
+  const scrapeAll = async () => {
+    setScrapingAll(true)
+    try {
+      await api.post('/scrape/run-all')
+      pushToast({ kind: 'progress', msg: 'Scraping all active searches — new jobs will appear in the Jobs feed' })
+    } catch (e) {
+      // 409: a scrape_all is genuinely in flight — keep the disabled state, the poll clears it.
+      if (e.response?.status === 409) { pushToast({ kind: 'progress', msg: 'A full scrape is already running' }); return }
+      fail(e, 'Could not start the full scrape')
+      setScrapingAll(false)
+    }
+  }
   // The styled dialog every other v2 destructive action uses.
   const remove = (s) => {
     setMenuFor(null)
@@ -624,6 +643,7 @@ export default function Searches() {
           <span style={{ fontSize: 13, lineHeight: '20px', color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...subStyle }}>{countLine}</span>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Button onClick={scrapeAll} disabled={scrapingAll}>{scrapingAll ? 'Scraping…' : 'Scrape all'}</Button>
           <Button onClick={() => { setNewOpen((v) => !v); setEditing(null); setMenuFor(null) }}>+ New search</Button>
         </div>
       </HeaderRow>
