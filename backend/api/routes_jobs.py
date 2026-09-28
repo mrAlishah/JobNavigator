@@ -1,5 +1,6 @@
 """Job listing and management endpoints."""
 import logging
+import uuid
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
@@ -962,11 +963,9 @@ def bulk_update_jobs(body: dict, db: Session = Depends(get_db)):
 
 
 def _delete_job_cascade(db: Session, job: Job) -> None:
-    """Delete a job plus what was created for it: tailored résumés (and their copies), cover letters, applications (interviews cascade) and the tracer links only they used. Base résumés and LLM cost logs outlive the job, unlinked. Callers commit."""
-    tailored = db.query(Resume).filter(Resume.job_id == job.id, Resume.is_base == False).all()  # noqa: E712
-    resumes = {r.id: r for r in tailored}
-    for child in db.query(Resume).filter(Resume.parent_id.in_(list(resumes))).all() if resumes else []:
-        resumes[child.id] = child
+    """Delete a job plus what was created for it: tailored résumés (and their copies), cover letters, applications (interviews cascade) and the tracer links only they used. Base résumés, LLM cost logs and job runs outlive the job, unlinked. Callers commit."""
+    resumes = {r.id: r for r in db.query(Resume).filter(Resume.job_id == job.id, Resume.is_base == False)}  # noqa: E712
+    resumes.update({c.id: c for c in db.query(Resume).filter(Resume.parent_id.in_(list(resumes)))})
     letters = {c.id: c for c in db.query(CoverLetter).filter(CoverLetter.job_id == job.id).all()}
 
     # A link shared with a document that survives keeps its row; only our side is released.
@@ -997,7 +996,6 @@ def _delete_job_cascade(db: Session, job: Job) -> None:
 @router.post("/bulk-delete")
 def bulk_delete_jobs(body: dict, db: Session = Depends(get_db)):
     """Delete jobs and everything created for them; returns {"deleted": count, "not_found": [<ids>]}."""
-    import uuid as _uuid
     job_ids = body.get("job_ids") or []
     if not isinstance(job_ids, (list, tuple)):
         raise HTTPException(status_code=422, detail="job_ids must be a list")
@@ -1005,7 +1003,7 @@ def bulk_delete_jobs(body: dict, db: Session = Depends(get_db)):
     not_found: list[str] = []
     for raw in job_ids:
         try:
-            parsed = _uuid.UUID(str(raw))
+            parsed = uuid.UUID(str(raw))
         except (ValueError, AttributeError, TypeError):
             not_found.append(str(raw))
             continue
