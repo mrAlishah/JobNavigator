@@ -3,7 +3,7 @@ import uuid
 
 from backend.api.routes_jobs import bulk_delete_jobs
 from backend.models.db import (
-    Application, CoverLetter, Interview, Job, JobLocation, LlmCallLog, Resume, TracerLink,
+    Application, CoverLetter, Interview, Job, JobLocation, JobRun, LlmCallLog, Resume, TracerLink,
 )
 
 JOB = uuid.UUID("4d444444-44d4-44d4-8444-444444444444")
@@ -32,6 +32,7 @@ def _dependents(db, jid, tag):
     db.add(Interview(application_id=app.id, what="screen"))
     db.add(JobLocation(job_id=jid, country="US", is_primary=True))
     db.add(LlmCallLog(purpose="tailor", job_id=jid))
+    db.add(JobRun(job_type="tailor_resume", trigger="manual", target_job_id=jid))
 
 
 def _seed(db):
@@ -52,6 +53,8 @@ def test_deletes_job_and_every_dependent(test_db):
     assert test_db.query(Job).filter(Job.id == JOB).count() == 0
     for model in (Resume, CoverLetter, Application, JobLocation, LlmCallLog):
         assert test_db.query(model).filter(model.job_id == JOB).count() == 0, model
+    assert test_db.query(JobRun).filter(JobRun.target_job_id == JOB).count() == 0   # unlinked, the run row is kept
+    assert test_db.query(JobRun).count() == 2
     assert test_db.query(Interview).count() == 1        # OTHER's only
     assert test_db.query(TracerLink).count() == 1       # OTHER's only
 

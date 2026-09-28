@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc, asc, text, func, or_
 from sqlalchemy.exc import IntegrityError
 from backend.models.db import (
-    get_db, Job, Resume, CoverLetter, Application, TracerLink, LlmCallLog, find_company_by_name,
+    get_db, Job, Resume, CoverLetter, Application, TracerLink, LlmCallLog, JobRun, find_company_by_name,
 )
 from backend.api._input import str_field, uuid_filter
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
@@ -989,6 +989,7 @@ def _delete_job_cascade(db: Session, job: Job) -> None:
     # SQLite does not enforce ON DELETE SET NULL, so unlink survivors explicitly.
     db.query(Resume).filter(Resume.job_id == job.id).update({"job_id": None}, synchronize_session=False)
     db.query(LlmCallLog).filter(LlmCallLog.job_id == job.id).update({"job_id": None}, synchronize_session=False)
+    db.query(JobRun).filter(JobRun.target_job_id == job.id).update({"target_job_id": None}, synchronize_session=False)
     db.flush()   # applications must be gone before the job, or Job.applications tries to NULL a NOT NULL FK
     db.delete(job)
 
