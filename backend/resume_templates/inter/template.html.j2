@@ -187,7 +187,7 @@ ul.bullets li {
   <!-- Summary -->
   {% if summary %}
   <div class="section">
-    <div class="section-title">Summary</div>
+    <div class="section-title">{{ section_titles.summary or 'Summary' }}</div>
     <div class="summary-text">{{ summary }}</div>
   </div>
   {% endif %}
@@ -195,7 +195,7 @@ ul.bullets li {
   <!-- Experience -->
   {% if experience %}
   <div class="section">
-    <div class="section-title">Experience</div>
+    <div class="section-title">{{ section_titles.experience or 'Experience' }}</div>
     {% for job in experience %}
     <div class="entry">
       <div class="entry-row">
@@ -224,7 +224,7 @@ ul.bullets li {
   <!-- Skills -->
   {% if skills %}
   <div class="section">
-    <div class="section-title">Skills</div>
+    <div class="section-title">{{ section_titles.skills or 'Skills' }}</div>
     {% for label, value in skills.items() %}
     <div class="skill-line"><span class="skill-label">{{ label }}:</span> {{ value }}</div>
     {% endfor %}
@@ -234,7 +234,7 @@ ul.bullets li {
   <!-- Education -->
   {% if education %}
   <div class="section">
-    <div class="section-title">Education</div>
+    <div class="section-title">{{ section_titles.education or 'Education' }}</div>
     {% for edu in education %}
     <div class="edu-entry">
       <div class="edu-row">
@@ -252,7 +252,7 @@ ul.bullets li {
   <!-- Projects -->
   {% if projects %}
   <div class="section">
-    <div class="section-title">Projects</div>
+    <div class="section-title">{{ section_titles.projects or 'Projects' }}</div>
     {% for project in projects %}
     <div class="entry">
       <div class="entry-name">{{ project.name or project.title }}</div>
@@ -277,7 +277,7 @@ ul.bullets li {
   <!-- Publications -->
   {% if publications %}
   <div class="section">
-    <div class="section-title">Publications</div>
+    <div class="section-title">{{ section_titles.publications or 'Publications' }}</div>
     {% for pub in publications %}
     <div class="entry">
       <div class="entry-name">{{ pub.name or pub.title }}</div>
