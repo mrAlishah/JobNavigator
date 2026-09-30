@@ -22,22 +22,35 @@ def _phase(phase: str, detail: str = "") -> None:
 
 
 def _creds():
+    """(email, password, missing-message, use_mock) for the account the refresh signs in with.
+    `linkedin_use_mock_account` picks the mock account or the personal one; unset, it
+    follows whether a mock email exists."""
     from backend.models.db import SessionLocal, Setting
     db = SessionLocal()
     try:
         def g(k):
             r = db.query(Setting).filter(Setting.key == k).first()
             return (r.value if r else "") or ""
-        return g("linkedin_mock_email").strip(), g("linkedin_mock_password").strip()
+        switch = g("linkedin_use_mock_account").strip().lower()
+        if (switch or ("true" if g("linkedin_mock_email").strip() else "false")) == "true":
+            return (g("linkedin_mock_email").strip(), g("linkedin_mock_password").strip(),
+                    "Mock account email/password are not set. Set them, or switch off "
+                    "'Use a mock account' to sign in with the personal account.", True)
+        return (g("linkedin_email").strip(), g("linkedin_password").strip(),
+                "Personal email/password are not set.", False)
     finally:
         db.close()
 
 
-async def _login_and_save(email, password) -> int:
+async def _login_and_save(email, password, fresh=False) -> int:
+    """`fresh` drops the cookies that `_get_linkedin_browser` loads from the personal
+    scraper. Otherwise /login redirects to that feed and the personal session is saved."""
     from backend.scraper.sources import linkedin_personal as lp
     pw = browser = None
     try:
         pw, browser, context, page = await lp._get_linkedin_browser()
+        if fresh:
+            await context.clear_cookies()
         await page.goto("https://www.linkedin.com/login",
                         wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(2)
@@ -90,9 +103,9 @@ async def _solve_pin(page) -> bool:
         return False
     if os.path.exists(PIN_FILE):
         os.remove(PIN_FILE)
-    print(f"CHECKPOINT: LinkedIn emailed a PIN to the mock account. Drop the 6 "
+    print(f"CHECKPOINT: LinkedIn emailed a PIN to the account. Drop the 6 "
           f"digits into {PIN_FILE} (waiting up to 300s)...", flush=True)
-    _phase("awaiting_pin", "LinkedIn emailed a PIN to the mock account.")
+    _phase("awaiting_pin", "LinkedIn emailed a PIN to the account's inbox.")
     pin = None
     for _ in range(100):
         if os.path.exists(PIN_FILE):
@@ -122,13 +135,13 @@ async def _solve_pin(page) -> bool:
 
 async def run_refresh() -> int:
     """Entry point for the Settings row: same flow as the CLI, but keeps STATE updated so the UI can follow along."""
-    email, password = _creds()
+    email, password, missing, use_mock = _creds()
     if not email or not password:
-        _phase("failed", "Mock account email/password are not set.")
+        _phase("failed", missing)
         return 2
     _phase("running", "Signing in as " + email)
     try:
-        code = await _login_and_save(email, password)
+        code = await _login_and_save(email, password, fresh=use_mock)
     except Exception as e:  # noqa: BLE001 - surfaced to the UI verbatim
         _phase("failed", str(e)[:200])
         return 1
@@ -138,12 +151,12 @@ async def run_refresh() -> int:
 
 
 def main() -> int:
-    email, password = _creds()
+    email, password, missing, use_mock = _creds()
     if not email or not password:
-        print("linkedin_mock_email / linkedin_mock_password not set.")
+        print(missing)
         return 2
     print(f"Logging in as {email} via Playwright...", flush=True)
-    return asyncio.run(_login_and_save(email, password))
+    return asyncio.run(_login_and_save(email, password, fresh=use_mock))
 
 
 if __name__ == "__main__":

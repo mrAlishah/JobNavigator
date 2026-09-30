@@ -489,9 +489,12 @@ export default function Settings() {
         B('Personal email', 'Used by LinkedIn Personal collections.', 'linkedin_email', { w: '260px' }),
         B('Personal password', 'Stored locally.', 'linkedin_password', { secret: true, w: '260px' }),
         { kind: 'linkedin', label: 'Session cookie', help: 'The extension import reuses a signed-in session. LinkedIn asks for an emailed PIN at login.' },
-        B('Mock account email', 'The extension browses specific jobs with this mock account.', 'linkedin_mock_email', { w: '260px',
-          info: 'The extension captures jobs while you browse LinkedIn collections. Use a separate account so rate limits, CAPTCHAs or bans affect it and not your real profile.' }),
-        B('Mock account password', 'Stored locally only.', 'linkedin_mock_password', { secret: true, w: '260px' }),
+        SW('Use a mock account', 'The session signs in with the mock account below.', 'Off — the session signs in with the personal account above.', 'linkedin_use_mock_account',
+          { dflt: !!val('linkedin_mock_email'), info: 'Optional. The extension captures jobs while you browse LinkedIn collections. A separate account keeps rate limits, CAPTCHAs or bans off your real profile.' }),
+        ...(isOn('linkedin_use_mock_account', !!val('linkedin_mock_email')) ? [
+          B('Mock account email', 'The extension browses specific jobs with this mock account.', 'linkedin_mock_email', { w: '260px' }),
+          B('Mock account password', 'Stored locally only.', 'linkedin_mock_password', { secret: true, w: '260px' }),
+        ] : []),
       ]],
       ['advanced', 'System', 'Advanced', '', [
         B('Proxy URL', 'Used by scrapes that hit rate limits or geo-blocks. Empty = direct.', 'proxy_url', { mono: true, w: '340px', placeholder: 'socks5://127.0.0.1:9050' }),
@@ -896,8 +899,9 @@ function LinkedInRow({ li, setLi, flash }) {
   return (
     <>
       <Helper style={{ flex: 1, minWidth: 0, color: tone, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {phase === 'awaiting_pin' ? 'LinkedIn emailed a PIN to the mock account.'
+        {phase === 'awaiting_pin' ? (li?.detail || 'LinkedIn emailed a PIN.')
           : phase === 'running' ? (li?.detail || 'Signing in…')
+            : phase === 'failed' && li?.detail ? li.detail
             : (li?.summary || 'Unknown')}
       </Helper>
       {phase === 'awaiting_pin' && (
