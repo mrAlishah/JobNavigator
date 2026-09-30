@@ -4,11 +4,11 @@
 services:
   db:
     ports: !override
-      - "127.0.0.1:15433:5432"
+      - "0.0.0.0:15433:5432"
 
   backend:
     ports: !override
-      - "127.0.0.1:18001:8000"
+      - "0.0.0.0:18001:8000"
     volumes:
       - ./backups-elsa:/app/backups
       - ./backend/.linkedin_api-elsa:/root/.linkedin_api
@@ -16,16 +16,16 @@ services:
   frontend:
     # Diagnostic only. Use Caddy at http://elsa.localhost:8081 for the app.
     ports: !override
-      - "127.0.0.1:13001:80"
+      - "0.0.0.0:13001:80"
 
   caddy:
     ports: !override
-      - "127.0.0.1:8081:80"
-      - "127.0.0.1:8444:443"
+      - "0.0.0.0:8081:80"
+      - "0.0.0.0:8444:443"
   adminer:
     image: adminer:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:18081:8080"
+      - "0.0.0.0:18081:8080"
     depends_on:
       - db
