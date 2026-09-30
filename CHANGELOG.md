@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Modern Professional résumé template** (by @Mohith1-stack, #18): a ninth PDF template, Arial with a ruled header, no external font load.
 - **Reasoning effort per model** (by @volkotyk): the Primary, the scoring fallback and every per-feature override take a reasoning effort beside the model. Claude API sends `output_config.effort`, Claude Code `--effort`, Codex CLI `model_reasoning_effort`, OpenAI `reasoning_effort` and OpenRouter `reasoning.effort`; each picker offers only its provider's values (`GET /api/llm/efforts`). Empty keeps the model's default; an override on the Primary's provider inherits the Primary's effort. Antigravity CLI keeps the effort in the model name.
 - **Current models** (by @volkotyk): Claude Opus 5.5 and Claude Fable 5.1 (Claude API, Claude Code, OpenRouter); GPT-6 Astra, Sol and Luna (OpenAI, Codex CLI, OpenRouter); GPT-5.6 Sol/Terra/Luna and GPT-5.5 on the OpenAI API; Gemini 3.8 Flash and 3.1 Pro on OpenRouter, with prices for the new API models. For new installs the list drops `gpt-5.3-codex` (Responses API only, so Chat Completions cannot call it), and `o3-mini`, `o4-mini` and `openai/o4-mini-high` (shut down 2026-10-23). An existing model list keeps these models.
 - **Indeed country per search** (by @volkotyk, #17): a keyword search picks the Indeed country JobSpy queries (72 supported), and location and country are composed the same way for the scheduled run and the Test preview.
@@ -172,12 +173,7 @@ replies, and manage it all from a React dashboard.
   response monitoring, Telegram alerts/digests.
 - **Dashboard:** React + Tailwind (dark mode), keyboard-driven Job Feed, editable
   settings (LLM providers/models, rubric, filters) — only secrets live in `.env`.
-## [Unreleased]
 
-### Added
-- **Modern Professional resume template:** added a clean, ATS-friendly resume template with structured sections for experience, skills, education, projects and publications.
-
-### Changed
 [Unreleased]: https://github.com/vesaias/JobNavigator/compare/v2.1.0...HEAD
 [2.1.0]: https://github.com/vesaias/JobNavigator/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/vesaias/JobNavigator/compare/v1.1.0...v2.0.0

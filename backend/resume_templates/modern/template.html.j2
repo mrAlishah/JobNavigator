@@ -14,7 +14,7 @@
 
 @page {
   size: {{ 'letter' if page_format == 'letter' else 'A4' }};
-  margin: 0;
+  margin: 0.55in 0.6in;
 }
 
 html, body {
@@ -214,9 +214,9 @@ ul.bullets li {
 /* Print */
 
 @media print {
-  .page {
-    padding-bottom: 0;
-  }
+  /* The preview uses .page padding. Printed pages use @page margins so every
+     continuation page receives the same whitespace. */
+  .page { width: auto; padding: 0; margin: 0; }
 
   .entry:last-child,
   .edu-entry:last-child,
