@@ -206,7 +206,16 @@ async def test_the_fallback_uses_its_own_effort(test_db, monkeypatch):
     assert efforts == ["max", "none"]
 
 
-def test_settings_api_lists_efforts_and_rejects_an_unknown_one(api_client):
+def _seed_first_run(test_db):
+    """Open access for the API client: with INITIAL_API_KEY set in the environment the
+    middleware wants a key unless the dashboard_api_key row exists and is empty."""
+    from backend.models.db import Setting
+    test_db.add(Setting(key="dashboard_api_key", value=""))
+    test_db.commit()
+
+
+def test_settings_api_lists_efforts_and_rejects_an_unknown_one(api_client, test_db):
+    _seed_first_run(test_db)
     efforts = api_client.get("/api/llm/efforts").json()["efforts"]
     assert efforts["claude_code"] == ["low", "medium", "high", "xhigh", "max"]
     assert "antigravity_cli" not in efforts
