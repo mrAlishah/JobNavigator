@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api'
 import '../theme.css'
 import { useToasts, ToastStack } from '../Toast'
-import ConfirmDialog from '../ConfirmDialog'
+import ConfirmDialog, { PromptDialog } from '../ConfirmDialog'
 import { useEscape, useSingleOpen, setFlashToast, fetchRunOutcome, runFailed, runFailureReason, useSettled, NBSP } from '../hooks'
 import { useTitle } from '../useTitle'
 // The résumé-content editors are shared with /persona (a Persona's
@@ -12,7 +12,7 @@ import {
   EMPTY, SECTION_ORDER, sectionCounts, makeMutators,
   SectionShell, SectionEditor, BandRule,
 } from './ResumeSections'
-import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
+import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, CopyGlyph, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
 
 // contiguous prefix/suffix word diff → { before, removed, added, after }
 function wordDiff(a = '', b = '') {
@@ -85,6 +85,7 @@ export default function ResumeEditor() {
   const [tplOpen, setTplOpen] = useState(false)
   const [fmtOpen, setFmtOpen] = useState(false)
   const [tailorOpen, setTailorOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
   const [reviewed, setReviewed] = useState(false)   // tailoring changes acknowledged for this copy
   const [pdfErr, setPdfErr] = useState(false)      // last preview render failed
@@ -367,6 +368,29 @@ export default function ResumeEditor() {
     })
   }, [doc, id, navigate, pushToast])
 
+  // Base-only: a fresh, independent base with the same content — no job_id/parent_id,
+  // so nothing job-specific (_tailor_context/_score) needs stripping from json_data.
+  const duplicateResume = useCallback(async () => {
+    setHeadMenu(false)
+    try {
+      const { data: copy } = await api.post('/resumes', {
+        name: `${doc.name} (copy)`, is_base: true,
+        template: doc.template, page_format: doc.page_format, json_data: data,
+      })
+      pushToast({ kind: 'success', msg: `“${copy.name}” created.`, action: 'Open ↗', onAction: () => navigate(`/resumes/${copy.id}`) })
+    } catch (e) { pushToast({ kind: 'error', msg: e.response?.data?.detail || 'Duplicate failed.' }) }
+  }, [doc, data, pushToast, navigate])
+
+  const renameResume = useCallback(async (name) => {
+    if (!name.trim()) return
+    try {
+      const { data: updated } = await api.patch(`/resumes/${id}`, { name: name.trim() })
+      setDoc((d) => ({ ...d, name: updated.name }))
+      setRenameOpen(false)
+      pushToast({ kind: 'success', msg: `Renamed to “${updated.name}”.` })
+    } catch (e) { pushToast({ kind: 'error', msg: e.response?.data?.detail || 'Rename failed.' }) }
+  }, [id, pushToast])
+
   const goCover = () => { setHeadMenu(false); navigate(`/cover-letters?resume=${id}${doc.job_id ? `&job=${doc.job_id}` : ''}`) }
 
   // the "one next step" stage for a tailored copy: Score is offered only when there's
@@ -591,6 +615,8 @@ export default function ResumeEditor() {
                 <Menu ariaLabel="Résumé actions" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 244 }}>
                   <MenuHead>This base</MenuHead>
                   <MenuItem icon="✦" hint="adds a copy" onClick={() => { setHeadMenu(false); setTailorOpen(true) }}>Tailor for a job…</MenuItem>
+                  <MenuItem icon={<CopyGlyph />} onClick={duplicateResume}>Duplicate</MenuItem>
+                  <MenuItem icon="✎" onClick={() => { setHeadMenu(false); setRenameOpen(true) }}>Rename</MenuItem>
                   <MenuItem danger icon="✕" onClick={deleteResume}>Delete résumé</MenuItem>
                 </Menu>
               </>
@@ -656,6 +682,7 @@ export default function ResumeEditor() {
       {tailorOpen && (isCopy
         ? <RetailorModal doc={doc} job={jobData} chain={tailorChain} onClose={() => setTailorOpen(false)} onRun={runRetailor} pushToast={pushToast} />
         : <TailorModal doc={doc} chain={tailorChain} onClose={() => setTailorOpen(false)} onRun={runTailor} pushToast={pushToast} />)}
+      {renameOpen && <PromptDialog title="Rename résumé" value={doc.name} label="Save" onSubmit={renameResume} onCancel={() => setRenameOpen(false)} />}
       {reviewOpen && <ReviewModal changes={changes} onClose={() => setReviewOpen(false)} onApply={applyReview} />}
       {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
 
