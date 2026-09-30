@@ -107,7 +107,7 @@ async def test_call_claude_api_usage_defaults_when_cache_attrs_missing(mock_anth
     from unittest.mock import MagicMock, AsyncMock
 
     resp = MagicMock()
-    resp.content = [MagicMock(text="ok")]
+    resp.content = [MagicMock(type="text", text="ok")]
     # usage WITHOUT cache_read_input_tokens / cache_creation_input_tokens attrs
     resp.usage = MagicMock(spec=["input_tokens", "output_tokens"])
     resp.usage.input_tokens = 100

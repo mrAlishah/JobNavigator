@@ -83,6 +83,13 @@ async def _fetch_anthropic(key: str) -> list:
     return [{"id": m.get("id"), "name": m.get("display_name") or m.get("id")} for m in data]
 
 
+@router.get("/efforts")
+async def list_efforts():
+    """Reasoning-effort values per provider for the Settings pickers; a provider not listed takes none."""
+    from backend.analyzer.llm_client import REASONING_EFFORTS
+    return {"efforts": {p: list(v) for p, v in REASONING_EFFORTS.items()}}
+
+
 @router.get("/models")
 async def list_models(provider: str = "openrouter"):
     """Live model catalog for a provider, cached ~1h; openrouter needs no key, openai/claude_api use a configured key or env fallback (400 if none, 502 if the provider rejects it)."""

@@ -8,7 +8,7 @@ async def test_dispatch_concatenates_prefix_for_claude_code(monkeypatch):
     """claude_code provider receives cached_prefix + prompt combined (subprocess can't cache)."""
     captured = {}
 
-    async def fake_claude_code(prompt, system, model, max_tokens):
+    async def fake_claude_code(prompt, system, model, max_tokens, effort=""):
         captured["prompt"] = prompt
         return {"text": '{"ok": 1}',
                 "usage": {"input_tokens": 0, "output_tokens": 0,
@@ -37,7 +37,7 @@ async def test_dispatch_concatenates_prefix_for_codex_cli(monkeypatch):
     """codex_cli receives cached_prefix + prompt combined."""
     captured = {}
 
-    async def fake_codex_cli(prompt, system, model, max_tokens):
+    async def fake_codex_cli(prompt, system, model, max_tokens, effort=""):
         captured["prompt"] = prompt
         return {"text": "ok", "usage": {"input_tokens": 1, "output_tokens": 1,
                                             "cache_read_tokens": 0, "cache_write_tokens": 0}}
@@ -77,7 +77,7 @@ async def test_dispatch_concatenates_prefix_for_openai(monkeypatch):
     """openai provider receives cached_prefix + prompt combined."""
     captured = {}
 
-    async def fake_openai(prompt, system, model, api_key, max_tokens):
+    async def fake_openai(prompt, system, model, api_key, max_tokens, effort=""):
         captured["prompt"] = prompt
         return {"text": "{}",
                 "usage": {"input_tokens": 10, "output_tokens": 5,
@@ -104,7 +104,7 @@ async def test_dispatch_no_prefix_passes_prompt_unchanged(monkeypatch):
     """When cached_prefix is None, the prompt goes through without modification."""
     captured = {}
 
-    async def fake_claude_code(prompt, system, model, max_tokens):
+    async def fake_claude_code(prompt, system, model, max_tokens, effort=""):
         captured["prompt"] = prompt
         return {"text": "ok",
                 "usage": {"input_tokens": 0, "output_tokens": 0,
@@ -130,7 +130,7 @@ async def test_dispatch_claude_api_still_uses_cache_control(monkeypatch):
     """claude_api branch passes cached_prefix through (NOT concatenated) so it uses cache_control."""
     captured = {}
 
-    async def fake_claude_api(prompt, system, model, api_key, max_tokens, cached_prefix=None):
+    async def fake_claude_api(prompt, system, model, api_key, max_tokens, cached_prefix=None, effort=""):
         captured["prompt"] = prompt
         captured["cached_prefix"] = cached_prefix
         return {"text": "ok",

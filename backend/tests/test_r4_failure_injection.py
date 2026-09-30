@@ -228,7 +228,7 @@ async def test_primary_is_retried_four_times_before_the_fallback(test_db, monkey
     calls = []
 
     async def _dispatch(provider, model, api_key, prompt, system, max_tokens,
-                        cached_prefix=None):
+                        cached_prefix=None, effort=""):
         calls.append(model)
         if model == "primary-model":
             raise FAULTS["529"]
@@ -252,7 +252,7 @@ async def test_a_transient_primary_failure_does_not_reach_the_fallback(test_db, 
     calls = []
 
     async def _dispatch(provider, model, api_key, prompt, system, max_tokens,
-                        cached_prefix=None):
+                        cached_prefix=None, effort=""):
         calls.append(model)
         if len(calls) == 1:
             raise FAULTS["429"]
@@ -312,7 +312,7 @@ async def test_the_fallback_pair_is_what_gets_logged(test_db, monkeypatch):
     set_setting(test_db, "llm_fallback_model", "fallback-model")
 
     async def _dispatch(provider, model, api_key, prompt, system, max_tokens,
-                        cached_prefix=None):
+                        cached_prefix=None, effort=""):
         if model == "primary-model":
             raise FAULTS["529"]
         return {"text": '{"scores": {"Base": 60}}', "usage": {}}

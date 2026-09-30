@@ -343,6 +343,7 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         provider_for_log = _cfg["provider"]
         model_for_log = _cfg["model"]
         scoring_api_key = _cfg["api_key"]
+        scoring_effort = _cfg["effort"]
         cache_row = settings_db.query(Setting).filter(Setting.key == "prompt_caching_enabled").first()
         caching_enabled = (cache_row.value if cache_row else "true").strip().lower() == "true"
     finally:
@@ -386,7 +387,8 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         # the cache_control block on the Anthropic request, so caching is fully off.
         effective_prefix = cached_prefix if caching_enabled else None
         resp = await call_llm(user_prompt, system_msg, max_tokens, cached_prefix=effective_prefix,
-                              provider=provider_for_log, model=model_for_log, api_key=scoring_api_key)
+                              provider=provider_for_log, model=model_for_log, api_key=scoring_api_key,
+                              effort=scoring_effort)
         text = resp["text"]
         usage = resp.get("usage", usage)
         # If call_llm fell back to the secondary pair, log what actually ran.

@@ -181,7 +181,7 @@ async def run_all_scrapes():
             # Also score any saved-but-unscored jobs (from manual saves)
             from backend.analyzer.cv_scorer import analyze_unscored_jobs
             await analyze_unscored_jobs(status="saved")
-            await check_scrape_health()
+            await check_scrape_health(since=started)
             run.summary = _scrape_summary(started)
     except JobAlreadyRunningError as e:
         logger.warning(f"Scheduler skipped: {e}")
@@ -297,18 +297,27 @@ async def run_job_cleanup_auto():
         logger.warning(f"Scheduler skipped: {e}")
 
 
-async def check_scrape_health():
-    """Alert via Telegram if any scraper has failed 3+ times consecutively."""
+async def check_scrape_health(since=None):
+    """Alert via Telegram if any scraper has failed 3+ times consecutively.
+    With `since`, only a source that ran at or after it can alert: a source that
+    stopped running (a paused search) keeps its last three rows forever."""
     from backend.models.db import ScrapeLog
     db = SessionLocal()
     try:
-        sources = db.query(ScrapeLog.source).distinct().all()
+        q = db.query(ScrapeLog.source).distinct()
+        if since is not None:
+            q = q.filter(ScrapeLog.ran_at >= since)
+        sources = q.all()
         alerts = []
         for (source,) in sources:
             recent = db.query(ScrapeLog).filter(
                 ScrapeLog.source == source
             ).order_by(ScrapeLog.ran_at.desc()).limit(3).all()
-            if len(recent) >= 3 and all(r.error or r.is_warning for r in recent):
+            # `is_warning` is wider than this alert: since #17 it also marks a run where one
+            # board returned nothing while the others delivered. That belongs in the run
+            # summary and the health panel, not in an hourly page; here a run counts as bad
+            # only when it failed outright or found nothing at all.
+            if len(recent) >= 3 and all(r.error or not (r.jobs_found or 0) for r in recent):
                 alerts.append(source)
 
         if alerts:

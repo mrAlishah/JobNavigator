@@ -3,6 +3,32 @@ import api from '../api'
 import ModelCombobox from './ModelCombobox'
 import { RefreshCw, Send, Play, Info, Eye, EyeOff } from 'lucide-react'
 
+// The effort values per provider come from the backend (llm_client.REASONING_EFFORTS), fetched once per page load.
+let effortsRequest = null
+const loadEfforts = () => (effortsRequest ||= api.get('/llm/efforts')
+  .then(({ data }) => data.efforts || {})
+  .catch(() => { effortsRequest = null; return null }))
+
+// Reasoning-effort picker for one LLM slot; hidden for a provider that takes no effort.
+// A saved value the provider lacks is cleared, because the backend drops it at call time anyway.
+function EffortSelect({ provider, value, onChange, emptyLabel = 'Model default', className = 'mb-4' }) {
+  const [efforts, setEfforts] = useState(null)
+  useEffect(() => { let on = true; loadEfforts().then(e => { if (on) setEfforts(e) }); return () => { on = false } }, [])
+  const list = (efforts && efforts[provider]) || []
+  useEffect(() => { if (efforts && value && !list.includes(value)) onChange('') }, [efforts, provider, value])
+  if (!list.length) return null
+  return (
+    <div className={className}>
+      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Reasoning Effort</label>
+      <select value={value || ''} onChange={e => onChange(e.target.value)}
+        className="border rounded px-2 py-1.5 text-sm w-full dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600">
+        <option value="">{emptyLabel}</option>
+        {list.map(v => <option key={v} value={v}>{v}</option>)}
+      </select>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState({})
   const [resumes, setResumes] = useState([])
@@ -290,6 +316,8 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
+              <EffortSelect provider={provider} value={settings.llm_effort} className="mt-2"
+                onChange={v => { setSettings(p => ({...p, llm_effort: v})); saveSetting('llm_effort', v) }} />
               {!['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(provider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
@@ -447,6 +475,8 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
+              <EffortSelect provider={effProvider} value={settings.scoring_llm_effort} className="mt-2" emptyLabel={(effProvider || 'claude_api') === (settings.llm_provider || 'claude_api') ? 'Use Primary' : 'Model default'}
+                onChange={v => { setSettings(p => ({...p, scoring_llm_effort: v})); saveSetting('scoring_llm_effort', v) }} />
               {scProvider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(scProvider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
@@ -503,6 +533,8 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
+              <EffortSelect provider={provider} value={settings.llm_fallback_effort} className="mt-2"
+                onChange={v => { setSettings(p => ({...p, llm_fallback_effort: v})); saveSetting('llm_fallback_effort', v) }} />
               {provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio'].includes(provider) && (
                 <div className="mt-2">
                   <label className="block text-[10px] text-gray-500 dark:text-gray-500 mb-0.5">API Key</label>
@@ -651,6 +683,9 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        <EffortSelect provider={settings.cv_tailor_llm_provider || settings.llm_provider || 'claude_api'} value={settings.cv_tailor_llm_effort} emptyLabel={(settings.cv_tailor_llm_provider || settings.llm_provider || 'claude_api') === (settings.llm_provider || 'claude_api') ? 'Use Primary' : 'Model default'}
+          onChange={v => { setSettings(p => ({...p, cv_tailor_llm_effort: v})); saveSetting('cv_tailor_llm_effort', v) }} />
+
         {settings.cv_tailor_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.cv_tailor_llm_provider) && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API Key</label>
@@ -767,6 +802,9 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        <EffortSelect provider={settings.cover_letter_llm_provider || settings.llm_provider || 'claude_api'} value={settings.cover_letter_llm_effort} emptyLabel={(settings.cover_letter_llm_provider || settings.llm_provider || 'claude_api') === (settings.llm_provider || 'claude_api') ? 'Use Primary' : 'Model default'}
+          onChange={v => { setSettings(p => ({...p, cover_letter_llm_effort: v})); saveSetting('cover_letter_llm_effort', v) }} />
+
         {settings.cover_letter_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.cover_letter_llm_provider) && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">API Key</label>
@@ -870,6 +908,9 @@ export default function SettingsPage() {
             })()}
           </div>
         </div>
+
+        <EffortSelect provider={settings.autofill_llm_provider || settings.llm_provider || 'claude_api'} value={settings.autofill_llm_effort} emptyLabel={(settings.autofill_llm_provider || settings.llm_provider || 'claude_api') === (settings.llm_provider || 'claude_api') ? 'Use Primary' : 'Model default'}
+          onChange={v => { setSettings(p => ({...p, autofill_llm_effort: v})); saveSetting('autofill_llm_effort', v) }} />
 
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Default Answer Length (characters)</label>
@@ -1014,6 +1055,9 @@ export default function SettingsPage() {
             })()}
           </div>
         </div>
+
+        <EffortSelect provider={settings.email_llm_provider || settings.llm_provider || 'claude_api'} value={settings.email_llm_effort} emptyLabel={(settings.email_llm_provider || settings.llm_provider || 'claude_api') === (settings.llm_provider || 'claude_api') ? 'Use Primary' : 'Model default'}
+          onChange={v => { setSettings(p => ({...p, email_llm_effort: v})); saveSetting('email_llm_effort', v) }} />
 
         {settings.email_llm_provider && !['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', ''].includes(settings.email_llm_provider) && (
           <div className="mb-4">
