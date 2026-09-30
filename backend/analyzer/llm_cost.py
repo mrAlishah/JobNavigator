@@ -8,6 +8,12 @@ logger = logging.getLogger("jobnavigator.llm_cost")
 
 # ── Anthropic (cache read = 10% input, 5m cache write = 125% input) ──────────
 _CLAUDE_FABLE_5 = {"input_per_mtok": 10.0, "output_per_mtok": 50.0, "cache_read_per_mtok": 1.00, "cache_write_per_mtok": 12.50}
+_CLAUDE_FABLE_51 = {  # Fable 5.1 — Fable 5's card, but cache reads are $0.25
+    "input_per_mtok": 10.0, "output_per_mtok": 50.0, "cache_read_per_mtok": 0.25, "cache_write_per_mtok": 12.50,
+}
+_CLAUDE_OPUS_55 = {  # Opus 5.5 — $4/$20
+    "input_per_mtok": 4.0, "output_per_mtok": 20.0, "cache_read_per_mtok": 0.20, "cache_write_per_mtok": 5.00,
+}
 _CLAUDE_OPUS = {  # Opus 5 / 4.8 / 4.7 / 4.6 / 4.5 share the $5/$25 card
     "input_per_mtok": 5.0, "output_per_mtok": 25.0, "cache_read_per_mtok": 0.50, "cache_write_per_mtok": 6.25,
 }
@@ -30,7 +36,9 @@ def _oa(inp: float, out: float, cache_read: Optional[float] = None) -> dict:
 # Per million tokens, USD.
 PRICING: dict[str, dict[str, dict]] = {
     "claude_api": {
+        "claude-fable-5-1": _CLAUDE_FABLE_51,
         "claude-fable-5": _CLAUDE_FABLE_5,
+        "claude-opus-5-5": _CLAUDE_OPUS_55,
         "claude-opus-5": _CLAUDE_OPUS,
         "claude-opus-4-8": _CLAUDE_OPUS,
         "claude-opus-4-7": _CLAUDE_OPUS,
@@ -43,7 +51,13 @@ PRICING: dict[str, dict[str, dict]] = {
         "claude-haiku-4-5-20251001": _CLAUDE_HAIKU,  # legacy dated id
     },
     "openai": {
+        "gpt-6-astra": _oa(10.0, 50.0, 1.00),
+        "gpt-6-sol": _oa(2.0, 10.0, 0.20),
+        "gpt-6-luna": _oa(0.10, 0.50, 0.01),
+        "gpt-5.6-sol": _oa(4.0, 20.0, 0.40),
+        "gpt-5.6-terra": _oa(2.0, 12.0, 0.20),
         "gpt-5.6-luna": _oa(0.20, 1.20, 0.02),
+        "gpt-5.5": _oa(5.0, 30.0, 0.50),
         "gpt-5.4": _oa(2.50, 15.0, 0.25),
         "gpt-5.4-mini": _oa(0.75, 4.50, 0.075),
         "gpt-5.4-nano": _oa(0.20, 1.25, 0.02),

@@ -44,7 +44,7 @@ def mock_anthropic_response():
               cache_read: int = 0,
               cache_write: int = 0):
         resp = MagicMock()
-        resp.content = [MagicMock(text=text)]
+        resp.content = [MagicMock(type="text", text=text)]
         resp.usage = MagicMock(
             input_tokens=input_tokens,
             output_tokens=output_tokens,

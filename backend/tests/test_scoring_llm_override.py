@@ -20,7 +20,7 @@ async def test_call_llm_uses_primary_override(monkeypatch):
     monkeypatch.setattr(L, "_get_setting", lambda db, k, d="": d)  # no fallback configured
     calls = []
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         calls.append((provider, model, api_key))
         return {"text": "ok", "usage": {}}
 

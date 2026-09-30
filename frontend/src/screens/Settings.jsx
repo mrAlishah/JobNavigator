@@ -32,6 +32,8 @@ const MONO_FIELD = { fontSize: 'var(--t-11-5)' }
 // Empty-options menu needs a reason string, not a bare box — ui.jsx's Select takes it as `emptyText`.
 const NO_MODELS = 'no models for this provider — add one under Model catalog'
 const MASK = '••••••'
+// Effort picker options: '' leaves the choice to the model (or to the Primary, on an override row).
+const effortOptions = (list, emptyLabel) => [['', emptyLabel], ...list.map((v) => [v, `${v} effort`])]
 
 // Spread kb(fn) onto a span/div with onClick to make it focusable, announce a role, and fire fn on Enter/Space.
 // Local copy of the same helper in ResumeSections.jsx; focus ring is theme.css's `[tabindex="0"]:focus-visible`.
@@ -180,6 +182,7 @@ export default function Settings() {
   const [trig, setTrig] = useState({})        // action button states
   const [editFor, setEditFor] = useState(null)
   const [modelsOpen, setModelsOpen] = useState(false)
+  const [efforts, setEfforts] = useState({})  // provider -> reasoning-effort values, from GET /llm/efforts
   const [li, setLi] = useState(null)          // linkedin session status
   const [toast, setToast] = useState(null)
   const [loadErr, setLoadErr] = useState(null)   // set on a failed GET /settings
@@ -200,12 +203,13 @@ export default function Settings() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d] = await Promise.all([api.get('/settings'), api.get('/settings/defaults').catch(() => ({ data: {} }))])
-      setS(s.data || {}); setDefaults(d.data || {})
-      // an override row starts open when it actually has a provider set
+      const [s, d, e] = await Promise.all([api.get('/settings'), api.get('/settings/defaults').catch(() => ({ data: {} })),
+        api.get('/llm/efforts').catch(() => ({ data: {} }))])
+      setS(s.data || {}); setDefaults(d.data || {}); setEfforts(e.data?.efforts || {})
+      // an override row starts open when it actually has a provider or an effort set
       const o = {}
       for (const k of ['scoring_llm', 'llm_fallback', 'cv_tailor_llm', 'cover_letter_llm', 'autofill_llm', 'email_llm']) {
-        o[k] = !!(s.data || {})[`${k}_provider`]
+        o[k] = !!((s.data || {})[`${k}_provider`] || (s.data || {})[`${k}_effort`])
       }
       setOvr(o)
       setLoadErr(null)
@@ -304,6 +308,7 @@ export default function Settings() {
     const opts = modelsList.filter((m) => m.provider === p).map((m) => [m.model, m.label || m.model])
     return opts
   }
+  const effortsFor = (provider) => efforts[provider || 'claude_api'] || []
 
   // ── row builders ──
   const B = (label, help, key, o = {}) => ({ kind: 'box', label, help, key, ...o })
@@ -359,8 +364,8 @@ export default function Settings() {
       ]],
       ['models', 'AI', 'Models', '', [
         { kind: 'pair', label: 'Primary provider · model', help: 'Every AI feature uses this pair unless overridden below.',
-          pKey: 'llm_provider', mKey: 'llm_model',
-          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The two subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying." },
+          pKey: 'llm_provider', mKey: 'llm_model', eKey: 'llm_effort',
+          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The two subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and Ollama and LM Studio have no effort setting." },
         B('API key', 'API key for the primary provider.', 'llm_api_key', { secret: true, mono: true, w: '340px', hide: () => KEYLESS.includes(val('llm_provider', 'claude_api')) }),
         LLM('Scoring', 'Model that scores new jobs against your résumés.', 'scoring_llm'),
         LLM('Scoring fallback', 'Retries scoring once on error or rate limit — scoring only.', 'llm_fallback',
@@ -585,7 +590,7 @@ export default function Settings() {
                   <span style={{ fontSize: 11.5, lineHeight: '26px', color: 'var(--muted)', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub}</span>
                 </div>
                 {rows.filter((r) => !(r.hide && r.hide())).map((r) => (
-                  <Row key={r.label} r={r} ctx={{ S, val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, li, setLi, flash, defaults, narrow }} />
+                  <Row key={r.label} r={r} ctx={{ S, val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, effortsFor, li, setLi, flash, defaults, narrow }} />
                 ))}
               </div>
             ))}
@@ -625,8 +630,14 @@ export default function Settings() {
 
 // ── one settings row ─────────────────────────────────────────────────────────
 function Row({ r, ctx }) {
-  const { val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, li, setLi, flash, S, narrow } = ctx
+  const { val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, effortsFor, li, setLi, flash, S, narrow } = ctx
   const infoOpen = r.info && info === r.label
+  // An effort is a per-provider value: one the new provider lacks is cleared (the backend would drop it anyway).
+  const pickProvider = async (pKey, eKey, v) => {
+    const ok = await save(pKey, v)
+    const e = val(eKey)
+    if (ok && e && !effortsFor(v || val('llm_provider', 'claude_api')).includes(e)) await save(eKey, '')
+  }
 
   const right = (() => {
     switch (r.kind) {
@@ -649,20 +660,27 @@ function Row({ r, ctx }) {
       }
       case 'pair': {
         const p = val(r.pKey, 'claude_api')
+        const eff = effortsFor(p)
         return (
           <>
-            <Select value={p} options={PROVIDERS} onPick={(v) => save(r.pKey, v)} width="220px" ariaLabel={`${r.label} — provider`} />
+            <Select value={p} options={PROVIDERS} onPick={(v) => pickProvider(r.pKey, r.eKey, v)} width="220px" ariaLabel={`${r.label} — provider`} />
             <Select value={val(r.mKey)} options={modelsFor(p)} onPick={(v) => save(r.mKey, v)} width="260px" mono placeholder="pick model…" ariaLabel={`${r.label} — model`} emptyText={NO_MODELS} />
+            {eff.length > 0 && <Select value={val(r.eKey)} options={effortOptions(eff, 'default effort')} onPick={(v) => save(r.eKey, v)} width="150px" ariaLabel={`${r.label} — reasoning effort`} />}
           </>
         )
       }
       case 'llm': {
         const on = !!ovr[r.base]
         const p = val(`${r.base}_provider`)
+        const primary = val('llm_provider', 'claude_api')
+        const eff = effortsFor(p || primary)
+        // The fallback has no Primary to inherit from; an override row inherits the Primary's effort on the same provider.
+        const effortEmpty = r.base !== 'llm_fallback' && (p || primary) === primary ? 'Primary effort' : 'default effort'
         return (
           <>
-            {on && <Select value={p} options={PROVIDERS} onPick={(v) => save(`${r.base}_provider`, v)} width="200px" placeholder="pick provider…" ariaLabel={`${r.label} — provider`} />}
-            {on && <Select value={val(`${r.base}_model`)} options={modelsFor(p || val('llm_provider', 'claude_api'))} onPick={(v) => save(`${r.base}_model`, v)} width="260px" mono placeholder="pick model…" ariaLabel={`${r.label} — model`} emptyText={NO_MODELS} />}
+            {on && <Select value={p} options={PROVIDERS} onPick={(v) => pickProvider(`${r.base}_provider`, `${r.base}_effort`, v)} width="200px" placeholder="pick provider…" ariaLabel={`${r.label} — provider`} />}
+            {on && <Select value={val(`${r.base}_model`)} options={modelsFor(p || primary)} onPick={(v) => save(`${r.base}_model`, v)} width="260px" mono placeholder="pick model…" ariaLabel={`${r.label} — model`} emptyText={NO_MODELS} />}
+            {on && eff.length > 0 && <Select value={val(`${r.base}_effort`)} options={effortOptions(eff, effortEmpty)} onPick={(v) => save(`${r.base}_effort`, v)} width="150px" ariaLabel={`${r.label} — reasoning effort`} />}
             {on && p && !KEYLESS.includes(p) && (
               <span title="API key for this override's provider" style={{ display: 'flex', flex: '0 1 150px', minWidth: 0 }}>
                 <TextBox value={val(`${r.base}_api_key`)} onSave={(v) => save(`${r.base}_api_key`, v)} width="150px" mono secret ariaLabel={`${r.label} — API key`} />
@@ -676,11 +694,12 @@ function Row({ r, ctx }) {
                 const next = !on
                 setOvr((o) => ({ ...o, [r.base]: next }))
                 if (!next) {
-                  // `ovr` is local state the PATCHes don't own — if either clear fails, reopen the row or it reads
+                  // `ovr` is local state the PATCHes don't own — if any clear fails, reopen the row or it reads
                   // "inherits Primary" while the server still holds an override.
                   const a = await save(`${r.base}_provider`, '')
                   const b = a && await save(`${r.base}_model`, '')
-                  if (!a || !b) setOvr((o) => ({ ...o, [r.base]: true }))
+                  const c = b && await save(`${r.base}_effort`, '')
+                  if (!a || !b || !c) setOvr((o) => ({ ...o, [r.base]: true }))
                 }
               }} />
             </span>

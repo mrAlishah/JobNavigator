@@ -4,6 +4,7 @@ import json
 import secrets
 from backend.models.db import SessionLocal, Setting, Company, Search, Resume
 from sqlalchemy import text
+from backend.analyzer.llm_client import REASONING_EFFORTS
 
 logger = logging.getLogger("jobnavigator.seed")
 
@@ -45,29 +46,39 @@ DEFAULT_SETTINGS = {
     "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, codex_cli, antigravity_cli, openai, ollama, lmstudio, openrouter"),
     "llm_model": ("claude-sonnet-5", "LLM model name"),
     "llm_api_key": ("", "API key for API-backed providers (not needed for subscription CLIs or Ollama)"),
+    "llm_effort": ("", "Reasoning effort for the Primary model (empty = the model's default; values depend on the provider)"),
     "llm_fallback_provider": ("", "Fallback LLM provider (empty = no fallback)"),
     "llm_fallback_model": ("", "Fallback model name"),
     "llm_fallback_api_key": ("", "API key for fallback provider (OpenAI)"),
+    "llm_fallback_effort": ("", "Reasoning effort for the fallback model (empty = the model's default; values depend on the provider)"),
     "scoring_llm_provider": ("", "Resume scoring provider override (empty = use Primary)"),
     "scoring_llm_model": ("", "Resume scoring model override (empty = use Primary)"),
     "scoring_llm_api_key": ("", "API key for the scoring provider override"),
+    "scoring_llm_effort": ("", "Reasoning effort for the scoring override (empty = the Primary's on the same provider, else the model's default)"),
     "llm_models_list": (json.dumps([
         {"provider": "claude_api", "model": "claude-sonnet-5"},
         {"provider": "claude_api", "model": "claude-sonnet-4-6"},
+        {"provider": "claude_api", "model": "claude-opus-5-5"},
         {"provider": "claude_api", "model": "claude-opus-5"},
         {"provider": "claude_api", "model": "claude-opus-4-8"},
         {"provider": "claude_api", "model": "claude-opus-4-7"},
         {"provider": "claude_api", "model": "claude-opus-4-6"},
         {"provider": "claude_api", "model": "claude-haiku-4-5"},
+        {"provider": "claude_api", "model": "claude-fable-5-1"},
         {"provider": "claude_api", "model": "claude-fable-5"},
         {"provider": "claude_code", "model": "claude-sonnet-5"},
         {"provider": "claude_code", "model": "claude-sonnet-4-6"},
+        {"provider": "claude_code", "model": "claude-opus-5-5"},
         {"provider": "claude_code", "model": "claude-opus-5"},
         {"provider": "claude_code", "model": "claude-opus-4-8"},
         {"provider": "claude_code", "model": "claude-opus-4-7"},
         {"provider": "claude_code", "model": "claude-opus-4-6"},
         {"provider": "claude_code", "model": "claude-haiku-4-5"},
+        {"provider": "claude_code", "model": "claude-fable-5-1"},
         {"provider": "claude_code", "model": "claude-fable-5"},
+        {"provider": "codex_cli", "model": "gpt-6-astra"},
+        {"provider": "codex_cli", "model": "gpt-6-sol"},
+        {"provider": "codex_cli", "model": "gpt-6-luna"},
         {"provider": "codex_cli", "model": "gpt-5.6-sol"},
         {"provider": "codex_cli", "model": "gpt-5.6-terra"},
         {"provider": "codex_cli", "model": "gpt-5.6-luna"},
@@ -84,16 +95,20 @@ DEFAULT_SETTINGS = {
         {"provider": "antigravity_cli", "model": "claude-sonnet-4-6"},
         {"provider": "antigravity_cli", "model": "claude-opus-4-6-thinking"},
         {"provider": "antigravity_cli", "model": "gpt-oss-120b-medium"},
+        {"provider": "openai", "model": "gpt-6-astra"},
+        {"provider": "openai", "model": "gpt-6-sol"},
+        {"provider": "openai", "model": "gpt-6-luna"},
+        {"provider": "openai", "model": "gpt-5.6-sol"},
+        {"provider": "openai", "model": "gpt-5.6-terra"},
+        {"provider": "openai", "model": "gpt-5.6-luna"},
+        {"provider": "openai", "model": "gpt-5.5"},
         {"provider": "openai", "model": "gpt-5.4"},
         {"provider": "openai", "model": "gpt-5.4-mini"},
         {"provider": "openai", "model": "gpt-5.4-nano"},
-        {"provider": "openai", "model": "gpt-5.3-codex"},
         {"provider": "openai", "model": "gpt-5.2"},
         {"provider": "openai", "model": "gpt-4o"},
         {"provider": "openai", "model": "gpt-4o-mini"},
         {"provider": "openai", "model": "o3"},
-        {"provider": "openai", "model": "o3-mini"},
-        {"provider": "openai", "model": "o4-mini"},
         {"provider": "ollama", "model": "llama3.3:70b"},
         {"provider": "ollama", "model": "llama3.1:8b"},
         {"provider": "ollama", "model": "qwen2.5:32b"},
@@ -104,12 +119,16 @@ DEFAULT_SETTINGS = {
         {"provider": "ollama", "model": "phi3:14b"},
         # OpenRouter — one key reaches every vendor; slugs are vendor-prefixed.
         # A popular starter set; the full ~420 are fetchable in Settings via the API.
+        {"provider": "openrouter", "model": "anthropic/claude-fable-5.1"},
+        {"provider": "openrouter", "model": "anthropic/claude-opus-5.5"},
         {"provider": "openrouter", "model": "anthropic/claude-opus-5"},
         {"provider": "openrouter", "model": "anthropic/claude-sonnet-5"},
+        {"provider": "openrouter", "model": "openai/gpt-6-sol"},
+        {"provider": "openrouter", "model": "openai/gpt-6-luna"},
         {"provider": "openrouter", "model": "openai/gpt-5.6-luna"},
         {"provider": "openrouter", "model": "openai/o3-pro"},
-        {"provider": "openrouter", "model": "openai/o4-mini-high"},
-        {"provider": "openrouter", "model": "google/gemini-3.7-flash"},
+        {"provider": "openrouter", "model": "google/gemini-3.8-flash"},
+        {"provider": "openrouter", "model": "google/gemini-3.1-pro-preview"},
         {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
         {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"},
         {"provider": "openrouter", "model": "meta-llama/llama-4-maverick"},
@@ -129,6 +148,7 @@ DEFAULT_SETTINGS = {
     "email_llm_provider": ("", "LLM provider for email classification (empty = use primary llm_provider)"),
     "email_llm_model": ("", "LLM model for email classification (empty = use primary llm_model)"),
     "email_llm_api_key": ("", "API key for email LLM provider"),
+    "email_llm_effort": ("", "Reasoning effort for email classification (empty = the Primary's on the same provider, else the model's default)"),
     "email_llm_confidence_threshold": ("70", "Min confidence (0-100) to auto-act on LLM email classification"),
     "email_llm_prompt": ("Classify this email and match it to one active application if possible.\n\nRules:\n- match_index: pick from the numbered applications below (1-based), or null if no match\n- status: one of: interview, offer, rejected, no_change\n- confidence: 0-100 how sure you are about classification AND match combined\n- summary: one sentence describing what the email is about\n\nActive applications:\n{applications}\n\nEmail:\nFrom: {from}\nSubject: {subject}\nBody:\n{body}\n\nReturn ONLY this JSON:\n{\"match_index\": null, \"status\": \"no_change\", \"confidence\": 0, \"summary\": \"\"}", "Editable email classification LLM prompt template"),
     "email_gmail_query_subjects": (json.dumps([
@@ -155,11 +175,13 @@ DEFAULT_SETTINGS = {
     "cv_tailor_llm_provider": ("", "LLM provider for resume tailoring (empty = use primary llm_provider)"),
     "cv_tailor_llm_model": ("", "LLM model for resume tailoring (empty = use primary llm_model)"),
     "cv_tailor_llm_api_key": ("", "API key for resume tailoring LLM provider"),
+    "cv_tailor_llm_effort": ("", "Reasoning effort for resume tailoring (empty = the Primary's on the same provider, else the model's default)"),
     "cv_tailor_prompt": ("Tailor this resume for the job description below.\n\nRules for MAIN bullets[]:\n- Rewrite the summary to target this specific role\n- For each experience bullet: if it benefits from JD keyword alignment, reformulate it. If it's already well-suited, leave it UNCHANGED\n- Keep the same number of bullets per experience entry - do not add or remove\n- Reorder skills to prioritize JD-relevant ones first\n- Do NOT invent new experience, skills, or facts in the main bullets. If something is missing, map to the closest truthful concept\n- NEVER add skills the candidate does not have\n- Preserve all company names, titles, dates, locations, education exactly\n- Do NOT use em-dashes or unicode special characters. Use regular hyphens (-) and ASCII only\n- Preserve **bold** formatting (double asterisks) from the original bullets. For reformulated bullets, wrap the strongest metric or achievement in **bold** (e.g. **40,000+ new clients**, **reduced error rates by 30%**). Each bullet should have at most one bold highlight\n- VERIFICATION: every reformulated bullet must trace to the original resume. If you cannot trace it, leave the original unchanged.\n\nRules for suggested_bullets[] (gap-fillers - DIFFERENT from main bullets):\n- For each experience entry, generate 1-2 PLAUSIBLE STAR-format bullets that cover JD keywords/skills no existing bullet in this role covers\n- These MAY invent realistic, believable facts/metrics that someone in this role/title at this company at this seniority would credibly have done\n- Specifically target keywords from the JD that no existing bullet mentions\n- Use STAR format: strong action verb, context, concrete (possibly invented) metric or outcome\n- The user reviews these in a diff modal and accepts/rejects each - they know suggestions are speculative gap-fillers\n- Wrap the strongest metric in **bold** (one per bullet)\n- Skip a role entirely if no JD keyword gap exists for it\n\nResume:\n{resume_json}\n\nJob Description:\n{job_description}\n\nReturn ONLY this JSON:\n{\"summary\": \"rewritten summary\", \"experience\": [{\"company\": \"unchanged\", \"title\": \"unchanged\", \"location\": \"unchanged\", \"date\": \"unchanged\", \"description\": \"unchanged or null\", \"bullets\": [\"reformulated or unchanged bullet from existing content\"], \"suggested_bullets\": [\"plausible gap-filler covering missing JD keyword\"]}], \"skills\": {\"reordered label\": \"reordered value\"}}", "Editable resume tailoring LLM prompt template"),
     "persona_tailor_prompt": ("Tailor a FOCUSED resume from this rich candidate profile, targeted at the job description below.\n\nThe candidate profile is a deep pool - most roles have many bullets. SELECT only the strongest aligned with the JD; drop the rest.\n\nRules for MAIN bullets[]:\n- Rewrite the summary to target this specific role (2-4 sentences, lead with the most relevant strength)\n- For each experience entry: SELECT only 3-5 bullets (max 6 for the most senior/recent role) that best match JD keywords and required skills\n- Reformulate each selected bullet to use the JD's exact vocabulary where possible\n- Reorder skills to prioritize JD-relevant ones first; cap at 6 categories\n- Do NOT invent new experience, skills, or facts in the main bullets. Only reframe existing content from the candidate profile\n- NEVER add skills the candidate does not have\n- Preserve all company names, titles, dates, locations, education exactly\n- Do NOT use em-dashes or unicode special characters. Use regular hyphens (-) and ASCII only\n- Preserve **bold** formatting. For reformulated bullets, wrap the strongest metric in **bold** (one per bullet)\n- VERIFICATION: every selected/reformulated bullet must be traceable to the candidate profile\n\nRules for suggested_bullets[] (gap-fillers - DIFFERENT from main bullets):\n- For each experience entry, generate 1-2 PLAUSIBLE STAR-format bullets that cover JD keywords/skills no main bullet (selected from the pool) covers\n- These MAY invent realistic, believable facts/metrics that someone in this role at this company at this seniority would credibly have done\n- Specifically target JD keywords that no main bullet mentions\n- STAR format: strong action verb, context, concrete (possibly invented) metric or outcome\n- The user reviews these in a diff modal and accepts/rejects each\n- Wrap the strongest metric in **bold** (one per bullet)\n- Skip a role if no JD keyword gap exists\n\nCandidate Profile:\n{resume_json}\n\nJob Description:\n{job_description}\n\nReturn ONLY this JSON:\n{\"summary\": \"rewritten summary\", \"experience\": [{\"company\": \"unchanged\", \"title\": \"unchanged\", \"location\": \"unchanged\", \"date\": \"unchanged\", \"description\": \"unchanged or null\", \"bullets\": [\"selected + reformulated bullet from candidate profile\"], \"suggested_bullets\": [\"plausible gap-filler covering missing JD keyword\"]}], \"skills\": {\"reordered label\": \"reordered value\"}}", "Editable Persona tailoring LLM prompt template - used when base_resume_id='persona' to constrain bullet selection from the rich pool"),
     "cover_letter_llm_provider": ("", "LLM provider for cover-letter generation (empty = use primary llm_provider)"),
     "cover_letter_llm_model": ("", "LLM model for cover-letter generation (empty = use primary llm_model)"),
     "cover_letter_llm_api_key": ("", "API key for cover-letter LLM provider"),
+    "cover_letter_llm_effort": ("", "Reasoning effort for cover-letter generation (empty = the Primary's on the same provider, else the model's default)"),
     "cover_letter_prompt": ("Write a cover letter for the candidate, targeting the job described below.\n\nGround everything in the candidate's resume (provided above) and the persona preferences. Do NOT invent experience, employers, titles, metrics, or skills the resume does not contain. Pull concrete achievements from the resume; reframe them toward what the job needs.\n\nStructure:\n- A short greeting line (use the recipient/company if known, else a neutral 'Dear Hiring Team,').\n- 3 body paragraphs: (1) a hook that connects the candidate to this specific role/company, (2) the strongest 2-3 proof points from the resume mapped to the job's needs, (3) a brief close on motivation/fit and a call to talk.\n- A closing line ('Sincerely,') and the candidate's name as signature.\n\nStyle:\n- {voice_instruction}\n- Length: {length_instruction}\n- First person. No corporate cliches, no 'I am writing to apply'. No em-dashes or unicode; ASCII only. Do NOT fabricate.\n\nJob:\n{job_description}\n\nReturn ONLY this JSON:\n{\"greeting\": \"Dear ...,\", \"body_paragraphs\": [\"...\", \"...\", \"...\"], \"closing\": \"Sincerely,\", \"signature\": \"Candidate Name\"}", "Editable cover-letter generation LLM prompt. Placeholders: {voice_instruction}, {length_instruction}, {job_description}."),
     "cover_letter_voice_presets": (json.dumps([
         {"id": "professional", "label": "Professional & direct", "instruction": "Concise, concrete, results-first. No corporate filler or cliches."},
@@ -299,6 +321,7 @@ DEFAULT_SETTINGS = {
     "autofill_llm_provider": ("", "LLM provider for application autofill (empty = use primary llm_provider)"),
     "autofill_llm_model": ("", "LLM model for application autofill (empty = use primary llm_model)"),
     "autofill_llm_api_key": ("", "API key for the autofill LLM (empty = use the primary llm_api_key)"),
+    "autofill_llm_effort": ("", "Reasoning effort for application autofill (empty = the Primary's on the same provider, else the model's default)"),
     "autofill_default_length": ("250", "Default target character length for autofill answers when a field has no maxlength"),
     "autofill_prompt": (
         "You are the candidate, writing a short first-person answer to a job-application question.\n\n"
@@ -379,6 +402,9 @@ _LLM_PROVIDERS = {"", "claude_api", "claude_code", "codex_cli", "antigravity_cli
 # (see routes_resumes._resolve_chain_score_depth).
 _DEPTHS = {"light", "full"}
 
+# Every effort any provider takes; llm_client drops a value the chosen provider lacks.
+_EFFORTS = {""} | {e for values in REASONING_EFFORTS.values() for e in values}
+
 ENUM_SETTING_VALUES = {
     "llm_provider": _LLM_PROVIDERS,
     "llm_fallback_provider": _LLM_PROVIDERS,
@@ -387,6 +413,13 @@ ENUM_SETTING_VALUES = {
     "cv_tailor_llm_provider": _LLM_PROVIDERS,
     "cover_letter_llm_provider": _LLM_PROVIDERS,
     "autofill_llm_provider": _LLM_PROVIDERS,
+    "llm_effort": _EFFORTS,
+    "llm_fallback_effort": _EFFORTS,
+    "scoring_llm_effort": _EFFORTS,
+    "email_llm_effort": _EFFORTS,
+    "cv_tailor_llm_effort": _EFFORTS,
+    "cover_letter_llm_effort": _EFFORTS,
+    "autofill_llm_effort": _EFFORTS,
     "scoring_default_depth": _DEPTHS,
     "on_save_action": {"off"} | _DEPTHS,
     "tailor_auto_quick_score": {"off", "false", "no", "0", "true", "yes", "1", ""} | _DEPTHS,
