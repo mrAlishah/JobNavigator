@@ -313,7 +313,11 @@ async def check_scrape_health(since=None):
             recent = db.query(ScrapeLog).filter(
                 ScrapeLog.source == source
             ).order_by(ScrapeLog.ran_at.desc()).limit(3).all()
-            if len(recent) >= 3 and all(r.error or r.is_warning for r in recent):
+            # `is_warning` is wider than this alert: since #17 it also marks a run where one
+            # board returned nothing while the others delivered. That belongs in the run
+            # summary and the health panel, not in an hourly page; here a run counts as bad
+            # only when it failed outright or found nothing at all.
+            if len(recent) >= 3 and all(r.error or not (r.jobs_found or 0) for r in recent):
                 alerts.append(source)
 
         if alerts:

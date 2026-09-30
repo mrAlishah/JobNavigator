@@ -3,6 +3,9 @@
 switch follows whether a mock email exists."""
 import pytest
 
+# The container runs pytest from /app without the repo's pytest.ini, so async tests mark themselves.
+pytestmark = pytest.mark.asyncio
+
 from backend import refresh_linkedin_session as rls
 from backend.models.db import Setting
 

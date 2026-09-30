@@ -69,6 +69,23 @@ async def test_api_providers_get_headroom_for_reasoning(monkeypatch, provider, f
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider,fn", [("openai", "_call_openai"), ("openrouter", "_call_openai")])
+async def test_openai_style_providers_keep_the_cap_until_an_effort_is_set(monkeypatch, provider, fn):
+    """gpt-4o and the small-cap OpenRouter models refuse a 16,600 cap; with no effort chosen nothing reasons."""
+    seen = _capture(monkeypatch, fn)
+    await L._dispatch(provider, "gpt-4o", "k", "p", "s", 600, effort="")
+    assert seen["args"][4] == 600
+
+
+@pytest.mark.asyncio
+async def test_claude_api_gets_headroom_by_default(monkeypatch):
+    """Claude 5 models reason unasked, so the headroom applies with the empty default too."""
+    seen = _capture(monkeypatch, "_call_claude_api")
+    await L._dispatch("claude_api", "claude-sonnet-5", "k", "p", "s", 600, effort="")
+    assert seen["args"][4] == 600 + REASONING_HEADROOM
+
+
+@pytest.mark.asyncio
 async def test_effort_none_keeps_the_callers_cap(monkeypatch):
     seen = _capture(monkeypatch, "_call_openai")
     await L._dispatch("openai", "gpt-6-sol", "k", "p", "s", 600, effort="none")

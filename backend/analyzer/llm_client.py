@@ -275,10 +275,15 @@ def _supported_effort(provider: str, effort: str) -> str:
 
 
 def _output_cap(provider: str, max_tokens: int, effort: str) -> int:
-    """The cap to send: API providers add REASONING_HEADROOM, except at effort "none", which does not reason."""
-    if provider in _CAPPED_PROVIDERS and effort != "none":
-        return max_tokens + REASONING_HEADROOM
-    return max_tokens
+    """The cap to send. Claude API models reason by default, so they always get
+    REASONING_HEADROOM. OpenAI and OpenRouter get it only when an effort is set: with the
+    empty default a non-reasoning model such as gpt-4o (16,384 output ceiling) would be
+    sent max_completion_tokens=16,600 and refuse every call. "none" never reasons."""
+    if provider not in _CAPPED_PROVIDERS or effort == "none":
+        return max_tokens
+    if provider != "claude_api" and not effort:
+        return max_tokens
+    return max_tokens + REASONING_HEADROOM
 
 
 async def _stream_openai(prompt, system, model, api_key, max_tokens, base_url=None, effort=""):
