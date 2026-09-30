@@ -172,7 +172,12 @@ replies, and manage it all from a React dashboard.
   response monitoring, Telegram alerts/digests.
 - **Dashboard:** React + Tailwind (dark mode), keyboard-driven Job Feed, editable
   settings (LLM providers/models, rubric, filters) — only secrets live in `.env`.
+## [Unreleased]
 
+### Added
+- **Modern Professional resume template:** added a clean, ATS-friendly resume template with structured sections for experience, skills, education, projects and publications.
+
+### Changed
 [Unreleased]: https://github.com/vesaias/JobNavigator/compare/v2.1.0...HEAD
 [2.1.0]: https://github.com/vesaias/JobNavigator/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/vesaias/JobNavigator/compare/v1.1.0...v2.0.0
