@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend port 3000 is no longer published**; the dashboard is reached through Caddy on port 80 only (a host port there served nothing and could clash with ranges Windows reserves for Hyper-V).
 
 ### Fixed
+- **Cover-letter PDFs** get the same fix as résumés in #19: page 2 of a long letter no longer starts at the paper edge; every page carries the template's own gutters.
 - **Reasoning headroom only where it is needed:** OpenAI and OpenRouter get the 16,000-token headroom only when an effort is set, so gpt-4o and other small-ceiling models keep working with the default; Claude API keeps it by default. **Scrape health** pages Telegram only when a source failed or found nothing three runs running; one quiet board among several stays in the run summary and the health panel.
 - **A Claude model that thinks no longer fails the call:** Sonnet 5, Opus 5.5 and Fable 5.1 can put a thinking block before the answer, and the pinned SDK reads that block as text `None`. The reply is now the text blocks only.
 - **The output cap leaves room for reasoning:** Claude API, OpenAI and OpenRouter calls get 16,000 extra tokens under the cap, except at effort `none`. Tokens are billed as used. If a reply uses the whole cap on reasoning, the error says to lower the effort, and the call goes to the fallback without a retry.

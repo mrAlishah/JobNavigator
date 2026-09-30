@@ -6,7 +6,7 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-@page { size: {{ 'letter' if page_format == 'letter' else 'A4' }}; margin: 0; }
+@page { size: {{ 'letter' if page_format == 'letter' else 'A4' }}; margin: 0.75in 0.85in; }
 html, body {
   font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
   font-size: 10.5pt; line-height: 1.5; color: #1a1a1a; background: #fff;
@@ -19,7 +19,9 @@ html, body {
    second page. None of it paints, so drop it when paginating, and keep the
    sign-off with the signature. */
 @media print {
-  .page { padding-bottom: 0; }
+  /* The preview uses .page padding. Printed pages use @page margins so every
+     continuation page receives the same whitespace. */
+  .page { width: auto; padding: 0; margin: 0; }
   .body p:last-child { margin-bottom: 0; }
   .closing { break-after: avoid; }
 }
