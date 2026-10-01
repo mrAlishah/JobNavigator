@@ -51,7 +51,7 @@ def _header_cells(d):
 def test_professional_left_template_puts_the_profile_image_left_of_the_name(api_client, test_db):
     d = _prof(api_client, test_db, image=True)
     assert len(d.inline_shapes) == 1
-    assert abs(d.inline_shapes[0].width.inches - 1.25) < 0.01
+    assert abs(d.inline_shapes[0].width.inches - 100 / 96) < 0.01
     assert _header_cells(d) == [(True, False), (False, True)]
 
 
@@ -77,6 +77,6 @@ def test_professional_docx_content_is_larger_than_headers_stay_put(api_client, t
     assert d.styles["Normal"].font.size.pt == 9.5
     by_text = {p.text: p for p in d.paragraphs}
     size = lambda text: by_text[text].runs[0].font.size.pt
-    assert size("Berlin | 2020 - 2024") == 9 and size("Ran the platform.") == 9      # meta + description: content
+    assert size("Berlin | 2020 - 2024") == 8.5 and size("Ran the platform.") == 8.5  # meta + description: content
     assert size("PM - Acme") == 9.5 and size("PROFESSIONAL EXPERIENCE") == 11.5     # entry title + section title: unchanged
     assert by_text["Dana Okonkwo"].runs[0].font.size.pt == 19

@@ -45,7 +45,7 @@ def test_palette_and_font_match_the_reference(tpl):
 @pytest.mark.parametrize("tpl", TEMPLATES)
 def test_entries_read_title_dash_company_then_location_pipe_date(tpl):
     html = _html(tpl)
-    assert "PM - Acme" in html
+    assert '<span class="entry-title">PM</span> <span>- Acme</span>' in html
     assert re.search(r"Berlin\s*\|\s*2020 - 2024", html)
     assert "Ran the platform." in html
 
@@ -71,8 +71,8 @@ def _size(html, selector):
 @pytest.mark.parametrize("tpl", TEMPLATES)
 def test_content_text_is_one_point_larger_than_the_reference_and_headers_are_not(tpl):
     html = _html(tpl)
-    for selector, pt in [("html, body", 9.5), ("ul.bullets li", 9.5), (".skill-line", 9), (".entry-meta", 9),
-                         (".entry-description", 9), (".edu-school", 9.5), (".edu-degree", 9), (".entry-url", 9)]:
+    for selector, pt in [("html, body", 9.5), ("ul.bullets li", 9.5), (".skill-line", 9), (".entry-meta", 8.5),
+                         (".entry-description", 8.5), (".edu-school", 9.5), (".edu-degree", 9), (".entry-url", 8.5)]:
         assert _size(html, selector) == pt, selector
     for selector, pt in [(".header h1", 19), (".header .title-line", 11.5), (".header .contact", 8),
                          (".section-title", 11.5), (".entry-title, .entry-name", 9.5)]:

@@ -51,8 +51,8 @@ html, body {
 
 .header-profile-image {
   flex-shrink: 0;
-  width: 120px;
-  height: 120px;
+  width: 100px;
+  height: 100px;
 }
 
 .header-profile-image img {
@@ -105,16 +105,16 @@ html, body {
 
 .entry-title, .entry-name { font-weight: 700; font-size: 9.5pt; color: #232323; }
 
-.entry-meta { font-size: 9pt; color: #5A5A5A; margin-bottom: 0.6pt; }
+.entry-meta { font-size: 8.5pt; color: #5A5A5A; margin-bottom: 0.6pt; }
 
 .entry-description {
-  font-size: 9pt;
+  font-size: 8.5pt;
   font-style: italic;
   color: #5A5A5A;
   margin-bottom: 0.9pt;
 }
 
-.entry-url { font-size: 9pt; color: #5A5A5A; }
+.entry-url { font-size: 8.5pt; color: #5A5A5A; }
 .entry-url a { color: #5A5A5A; text-decoration: none; }
 
 ul.bullets { list-style: none; }
@@ -200,7 +200,7 @@ ul.bullets li::before { content: '• '; }
     <div class="section-title">{{ section_titles.experience }}</div>
     {% for job in experience %}
     <div class="entry">
-      <div class="entry-title">{{ job.title }}{% if job.title and job.company %} - {% endif %}{{ job.company }}</div>
+      <div><span class="entry-title">{{ job.title }}</span>{% if job.title and job.company %} <span>- {{ job.company }}</span>{% elif job.company %}<span class="entry-title">{{ job.company }}</span>{% endif %}</div>
       {% if job.location or job.date %}
       <div class="entry-meta">{{ job.location }}{% if job.location and job.date %} | {% endif %}{{ job.date }}</div>
       {% endif %}

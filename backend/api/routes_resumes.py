@@ -470,7 +470,7 @@ def _build_docx(
     add = doc.add_paragraph
     if image and st.get("image") in ("left", "right"):
         # Same header as the PDF: profile image beside the name block, on the template's side.
-        pic_w = Inches(1.25)        # the PDF's 120px
+        pic_w = Inches(100 / 96)    # the PDF's 100px
         gap = Pt(16)
         table = doc.add_table(rows=1, cols=2)
         table.autofit = False
@@ -522,7 +522,10 @@ def _build_docx(
             if st:
                 p = doc.add_paragraph()
                 p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
-                runs(p, " - ".join(x for x in (job.get("title"), job.get("company")) if x), bold=True, pt=entry_pt, color=ink)
+                title, company = job.get("title"), job.get("company")
+                runs(p, title or company or "", bold=True, pt=entry_pt, color=ink)
+                if title and company:
+                    runs(p, " - " + company, pt=entry_pt, color=ink)
                 runs(doc.add_paragraph(), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted)
             else:
                 row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}", date)
