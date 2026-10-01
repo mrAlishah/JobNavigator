@@ -581,6 +581,8 @@ export default function ResumeEditor() {
                   <MenuItem icon="◎" hint="score only" onClick={() => runScore('light')}>Score again · light</MenuItem>
                   <MenuItem icon="◎" hint="with report" onClick={() => runScore('full')}>Score again · full</MenuItem>
                   {changes.length > 0 && <MenuItem icon="≋" hint={`${changes.length} to review`} onClick={() => { setHeadMenu(false); setReviewOpen(true) }}>Review changes</MenuItem>}
+                  <MenuItem icon={<CopyGlyph />} onClick={duplicateResume}>Duplicate</MenuItem>
+                  <MenuItem icon="✎" onClick={() => { setHeadMenu(false); setRenameOpen(true) }}>Rename</MenuItem>
                   <Rule style={{ margin: '4px 8px' }} />
                   <MenuHead>Job</MenuHead>
                   {/* `hint` slots deliberately empty: they read as single-letter
