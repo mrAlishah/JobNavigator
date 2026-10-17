@@ -10,7 +10,7 @@ import { useTitle } from '../useTitle'
 // resume_content is the same shape as a Resume's json_data).
 import {
   EMPTY, SECTION_ORDER, sectionCounts, makeMutators,
-  SectionShell, SectionEditor, BandRule,
+  SectionShell, SectionEditor, BandRule, StyleSettings, STYLE_AREAS, styleAreaLabel,
 } from './ResumeSections'
 import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, CopyGlyph, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
 
@@ -90,6 +90,10 @@ export default function ResumeEditor() {
   const [reviewed, setReviewed] = useState(false)   // tailoring changes acknowledged for this copy
   const [pdfErr, setPdfErr] = useState(false)      // last preview render failed
   const [pdfNonce, setPdfNonce] = useState(0)      // Retry re-arms the preview effect
+  const [selectMode, setSelectMode] = useState(false) // click-to-select HTML preview instead of the PDF
+  const [selected, setSelected] = useState(null)      // the area picked in that preview: page, image, a section or a part key
+  const [selectHtml, setSelectHtml] = useState(null)
+  const selectFrame = useRef(null)
   const [baseData, setBaseData] = useState(null)   // parent json_data (for diff + inline marks)
   const [jobData, setJobData] = useState(null)     // the copy's job (cv_scores, status)
   const [tracers, setTracers] = useState([])
@@ -447,6 +451,38 @@ export default function ResumeEditor() {
   }, [data, template, format, doc, id, pdfNonce])
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }, [pdfUrl])
 
+  // "Select & style": the same template and style CSS as the PDF, as HTML whose areas can be clicked
+  // (a PDF viewer swallows clicks). Re-rendered on the PDF's debounce so it follows the autosave.
+  const supportsStyle = !!templates.find((item) => item.id === template)?.docx?.style_overrides
+  const selectOn = selectMode && supportsStyle
+  useEffect(() => {
+    if (!doc || !selectOn) return undefined
+    const ac = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api.get(`/resumes/${id}/preview`, { params: { template, format, select: true }, responseType: 'text', signal: ac.signal })
+        setSelectHtml(r.data)
+      } catch (e) {
+        if (e.code === 'ERR_CANCELED' || e.name === 'CanceledError') return
+        console.error('preview', e)
+        setSelectHtml(null)
+      }
+    }, 800)
+    return () => { clearTimeout(timer); ac.abort() }
+  }, [data, template, format, doc, id, selectOn])
+  useEffect(() => {
+    if (!selectOn) return undefined
+    const onMessage = (e) => {
+      if (e.source !== selectFrame.current?.contentWindow || e.data?.type !== 'resume-select') return
+      if (STYLE_AREAS.includes(e.data.area)) setSelected(e.data.area)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [selectOn])
+  // the iframe reloads on every re-render, so the highlight is pushed again on load
+  const pushSelection = () => selectFrame.current?.contentWindow?.postMessage({ type: 'resume-select-set', area: selected }, '*')
+  useEffect(() => { pushSelection() }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // apply the decline-based review: declined modified/added → revert to base; kept
   // suggested bullets → append; then clear all suggested_bullets. One save.
   const applyReview = useCallback((declined) => {
@@ -667,11 +703,29 @@ export default function ResumeEditor() {
                   </Menu>
               )}
             </div>}
+            {supportsStyle && <Button size="sm" title="Click a section in the preview to style it" onClick={() => { setSelectMode((v) => !v); setSelected(null) }}>
+              {selectOn ? 'Back to PDF' : 'Select & style'}
+            </Button>}
             <DownloadMenu pdfUrl={pdfDownloadUrl} docxUrl={docxDownloadUrl} />
           </HeaderRow>
           <Surface radius="none" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            {pdfUrl && <iframe title="pdf" src={`${pdfUrl}#view=FitH`} style={{ width: '100%', height: '100%', border: 'none' }} />}
-            {pdfErr && !pdfUrl && (
+            {selectOn
+              ? <>
+                {selectHtml && <iframe ref={selectFrame} title="Select preview" srcDoc={selectHtml} sandbox="allow-scripts" onLoad={pushSelection}
+                  style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />}
+                {selected && (
+                  <Surface key={selected} style={{ position: 'absolute', top: 12, right: 12, width: 330, maxHeight: 'calc(100% - 24px)', overflow: 'auto', padding: 12, zIndex: 5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <Label>{styleAreaLabel(selected)}</Label>
+                      <Button size="sm" onClick={() => setSelected(null)}>Close</Button>
+                    </div>
+                    {selected.includes('.') && <div style={{ paddingTop: 6 }}><Button size="sm" onClick={() => setSelected(selected.split('.')[0])}>Select whole section</Button></div>}
+                    <StyleSettings data={data} mutate={mutate} hasProfileImage={templates.find((item) => item.id === template)?.has_profile_image} only={selected} />
+                  </Surface>
+                )}
+              </>
+              : pdfUrl && <iframe title="pdf" src={`${pdfUrl}#view=FitH`} style={{ width: '100%', height: '100%', border: 'none' }} />}
+            {pdfErr && !pdfUrl && !selectOn && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 9, color: 'var(--muted)', fontSize: 12.5 }}>
                 <span>Preview failed — the PDF could not be rendered.</span>
                 <Pill size="sm" onClick={() => setPdfNonce((n) => n + 1)}>Retry</Pill>
