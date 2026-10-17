@@ -453,7 +453,8 @@ export default function ResumeEditor() {
 
   // "Select & style": the same template and style CSS as the PDF, as HTML whose areas can be clicked
   // (a PDF viewer swallows clicks). Re-rendered on the PDF's debounce so it follows the autosave.
-  const supportsStyle = !!templates.find((item) => item.id === template)?.docx?.style_overrides
+  const tpl = templates.find((item) => item.id === template)
+  const supportsStyle = !!tpl?.docx?.style_overrides
   const selectOn = selectMode && supportsStyle
   useEffect(() => {
     if (!doc || !selectOn) return undefined
@@ -670,7 +671,7 @@ export default function ResumeEditor() {
           {SECTION_ORDER.map((name) => (
             <SectionShell key={name} name={name} count={counts[name]} open={open.has(name)} onToggle={() => toggle(name)}
               meta={changedSections.has(name) ? <span title="Contains unreviewed tailoring changes" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--warn)' }}>● changed by tailoring</span> : null}>
-              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={templates.find((item) => item.id === template)?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
+              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={tpl?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
                 onRemoved={(msg, undo) => pushToast({ kind: 'undo', msg, action: 'Undo', onAction: undo })} />
             </SectionShell>
           ))}
@@ -720,7 +721,7 @@ export default function ResumeEditor() {
                       <Button size="sm" onClick={() => setSelected(null)}>Close</Button>
                     </div>
                     {selected.includes('.') && <div style={{ paddingTop: 6 }}><Button size="sm" onClick={() => setSelected(selected.split('.')[0])}>Select whole section</Button></div>}
-                    <StyleSettings data={data} mutate={mutate} hasProfileImage={templates.find((item) => item.id === template)?.has_profile_image} only={selected} />
+                    <StyleSettings data={data} mutate={mutate} hasProfileImage={tpl?.has_profile_image} only={selected} />
                   </Surface>
                 )}
               </>

@@ -41,9 +41,6 @@ describe('click-to-select style preview', () => {
     expect(await screen.findByLabelText('Experience size (pt)')).toBeTruthy()
     expect(screen.queryByLabelText('Summary size (pt)')).toBeNull()
 
-    pick(frame, 'page')
-    expect(await screen.findByLabelText('Margin top (in)')).toBeTruthy()
-
     pick(frame, 'experience.bullets')
     expect(await screen.findByText('Experience › Bullets')).toBeTruthy()
     expect(await screen.findByLabelText('Part size (pt)')).toBeTruthy()

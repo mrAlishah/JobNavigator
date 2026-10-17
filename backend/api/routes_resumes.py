@@ -355,10 +355,14 @@ def _clamp(v, lo, hi):
     return min(max(v, lo), hi) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def _pick(src, spec: dict) -> dict:
+    return {k: n for k, (lo, hi) in spec.items() if (n := _clamp(src.get(k) if isinstance(src, dict) else None, lo, hi)) is not None}
+
+
 def _part_props(key: str, src: dict) -> dict:
     """Validated properties of one part: numbers clamped, enums / fonts / colours checked, anything
     else (and heading- or bullet-only properties on other parts) dropped."""
-    out = {k: n for k, (lo, hi) in _PART_NUMS.items() if (n := _clamp(src.get(k), lo, hi)) is not None}
+    out = _pick(src, _PART_NUMS)
     if isinstance(src.get("font"), str) and src["font"] in _STYLE_FONTS:
         out["font"] = src["font"]
     for k in ("bold", "italic"):
@@ -389,18 +393,10 @@ def _style_overrides(json_data: Optional[dict]) -> dict:
     if not isinstance(raw, dict):
         return {}
 
-    def pick(src, spec):
-        out = {}
-        for k, (lo, hi) in spec.items():
-            v = src.get(k) if isinstance(src, dict) else None
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                out[k] = min(max(v, lo), hi)
-        return out
-
     sections = {}
     for key in _STYLE_SECTIONS:
         src = (raw.get("sections") or {}).get(key) if isinstance(raw.get("sections"), dict) else None
-        s = pick(src, {"size": (6, 36), "line_height": (0.9, 2.5), **_BOX_NUMS})
+        s = _pick(src, {"size": (6, 36), "line_height": (0.9, 2.5), **_BOX_NUMS})
         if isinstance(src, dict) and isinstance(src.get("font"), str) and src["font"] in _STYLE_FONTS:
             s["font"] = src["font"]
         if s:
@@ -411,8 +407,8 @@ def _style_overrides(json_data: Optional[dict]) -> dict:
             parts[key] = props
     out = {
         "parts": parts,
-        "page": pick(raw.get("page"), dict.fromkeys(("top", "right", "bottom", "left"), (0, 1.5))),
-        "image": pick(raw.get("image"), dict.fromkeys(("width", "height"), (40, 300))),
+        "page": _pick(raw.get("page"), dict.fromkeys(("top", "right", "bottom", "left"), (0, 1.5))),
+        "image": _pick(raw.get("image"), dict.fromkeys(("width", "height"), (40, 300))),
         "sections": sections,
     }
     return {k: v for k, v in out.items() if v}
@@ -686,7 +682,7 @@ def _build_docx(
         # the card the paragraph sits in, its own part, then a run-level part (a skills label inside a skills line)
         return {**parts.get(getattr(par, "_entry", None), {}), **parts.get(getattr(par, "_part", None), {}), **parts.get(part, {})}
 
-    sec_state, card_state = {"key": None, "paras": []}, {"key": None, "paras": []}
+    open_groups = {"sec": [None, [], secs], "card": [None, [], parts]}      # kind -> [key, its paragraphs, style table]
 
     def group_box(paras, pp):
         # A section or card is a container in the PDF; Word has none. Its margin + padding become extra
@@ -707,22 +703,16 @@ def _build_docx(
             if v["right"]:
                 p.paragraph_format.right_indent = plus(p.paragraph_format.right_indent, v["right"])
 
-    def end_card():
-        group_box(card_state["paras"], parts.get(card_state["key"]))
-        card_state["key"], card_state["paras"] = None, []
+    def end(kind):
+        if kind == "sec":
+            end("card")
+        key, paras, table = open_groups[kind]
+        group_box(paras, table.get(key))
+        open_groups[kind][:2] = [None, []]
 
-    def begin_card(key):
-        end_card()
-        card_state["key"] = key
-
-    def end_section():
-        end_card()
-        group_box(sec_state["paras"], secs.get(sec_state["key"]))
-        sec_state["key"], sec_state["paras"] = None, []
-
-    def begin_section(key):
-        end_section()
-        sec_state["key"] = key
+    def begin(kind, key):
+        end(kind)
+        open_groups[kind][0] = key
 
     def fmt(r, pp):
         if "font" in pp:
@@ -771,10 +761,10 @@ def _build_docx(
     def para(part=None, into=None, **kw):
         p = (into or doc).add_paragraph(**kw)
         p._part = part
-        sec_state["paras"].append(p)
-        if card_state["key"]:
-            card_state["paras"].append(p)
-            p._entry = card_state["key"]
+        open_groups["sec"][1].append(p)
+        if open_groups["card"][0]:
+            open_groups["card"][1].append(p)
+            p._entry = open_groups["card"][0]
         if cur.get("line_height"):
             p.paragraph_format.line_spacing = cur["line_height"]
         box(p, part)
@@ -833,7 +823,7 @@ def _build_docx(
 
     def section(title):
         custom = custom_titles.get(title.lower())
-        begin_section(title.lower())
+        begin("sec", title.lower())
         use(title.lower())
         if not st:
             doc.add_heading(custom or title, level=2)
@@ -885,7 +875,7 @@ def _build_docx(
                 runs(para(style="List Bullet"), b)
 
     header = d.get("header") or {}
-    begin_section("header")
+    begin("sec", "header")
     use("header")
     name_pt = cur.pop("size", None)     # a header size sets the name; title and contact keep theirs
     target = None       # the header cell that holds the name block when there is a picture
@@ -932,7 +922,7 @@ def _build_docx(
             runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
 
     if d.get("summary"):
-        begin_section("summary")
+        begin("sec", "summary")
         use("summary")
         if "Summary" in st.get("titles", {}) or "summary" in custom_titles:
             section("Summary")
@@ -950,7 +940,7 @@ def _build_docx(
     if d.get("experience"):
         section("Experience")
         for job in d["experience"]:
-            begin_card("experience.entry")
+            begin("card", "experience.entry")
             date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
             if st:
                 p = para("experience.title")
@@ -970,7 +960,7 @@ def _build_docx(
     if d.get("education"):
         section("Education")
         for edu in d["education"]:
-            begin_card("education.entry")
+            begin("card", "education.entry")
             row(edu.get("school") or "", edu.get("location") or "", color=ink, part="education.school", rpart="education.location")
             if edu.get("degree"):
                 runs(para("education.degree"), edu["degree"], pt=meta_pt, kind="small")
@@ -979,13 +969,13 @@ def _build_docx(
         if d.get(key):
             section(title)
             for item in d[key]:
-                begin_card(f"{key}.entry")
+                begin("card", f"{key}.entry")
                 row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt, part=f"{key}.name")
                 if item.get("url"):
                     link(para(f"{key}.url"), item["url"], item["url"])
                 details(item, key)
 
-    end_section()
+    end("sec")
     for ppr in doc.element.body.iter(qn("w:pPr")):
         _sort_ppr(ppr)
     buf = io.BytesIO()

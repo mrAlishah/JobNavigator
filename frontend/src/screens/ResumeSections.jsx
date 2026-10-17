@@ -185,9 +185,8 @@ export function SettingsEditor({ data, setField, hasProfileImage }) {
   </div>
 }
 
-// Mirrors backend _STYLE_FONTS / _STYLE_SECTIONS; the API drops anything else.
+// Mirrors backend _STYLE_FONTS; the API drops anything else.
 const STYLE_FONTS = ['Arial', 'Calibri', 'Georgia', 'Times New Roman', 'Garamond', 'Verdana', 'Manrope']
-const STYLE_SECTIONS = ['Header', 'Summary', 'Experience', 'Skills', 'Education', 'Projects', 'Publications']
 
 // Writes one `data.style` value at `path`. '' / undefined removes it (template default) and
 // prunes the objects it empties, so a cleared style leaves no `style` key behind.
@@ -221,30 +220,35 @@ const SIDES = ['top', 'right', 'bottom', 'left']
 const BULLETS = [['•', '•'], ['–', '–'], ['▪', '▪'], ['◦', '◦'], ['none', 'None']]
 const FLAG = (cur) => (cur === undefined ? '' : cur ? '1' : '0')
 
+const STYLE_ROW = { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }
+// An uncontrolled number box (so "1." survives typing); '' or junk clears the value.
+function StyleNumber({ label, value, onValue, ...rest }) {
+  return <Input type="number" step="any" width="84px" ariaLabel={label} title={label} defaultValue={value ?? ''} {...rest}
+    onChange={(v) => onValue(v === '' || Number.isNaN(Number(v)) ? undefined : Number(v))} />
+}
+
 // Every property of one selected part (`style.parts[partKey]`). Uncontrolled number inputs, like StyleSettings.
 function PartProperties({ data, mutate, partKey }) {
   const [round, setRound] = useState(0)
   const cur = data.style?.parts?.[partKey] || {}
   const set = (prop, v) => setStyle(mutate, ['parts', partKey, prop], v)
-  const num = (prop, label, placeholder) => <Input key={`${round}${prop}`} type="number" step="any" width="84px" ariaLabel={label} title={label}
-    placeholder={placeholder} defaultValue={cur[prop] ?? ''} onChange={(v) => set(prop, v === '' || Number.isNaN(Number(v)) ? undefined : Number(v))} />
+  const num = (prop, label, placeholder) => <StyleNumber key={`${round}${prop}`} label={label} value={cur[prop]} placeholder={placeholder} onValue={(v) => set(prop, v)} />
   const choice = (prop, label, options, flag) => <Select width="120px" ariaLabel={label} value={flag ? FLAG(cur[prop]) : cur[prop] ?? ''}
     options={[['', 'Default'], ...options]} onPick={(v) => set(prop, v === '' ? undefined : flag ? v === '1' : v)} />
   const color = (prop, label) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
     <input type="color" aria-label={label} title={label} value={cur[prop] || '#000000'} onChange={(e) => set(prop, e.target.value)} />
     {cur[prop] && <Button size="sm" title={`Clear ${label}`} onClick={() => set(prop, undefined)}>×</Button>}
   </span>
-  const row = { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }
   return <div key={round} style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
     <Label>Text</Label>
-    <div style={row}>
+    <div style={STYLE_ROW}>
       <Select width="150px" ariaLabel="Part font" value={cur.font || ''} options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]} onPick={(v) => set('font', v || undefined)} />
       {num('size', 'Part size (pt)', 'size')}
       {num('line_height', 'Part line height', 'line')}
       {num('letter_spacing', 'Part letter spacing (pt)', 'spacing')}
       {color('color', 'Part color')}
     </div>
-    <div style={row}>
+    <div style={STYLE_ROW}>
       {choice('bold', 'Part bold', [['1', 'Bold'], ['0', 'Normal']], true)}
       {choice('italic', 'Part italic', [['1', 'Italic'], ['0', 'Normal']], true)}
       {choice('align', 'Part align', [['left', 'Left'], ['center', 'Center'], ['right', 'Right'], ['justify', 'Justify']])}
@@ -252,15 +256,15 @@ function PartProperties({ data, mutate, partKey }) {
     </div>
     {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
       <Label>{cap(kind)} (pt)</Label>
-      <div style={row}>{SIDES.map((side) => num(`${kind}_${side}`, `Part ${kind} ${side} (pt)`, side))}</div>
+      <div style={STYLE_ROW}>{SIDES.map((side) => num(`${kind}_${side}`, `Part ${kind} ${side} (pt)`, side))}</div>
     </React.Fragment>)}
     {partKey.endsWith('.heading') && <>
       <Label>Rule under the heading</Label>
-      <div style={row}>{num('rule_width', 'Part rule width (pt)', 'width (0 = none)')}{color('rule_color', 'Part rule color')}</div>
+      <div style={STYLE_ROW}>{num('rule_width', 'Part rule width (pt)', 'width (0 = none)')}{color('rule_color', 'Part rule color')}</div>
     </>}
     {partKey.endsWith('.bullets') && <>
       <Label>Bullets</Label>
-      <div style={row}>{choice('bullet', 'Part bullet', BULLETS)}{num('indent', 'Part indent (pt)', 'indent')}</div>
+      <div style={STYLE_ROW}>{choice('bullet', 'Part bullet', BULLETS)}{num('indent', 'Part indent (pt)', 'indent')}</div>
     </>}
     <div><Button size="sm" onClick={() => { setStyle(mutate, ['parts', partKey], undefined); setRound((n) => n + 1) }}>Reset style</Button></div>
   </div>
@@ -273,16 +277,12 @@ export function StyleSettings({ data, mutate, hasProfileImage, only }) {
   const [round, setRound] = useState(0)
   const style = data.style || {}
   if (only?.includes('.')) return <PartProperties key={only} data={data} mutate={mutate} partKey={only} />
-  const num = (path, label, extra) => {
-    const current = path.reduce((o, k) => o?.[k], style)
-    return <Input key={`${round}${path}`} type="number" step="any" width="84px" ariaLabel={label} title={label} defaultValue={current ?? ''}
-      onChange={(v) => setStyle(mutate, path, v === '' || Number.isNaN(Number(v)) ? undefined : Number(v))} {...extra} />
-  }
-  const row = { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }
+  const num = (path, label, extra) => <StyleNumber key={`${round}${path}`} label={label} value={path.reduce((o, k) => o?.[k], style)}
+    onValue={(v) => setStyle(mutate, path, v)} {...extra} />
   return <div key={round} style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
     {only === 'page' && <>
       <Label>Page margins (in)</Label>
-      <div style={row}>
+      <div style={STYLE_ROW}>
         {['top', 'right', 'bottom', 'left'].map((side) => <React.Fragment key={side}>
           {num(['page', side], `Margin ${side} (in)`, { placeholder: side })}
         </React.Fragment>)}
@@ -290,29 +290,26 @@ export function StyleSettings({ data, mutate, hasProfileImage, only }) {
     </>}
     {only === 'image' && <>
       <Label>Profile image (px)</Label>
-      <div style={row}>
+      <div style={STYLE_ROW}>
         {['width', 'height'].map((side) => <React.Fragment key={side}>
           {num(['image', side], `Image ${side} (px)`, { placeholder: side, disabled: hasProfileImage === false })}
         </React.Fragment>)}
       </div>
     </>}
-    {STYLE_SECTIONS.filter((name) => only === name.toLowerCase()).map((name) => {
-      const key = name.toLowerCase()
-      return <React.Fragment key={key}>
-        <div style={row}>
-          <span style={{ width: 84, fontSize: 12 }}>{name}</span>
-          <Select width="150px" ariaLabel={`${name} font`} value={style.sections?.[key]?.font || ''}
-            options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]}
-            onPick={(v) => setStyle(mutate, ['sections', key, 'font'], v || undefined)} />
-          {num(['sections', key, 'size'], `${name} size (pt)`, { placeholder: 'size' })}
-          {num(['sections', key, 'line_height'], `${name} line height`, { placeholder: 'line' })}
-        </div>
-        {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
-          <Label>{`Whole section ${kind} (pt)`}</Label>
-          <div style={row}>{SIDES.map((side) => num(['sections', key, `${kind}_${side}`], `Section ${kind} ${side} (pt)`, { placeholder: side }))}</div>
-        </React.Fragment>)}
-      </React.Fragment>
-    })}
+    {STYLE_PARTS[only] && <>
+      <div style={STYLE_ROW}>
+        <span style={{ width: 84, fontSize: 12 }}>{cap(only)}</span>
+        <Select width="150px" ariaLabel={`${cap(only)} font`} value={style.sections?.[only]?.font || ''}
+          options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]}
+          onPick={(v) => setStyle(mutate, ['sections', only, 'font'], v || undefined)} />
+        {num(['sections', only, 'size'], `${cap(only)} size (pt)`, { placeholder: 'size' })}
+        {num(['sections', only, 'line_height'], `${cap(only)} line height`, { placeholder: 'line' })}
+      </div>
+      {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
+        <Label>{`Whole section ${kind} (pt)`}</Label>
+        <div style={STYLE_ROW}>{SIDES.map((side) => num(['sections', only, `${kind}_${side}`], `Section ${kind} ${side} (pt)`, { placeholder: side }))}</div>
+      </React.Fragment>)}
+    </>}
     <div><Button size="sm" onClick={() => {
       setStyle(mutate, only === 'page' || only === 'image' ? [only] : ['sections', only], undefined)
       setRound((n) => n + 1)
