@@ -59,7 +59,7 @@ Scoring compares each job with your **base résumés**, so you need at least one
 
 **Résumés › New base résumé** opens the structured editor (header, summary, experience, education, skills, projects…). Faster: **Import PDF…** parses an existing résumé with the LLM you just configured. The PDF must contain selectable text, not a scanned image. Check the result, fix what the parser got wrong, save.
 
-With a **Professional** template, **Select & style** in the preview toolbar turns the preview into a clickable page: click a section, a kind of line (job title, dates, bullets…), the profile image or the page, and set its font, size, spacing, colour and more in the panel. It applies to the PDF and the Word export; **Back to PDF** shows the exact print layout.
+With a **Professional** template, **Select & style** in the preview toolbar turns the preview into a clickable page: click a section, a card (one job or school), a kind of line (job title, dates, bullets…), the profile image or the page, and set its font, size, spacing, colour and more in the panel. It applies to the PDF and the Word export; **Back to PDF** shows the exact print layout.
 
 You can have several base résumés (say, one for data roles, one for management). Jobs score against each and keep the best.
 
