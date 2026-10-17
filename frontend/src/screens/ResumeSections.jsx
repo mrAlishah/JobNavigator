@@ -186,7 +186,7 @@ export function SettingsEditor({ data, setField, hasProfileImage }) {
 }
 
 // Mirrors backend _STYLE_FONTS / _STYLE_SECTIONS; the API drops anything else.
-const STYLE_FONTS = ['Arial', 'Calibri', 'Georgia', 'Times New Roman', 'Garamond', 'Verdana']
+const STYLE_FONTS = ['Arial', 'Calibri', 'Georgia', 'Times New Roman', 'Garamond', 'Verdana', 'Manrope']
 const STYLE_SECTIONS = ['Header', 'Summary', 'Experience', 'Skills', 'Education', 'Projects', 'Publications']
 
 // Writes one `data.style` value at `path`. '' / undefined removes it (template default) and
@@ -206,11 +206,11 @@ function setStyle(mutate, path, value) {
 export const STYLE_PARTS = {
   header: ['name', 'title', 'contact'],
   summary: ['heading', 'text'],
-  experience: ['heading', 'title', 'meta', 'description', 'bullets'],
+  experience: ['heading', 'entry', 'title', 'meta', 'description', 'bullets'],
   skills: ['heading', 'label', 'line'],
-  education: ['heading', 'school', 'location', 'degree'],
-  projects: ['heading', 'name', 'url', 'description', 'bullets'],
-  publications: ['heading', 'name', 'description', 'bullets'],
+  education: ['heading', 'entry', 'school', 'location', 'degree'],
+  projects: ['heading', 'entry', 'name', 'url', 'description', 'bullets'],
+  publications: ['heading', 'entry', 'name', 'description', 'bullets'],
 }
 export const STYLE_AREAS = ['page', 'image', ...Object.keys(STYLE_PARTS), ...Object.entries(STYLE_PARTS).flatMap(([sec, ps]) => ps.map((x) => `${sec}.${x}`))]
 const cap = (w) => w[0].toUpperCase() + w.slice(1)
@@ -298,14 +298,20 @@ export function StyleSettings({ data, mutate, hasProfileImage, only }) {
     </>}
     {STYLE_SECTIONS.filter((name) => only === name.toLowerCase()).map((name) => {
       const key = name.toLowerCase()
-      return <div key={key} style={row}>
-        <span style={{ width: 84, fontSize: 12 }}>{name}</span>
-        <Select width="150px" ariaLabel={`${name} font`} value={style.sections?.[key]?.font || ''}
-          options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]}
-          onPick={(v) => setStyle(mutate, ['sections', key, 'font'], v || undefined)} />
-        {num(['sections', key, 'size'], `${name} size (pt)`, { placeholder: 'size' })}
-        {num(['sections', key, 'line_height'], `${name} line height`, { placeholder: 'line' })}
-      </div>
+      return <React.Fragment key={key}>
+        <div style={row}>
+          <span style={{ width: 84, fontSize: 12 }}>{name}</span>
+          <Select width="150px" ariaLabel={`${name} font`} value={style.sections?.[key]?.font || ''}
+            options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]}
+            onPick={(v) => setStyle(mutate, ['sections', key, 'font'], v || undefined)} />
+          {num(['sections', key, 'size'], `${name} size (pt)`, { placeholder: 'size' })}
+          {num(['sections', key, 'line_height'], `${name} line height`, { placeholder: 'line' })}
+        </div>
+        {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
+          <Label>{`Whole section ${kind} (pt)`}</Label>
+          <div style={row}>{SIDES.map((side) => num(['sections', key, `${kind}_${side}`], `Section ${kind} ${side} (pt)`, { placeholder: side }))}</div>
+        </React.Fragment>)}
+      </React.Fragment>
     })}
     <div><Button size="sm" onClick={() => {
       setStyle(mutate, only === 'page' || only === 'image' ? [only] : ['sections', only], undefined)
