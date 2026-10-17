@@ -400,7 +400,7 @@ export default function Settings() {
       ]],
       ['resumes', '', 'Resumes', '', [
         { kind: 'profile-image', label: 'Profile image', help: 'Image for templates that support it (Professional, etc.). Stored globally and used by all resumes.',
-          info: 'Upload a PNG, JPEG, GIF or WebP image (max 2MB). The image appears in resume templates that have profile image support.' },
+          info: 'Upload a PNG, JPEG, GIF or WebP image (max 10MB). The image appears in resume templates that have profile image support.' },
       ]],
       ['letters', '', 'Cover letters', '', [
         SEL('Default voice', 'The list comes from the voice presets below.', 'cover_letter_default_voice', voiceOpts, { w: '260px' }),

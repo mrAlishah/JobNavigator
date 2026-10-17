@@ -123,10 +123,10 @@ async def upload_profile_image(file: UploadFile = File(...)):
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only image files (PNG, JPEG, GIF, WebP) are allowed")
 
-    # Read and validate file size (max 2MB)
+    # Read and validate file size (max 10MB; the stored copy is thumbnailed, so this only bounds the upload)
     content = await file.read()
-    if len(content) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File size must be less than 2MB")
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File size must be less than 10MB")
 
     try:
         # Open image and optimize
@@ -138,8 +138,8 @@ async def upload_profile_image(file: UploadFile = File(...)):
                 img = img.convert('RGBA')
             bg.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
             img = bg
-        # Keep the stored image small enough for PDF rendering.
-        img.thumbnail((120, 120), Image.Resampling.LANCZOS)
+        # Small enough for PDF rendering, large enough for the 300px ceiling of the résumé image-size style option.
+        img.thumbnail((300, 300), Image.Resampling.LANCZOS)
         # Save as JPEG for smaller size
         output = BytesIO()
         img.save(output, format='JPEG', quality=85, optimize=True)
