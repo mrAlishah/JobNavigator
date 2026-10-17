@@ -4,7 +4,7 @@
 // Real data is looser than the EMPTY skeleton (unknown keys, missing sections). Every mutation
 // goes through mutate(), which deep-clones and writes one path, so unknown keys survive.
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
-import { Band, Card, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Textarea } from '../ui'
+import { Band, Button, Card, Check, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Select, Textarea } from '../ui'
 
 // The résumé sections' add-line IS ui.jsx's DashedAdd (accent ink · 1px dashed
 // --dashadd-border · r6 · 11.5 · h28, `big` = 32/12/500) — re-exported under the
@@ -20,7 +20,10 @@ export const kb = (fn, role = 'button') => ({
   onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e) } },
 })
 export const EMPTY = { header: { name: '', contact_items: [] }, summary: '', experience: [], skills: {}, education: [], projects: [], publications: [] }
-export const SECTION_ORDER = ['Header', 'Summary', 'Experience', 'Skills', 'Education', 'Projects', 'Publications']
+export const SECTION_ORDER = ['Header', 'Summary', 'Experience', 'Skills', 'Education', 'Projects', 'Publications', 'Settings']
+export const PERSONA_SECTIONS = SECTION_ORDER.filter((name) => name !== 'Settings')
+// The résumé editor lists every section, Settings included; Persona uses PERSONA_SECTIONS.
+export const resumeSectionNames = () => SECTION_ORDER
 
 // Section counts for the collapsed header, from whichever sections exist.
 export const sectionCounts = (data) => ({
@@ -143,7 +146,24 @@ export function SectionShell({ name, count, open, onToggle, meta, children }) {
 
 // Renders the right section editor for a SECTION_ORDER name. Tailoring props are
 // optional — Persona passes none, so nothing renders as changed.
-export function SectionEditor({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved }) {
+const TITLED_SECTIONS = new Set(['Summary', 'Skills', 'Experience', 'Education', 'Projects', 'Publications'])
+
+export function SectionEditor(props) {
+  if (!TITLED_SECTIONS.has(props.name)) return <SectionBody {...props} />
+  const { data, mutate } = props
+  const key = props.name.toLowerCase()
+  // An empty title means "keep the template's own heading". Written with mutate, not setField,
+  // because setField ignores a path whose parent (`section_titles`) doesn't exist yet.
+  return <>
+    <div style={{ paddingTop: 10 }}>
+      <MicroField label="Header title" value={data.section_titles?.[key]} placeholder="Template default"
+        onChange={(v) => mutate((d) => { d.section_titles = { ...d.section_titles, [key]: v } })} />
+    </div>
+    <SectionBody {...props} />
+  </>
+}
+
+function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage }) {
   switch (name) {
     case 'Header': return <HeaderEditor data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Summary': return <SummaryEditor pageHint={pageHint} data={data} setField={setField} baseSummary={baseData?.summary} />
@@ -152,8 +172,151 @@ export function SectionEditor({ name, data, setField, mutate, baseData, emptyNot
     case 'Education': return <EducationEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Projects': return <ProjectsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Publications': return <PublicationsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
+    case 'Settings': return <SettingsEditor data={data} setField={setField} hasProfileImage={hasProfileImage} />
     default: return null
   }
+}
+
+export function SettingsEditor({ data, setField, hasProfileImage }) {
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 10 }}>
+    <Check checked={data.profile_image_enabled !== false} onChange={(value) => setField('profile_image_enabled', value)}
+      disabled={hasProfileImage === false} label="Show profile image"
+      title={hasProfileImage === false ? 'The selected template has no profile image' : 'Show the profile image in templates that support it.'} />
+    <Check checked={data.footer_enabled !== false} onChange={(value) => setField('footer_enabled', value)}
+      label="Show footer" title="Show name, job title and company at the bottom of each tailored PDF page." />
+  </div>
+}
+
+// Mirrors backend _STYLE_FONTS; the API drops anything else.
+const STYLE_FONTS = ['Arial', 'Calibri', 'Georgia', 'Times New Roman', 'Garamond', 'Verdana', 'Manrope']
+
+// Writes one `data.style` value at `path`. '' / undefined removes it (template default) and
+// prunes the objects it empties, so a cleared style leaves no `style` key behind.
+function setStyle(mutate, path, value) {
+  mutate((d) => {
+    const trail = [d.style = d.style || {}]
+    path.slice(0, -1).forEach((k) => { trail.push(trail[trail.length - 1][k] = trail[trail.length - 1][k] || {}) })
+    const leaf = trail[trail.length - 1]
+    if (value === undefined) delete leaf[path[path.length - 1]]; else leaf[path[path.length - 1]] = value
+    for (let i = trail.length - 1; i > 0; i--) if (!Object.keys(trail[i]).length) delete trail[i - 1][path[i - 1]]
+    if (!Object.keys(d.style).length) delete d.style
+  })
+}
+
+// Mirrors backend _STYLE_PARTS: each part is one class of element a click can select.
+export const STYLE_PARTS = {
+  header: ['name', 'title', 'contact'],
+  summary: ['heading', 'text'],
+  experience: ['heading', 'entry', 'title', 'meta', 'description', 'bullets'],
+  skills: ['heading', 'label', 'line'],
+  education: ['heading', 'entry', 'school', 'location', 'degree'],
+  projects: ['heading', 'entry', 'name', 'url', 'description', 'bullets'],
+  publications: ['heading', 'entry', 'name', 'description', 'bullets'],
+}
+export const STYLE_AREAS = ['page', 'image', ...Object.keys(STYLE_PARTS), ...Object.entries(STYLE_PARTS).flatMap(([sec, ps]) => ps.map((x) => `${sec}.${x}`))]
+const cap = (w) => w[0].toUpperCase() + w.slice(1)
+export const styleAreaLabel = (key) => key === 'page' ? 'Page margins' : key === 'image' ? 'Profile image'
+  : key.includes('.') ? key.split('.').map(cap).join(' › ') : `${cap(key)} section`
+
+const SIDES = ['top', 'right', 'bottom', 'left']
+const BULLETS = [['•', '•'], ['–', '–'], ['▪', '▪'], ['◦', '◦'], ['none', 'None']]
+const FLAG = (cur) => (cur === undefined ? '' : cur ? '1' : '0')
+
+const STYLE_ROW = { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }
+// An uncontrolled number box (so "1." survives typing); '' or junk clears the value.
+function StyleNumber({ label, value, onValue, ...rest }) {
+  return <Input type="number" step="any" width="84px" ariaLabel={label} title={label} defaultValue={value ?? ''} {...rest}
+    onChange={(v) => onValue(v === '' || Number.isNaN(Number(v)) ? undefined : Number(v))} />
+}
+
+// Every property of one selected part (`style.parts[partKey]`). Uncontrolled number inputs, like StyleSettings.
+function PartProperties({ data, mutate, partKey }) {
+  const [round, setRound] = useState(0)
+  const cur = data.style?.parts?.[partKey] || {}
+  const set = (prop, v) => setStyle(mutate, ['parts', partKey, prop], v)
+  const num = (prop, label, placeholder) => <StyleNumber key={`${round}${prop}`} label={label} value={cur[prop]} placeholder={placeholder} onValue={(v) => set(prop, v)} />
+  const choice = (prop, label, options, flag) => <Select width="120px" ariaLabel={label} value={flag ? FLAG(cur[prop]) : cur[prop] ?? ''}
+    options={[['', 'Default'], ...options]} onPick={(v) => set(prop, v === '' ? undefined : flag ? v === '1' : v)} />
+  const color = (prop, label) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    <input type="color" aria-label={label} title={label} value={cur[prop] || '#000000'} onChange={(e) => set(prop, e.target.value)} />
+    {cur[prop] && <Button size="sm" title={`Clear ${label}`} onClick={() => set(prop, undefined)}>×</Button>}
+  </span>
+  return <div key={round} style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
+    <Label>Text</Label>
+    <div style={STYLE_ROW}>
+      <Select width="150px" ariaLabel="Part font" value={cur.font || ''} options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]} onPick={(v) => set('font', v || undefined)} />
+      {num('size', 'Part size (pt)', 'size')}
+      {num('line_height', 'Part line height', 'line')}
+      {num('letter_spacing', 'Part letter spacing (pt)', 'spacing')}
+      {color('color', 'Part color')}
+    </div>
+    <div style={STYLE_ROW}>
+      {choice('bold', 'Part bold', [['1', 'Bold'], ['0', 'Normal']], true)}
+      {choice('italic', 'Part italic', [['1', 'Italic'], ['0', 'Normal']], true)}
+      {choice('align', 'Part align', [['left', 'Left'], ['center', 'Center'], ['right', 'Right'], ['justify', 'Justify']])}
+      {choice('case', 'Part case', [['none', 'As typed'], ['upper', 'UPPERCASE']])}
+    </div>
+    {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
+      <Label>{cap(kind)} (pt)</Label>
+      <div style={STYLE_ROW}>{SIDES.map((side) => num(`${kind}_${side}`, `Part ${kind} ${side} (pt)`, side))}</div>
+    </React.Fragment>)}
+    {partKey.endsWith('.heading') && <>
+      <Label>Rule under the heading</Label>
+      <div style={STYLE_ROW}>{num('rule_width', 'Part rule width (pt)', 'width (0 = none)')}{color('rule_color', 'Part rule color')}</div>
+    </>}
+    {partKey.endsWith('.bullets') && <>
+      <Label>Bullets</Label>
+      <div style={STYLE_ROW}>{choice('bullet', 'Part bullet', BULLETS)}{num('indent', 'Part indent (pt)', 'indent')}</div>
+    </>}
+    <div><Button size="sm" onClick={() => { setStyle(mutate, ['parts', partKey], undefined); setRound((n) => n + 1) }}>Reset style</Button></div>
+  </div>
+}
+
+// The preview's properties panel: the controls for the selected area `only` — 'page', 'image', a
+// section key or a part key ('experience.bullets').
+export function StyleSettings({ data, mutate, hasProfileImage, only }) {
+  // Uncontrolled inputs (so "1." survives typing); Reset remounts them with the emptied values.
+  const [round, setRound] = useState(0)
+  const style = data.style || {}
+  if (only?.includes('.')) return <PartProperties key={only} data={data} mutate={mutate} partKey={only} />
+  const num = (path, label, extra) => <StyleNumber key={`${round}${path}`} label={label} value={path.reduce((o, k) => o?.[k], style)}
+    onValue={(v) => setStyle(mutate, path, v)} {...extra} />
+  return <div key={round} style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
+    {only === 'page' && <>
+      <Label>Page margins (in)</Label>
+      <div style={STYLE_ROW}>
+        {['top', 'right', 'bottom', 'left'].map((side) => <React.Fragment key={side}>
+          {num(['page', side], `Margin ${side} (in)`, { placeholder: side })}
+        </React.Fragment>)}
+      </div>
+    </>}
+    {only === 'image' && <>
+      <Label>Profile image (px)</Label>
+      <div style={STYLE_ROW}>
+        {['width', 'height'].map((side) => <React.Fragment key={side}>
+          {num(['image', side], `Image ${side} (px)`, { placeholder: side, disabled: hasProfileImage === false })}
+        </React.Fragment>)}
+      </div>
+    </>}
+    {STYLE_PARTS[only] && <>
+      <div style={STYLE_ROW}>
+        <span style={{ width: 84, fontSize: 12 }}>{cap(only)}</span>
+        <Select width="150px" ariaLabel={`${cap(only)} font`} value={style.sections?.[only]?.font || ''}
+          options={[['', 'Template default'], ...STYLE_FONTS.map((f) => [f, f])]}
+          onPick={(v) => setStyle(mutate, ['sections', only, 'font'], v || undefined)} />
+        {num(['sections', only, 'size'], `${cap(only)} size (pt)`, { placeholder: 'size' })}
+        {num(['sections', only, 'line_height'], `${cap(only)} line height`, { placeholder: 'line' })}
+      </div>
+      {['margin', 'padding'].map((kind) => <React.Fragment key={kind}>
+        <Label>{`Whole section ${kind} (pt)`}</Label>
+        <div style={STYLE_ROW}>{SIDES.map((side) => num(['sections', only, `${kind}_${side}`], `Section ${kind} ${side} (pt)`, { placeholder: side }))}</div>
+      </React.Fragment>)}
+    </>}
+    <div><Button size="sm" onClick={() => {
+      setStyle(mutate, only === 'page' || only === 'image' ? [only] : ['sections', only], undefined)
+      setRound((n) => n + 1)
+    }}>Reset style</Button></div>
+  </div>
 }
 
 export function HeaderEditor({ data, setField, mutate, onRemoved }) {

@@ -400,9 +400,9 @@ def test_rotate_webhook_secret_returns_a_new_value(client, test_db):
     assert r.json()["webhook_secret"] != "old"
 
 
-@pytest.mark.xfail(strict=True, reason="R4-T1-26")
 def test_telegram_webhook_null_message_is_not_a_500(client, test_db, monkeypatch):
-    """`callback_query.get("message", {}).get(...)` breaks on an explicit null."""
+    """`callback_query.get("message", {}).get(...)` broke on an explicit null (R4-T1-26,
+    fixed in MT-17 when the webhook started reading the chat from the message)."""
     import backend.notifier.telegram as tg
 
     async def _noop(data, message_id):

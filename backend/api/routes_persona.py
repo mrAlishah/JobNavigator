@@ -1,4 +1,4 @@
-"""Persona endpoints — singleton record per applicant."""
+"""Persona endpoints — one record per account (backend.accounts.owned.get_persona)."""
 import copy
 import logging
 import re
@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from backend.accounts.owned import get_owned_or_404, get_persona as _account_persona
 from backend.models.db import get_db, Persona, Resume, utcnow
 from backend.api._input import str_field
 
@@ -44,12 +45,8 @@ def _to_dict(p: Persona) -> dict:
 
 @router.get("")
 def get_persona(db: Session = Depends(get_db)):
-    """Return the singleton Persona (id=1)."""
-    p = db.query(Persona).filter(Persona.id == 1).first()
-    if not p:
-        # Should never happen — seed_persona runs at startup. Guard anyway.
-        raise HTTPException(status_code=500, detail="Persona singleton missing — restart app to re-seed")
-    return _to_dict(p)
+    """Return the current account's Persona (created empty on first access)."""
+    return _to_dict(_account_persona(db))
 
 
 @router.patch("")
@@ -59,9 +56,7 @@ def update_persona(updates: dict, db: Session = Depends(get_db)):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown persona node(s): {sorted(unknown)}")
 
-    p = db.query(Persona).filter(Persona.id == 1).first()
-    if not p:
-        raise HTTPException(status_code=500, detail="Persona singleton missing")
+    p = _account_persona(db)
 
     for k, v in updates.items():
         setattr(p, k, v)
@@ -160,7 +155,7 @@ def _contact_from_header(header: dict) -> dict:
 # Header, which lives in `contact`); defaults keep the node's shape stable for the editor.
 _CONTENT_DEFAULTS = (
     ("summary", ""), ("experience", []), ("skills", {}),
-    ("education", []), ("projects", []), ("publications", []),
+    ("education", []), ("projects", []), ("publications", []), ("section_titles", {}),
 )
 
 
@@ -224,9 +219,7 @@ def _import_summary(contact: dict, content: dict, source: str) -> dict:
 @router.post("/import")
 async def import_persona(request: Request, file: Optional[UploadFile] = File(None), db: Session = Depends(get_db)):
     """Populate the persona from a base résumé (`{"resume_id": ...}`) or an uploaded résumé PDF (same parser as POST /api/resumes/import-pdf, stores nothing as a Resume row), replacing `contact` and `resume_content` wholesale while leaving the other nodes untouched."""
-    p = db.query(Persona).filter(Persona.id == 1).first()
-    if not p:
-        raise HTTPException(status_code=500, detail="Persona singleton missing")
+    p = _account_persona(db)
 
     if file is not None and getattr(file, "filename", None):
         from backend.api.routes_resumes import check_pdf_name, check_pdf_size, parse_resume_pdf
@@ -244,9 +237,7 @@ async def import_persona(request: Request, file: Optional[UploadFile] = File(Non
         resume_id = str((body or {}).get("resume_id") or "").strip() if isinstance(body, dict) else ""
         if not resume_id:
             raise HTTPException(status_code=400, detail="Send a resume_id, or upload a PDF file")
-        r = db.query(Resume).filter(Resume.id == resume_id).first()
-        if not r:
-            raise HTTPException(status_code=404, detail="Resume not found")
+        r = get_owned_or_404(db, Resume, resume_id)
         if not r.is_base:
             raise HTTPException(
                 status_code=400,
@@ -288,10 +279,7 @@ def append_qa_bank(body: dict, db: Session = Depends(get_db)):
     if not question or not answer:
         raise HTTPException(status_code=400, detail="question and answer are required")
 
-    p = db.query(Persona).filter(Persona.id == 1).first()
-    if not p:
-        p = Persona(id=1, qa_bank=[])
-        db.add(p)
+    p = _account_persona(db)
 
     bank = list(p.qa_bank or [])
     bank.append({"question": question, "answer": answer})

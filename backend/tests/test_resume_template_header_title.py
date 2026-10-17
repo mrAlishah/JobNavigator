@@ -24,7 +24,7 @@ def _render(name, header):
     return env.get_template("template.html.j2").render(
         header=header, summary="A summary.", experience=[], skills={},
         education=[], projects=[], publications=[],
-        page_format="letter", fonts_base="", fonts={},
+        page_format="letter", fonts_base="", fonts={}, section_titles={},
     )
 
 

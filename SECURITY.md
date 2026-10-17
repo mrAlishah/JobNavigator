@@ -1,42 +1,22 @@
 # Security
 
-## Reporting a vulnerability
-
-Found a security issue? Please **don't open a public issue**. Instead:
-
-- Use GitHub's [Private Vulnerability Reporting](https://github.com/vesaias/JobNavigator/security/advisories/new) (preferred)
-- Or message me via the GitHub profile
-
-I'll acknowledge within a few days. This is a personal project so response isn't 24/7, but I take security seriously.
-
-## Scope
-
-**In scope:**
-- Authentication bypass on the dashboard
-- Credential leakage (API keys, OAuth tokens, scraper credentials)
-- SSRF / XSS / SQL injection
-- PII exposure from cached pages, CVs, scoring reports
-- Dependency vulnerabilities affecting the running app
-
-**Out of scope:**
-- Issues requiring local OS-level compromise
-- ToS concerns about scraping third-party sites (see [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md))
-- Bugs in upstream libraries (report those upstream)
-- Rate-limit or account-ban issues from third-party services
+JobNavigator is a personal, self-hosted project maintained on a best-effort basis. There are no security guarantees, no SLA and no bug bounty. Run it at your own risk.
 
 ## Supported versions
 
-Only `main` is supported — there are no tagged releases yet. If you're running an older commit, please pull latest first.
+Only the latest release, best effort. Older releases get no fixes; upgrade first.
 
-## Credentials stored
+## Reporting
 
-JobNavigator stores these in the DB `settings` table (redacted in API responses):
+- Something sensitive (auth bypass, a leak between accounts, credential exposure, SSRF/XSS/injection): use GitHub's [private vulnerability reporting](https://github.com/vesaias/JobNavigator/security/advisories/new).
+- Anything else (hardening ideas, dependency bumps): a normal issue or PR.
 
-- LLM API keys (Anthropic, OpenAI, etc.)
-- LinkedIn mock account credentials
-- Jobright.ai credentials
-- Gmail OAuth refresh token
-- Telegram bot token
-- Dashboard API key
+Out of scope: a compromised host, scraping-terms concerns (see [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md)), upstream library bugs, rate limits or bans from third-party sites.
 
-All are local to your Postgres instance. Treat your DB backups as sensitive — they contain these in plaintext. See [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md) for broader disclaimers.
+## Running it safely
+
+- Keep it on `localhost` or a private network, or put it behind your own authentication (VPN, reverse-proxy auth). It is not built to face the internet.
+- Set an install password (Settings › System › Advanced › dashboard API key) right after the first login; with none set, the dashboard is open.
+- Account PINs (optional, 4 digits, scrypt-hashed, a 30 s wait after five wrong tries) keep household members out of each other's accounts. They are a privacy latch, not protection against a determined person who has the install password.
+- Secrets that only the server needs go in `.env`. API keys and tokens entered in Settings (LLM providers, Apify, Telegram, Gmail, LinkedIn, Jobright) are stored in plaintext in the database and redacted in API responses.
+- Database backups (`backups/`) contain those credentials: treat them like `.env`.

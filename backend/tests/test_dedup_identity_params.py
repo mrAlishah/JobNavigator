@@ -59,6 +59,20 @@ def test_linkedin_currentjobid_is_kept_only_where_it_is_the_identity():
     assert p == q
 
 
+def test_indeed_search_context_does_not_split_a_posting():
+    """A /viewjob URL copied off a search page carries params no tracking list names."""
+    stored = "https://ca.indeed.com/viewjob?jk=766d6014290cd498"
+    copied = stored + "&from=serp&vjs=3&advn=123&tk=1abc&xpse=SoA"
+    assert make_external_id("", "", copied) == make_external_id("", "", stored)
+    assert _normalize_url(copied) == stored
+
+
+def test_indeed_url_without_a_job_key_keeps_its_query():
+    """Only a URL that names a posting is cut down to the key; a search stays a search."""
+    assert _normalize_url("https://ca.indeed.com/jobs?q=devops&l=Vancouver") == \
+        "https://ca.indeed.com/jobs?q=devops&l=Vancouver"
+
+
 def test_tracking_stripping_on_other_hosts_is_unchanged():
     a = _normalize_url("https://boards.greenhouse.io/acme/jobs/123?utm_source=x&gclid=y&ref=z")
     assert a == "https://boards.greenhouse.io/acme/jobs/123"

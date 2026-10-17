@@ -106,3 +106,11 @@ export const flightDetail = (rows) => list(rows)
   .map((r) => (typeof r === 'string' ? { job_type: r, meta: null } : r))
   .filter((r) => r && r.job_type)
   .map((r) => ({ job_type: r.job_type, meta: r.meta || null }))
+
+// QA V-05: scoring runs against base résumés (or a Persona with résumé content),
+// so an account with neither cannot score. True only once BOTH answers loaded and
+// came back empty — an unknown state (still loading, or a request failed) keeps
+// the score actions as they were.
+export const NO_BASES_HINT = 'Add a base résumé to score jobs'
+export const noScoreSource = ({ basesLoaded, bases, personaLoaded, personaHasContent }) =>
+  !!basesLoaded && Array.isArray(bases) && bases.length === 0 && !!personaLoaded && !personaHasContent

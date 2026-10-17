@@ -55,7 +55,7 @@ async def test_logged_pair_equals_dispatched_pair(test_db, monkeypatch, feature,
     _seed_primary_only(test_db)
     dispatched = []
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         dispatched.append((provider, model))
         return {"text": "ok", "usage": {"input_tokens": 10, "output_tokens": 2,
                                         "cache_read_tokens": 0, "cache_write_tokens": 0}}
@@ -86,7 +86,7 @@ async def test_logged_pair_follows_fallback_dispatch(test_db, monkeypatch):
     test_db.commit()
     monkeypatch.setattr(L.asyncio, "sleep", _no_sleep)
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         if provider == "claude_code":
             raise RuntimeError("primary down")
         return {"text": "ok", "usage": {}}
@@ -113,7 +113,7 @@ async def test_cover_letter_body_reports_dispatched_pair(test_db, monkeypatch):
 
     _seed_primary_only(test_db)
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         return {"text": '{"greeting":"Dear team,","body_paragraphs":["a"],'
                         '"closing":"Sincerely,","signature":"Me"}',
                 "usage": {"input_tokens": 5, "output_tokens": 1}}

@@ -119,12 +119,17 @@ async def test_cli_runner_kills_on_timeout(monkeypatch):
         def __init__(self):
             super().__init__()
             self.killed = False
+            self.dead = asyncio.Event()
 
         async def communicate(self, input=None):
-            await asyncio.sleep(10)
+            # A real process stops when it is killed, and _run_cli now reads what it
+            # printed before that. Sleeping through the kill would not.
+            await self.dead.wait()
+            return b"", b""
 
         def kill(self):
             self.killed = True
+            self.dead.set()
 
         async def wait(self):
             return 0
@@ -144,7 +149,7 @@ async def test_cli_runner_kills_on_timeout(monkeypatch):
 async def test_call_llm_skips_retries_and_goes_to_fallback_on_non_retryable(monkeypatch):
     attempts = []
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         attempts.append(provider)
         if provider == "codex_cli":
             raise NonRetryableLLMError("Codex usage limit reached")
@@ -158,7 +163,7 @@ async def test_call_llm_skips_retries_and_goes_to_fallback_on_non_retryable(monk
     monkeypatch.setattr(llm_client, "_get_setting", lambda db, key, default="": {
         "llm_fallback_provider": "openai", "llm_fallback_model": "gpt-5.4-mini", "llm_fallback_api_key": "k",
     }.get(key, default))
-    monkeypatch.setattr(llm_client, "resolve_llm_config", lambda feature="", db=None: {"provider": "codex_cli", "model": "gpt-5.6-sol", "api_key": ""})
+    monkeypatch.setattr(llm_client, "resolve_llm_config", lambda feature="", db=None: {"provider": "codex_cli", "model": "gpt-5.6-sol", "api_key": "", "effort": ""})
 
     res = await llm_client.call_llm("p", "s", 100)
     assert res["provider"] == "openai"

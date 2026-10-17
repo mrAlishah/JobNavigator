@@ -8,18 +8,45 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from backend.models.db import get_db, Search, Setting, ScrapeLog, Job, is_acknowledged
+from backend.countries import (DEFAULT_COUNTRY, compose_location, normalize_country,
+                               split_country_suffix, supported_countries)
+from backend.models.db import get_db, Search, ScrapeLog, Job, is_acknowledged
+from backend.accounts.settings import get_setting
 
 logger = logging.getLogger("jobnavigator.routes_searches")
 
 # The two seeded browser-extension searches ("Extension"/"Extension LI") have no
 # scraper and must not be deleted — jobs arrive by push; PATCH stays open for the editor.
 EXTENSION_MODES = ("extension", "linkedin_extension")
+# Modes that send location and country to the board, so the pair must agree.
+COUNTRY_MODES = ("keyword", "apify")
+# Modes whose test runs in the background and returns a run_id to poll.
+SLOW_TEST_MODES = ("levels_fyi", "linkedin_personal", "jobright", "freehire", "apify", "caribbeanjobs", "trulyremote")
 
 router = APIRouter(prefix="/searches", tags=["searches"])
 
-# In-memory store for async test results
-_test_results: dict[str, dict] = {}  # run_id -> {"status": "running"|"done", "result": ...}
+# In-memory store for async test results, each tagged with the account that started it
+# (MT-4): run_id -> {"status": "running"|"done", "result": ..., "account": "<uuid>"}.
+_test_results: dict[str, dict] = {}
+
+
+# One background Test in flight per search and account (R30 S-07). An Apify Test is a paid
+# run (one actor run per board), and the dashboard's confirm dialog is no guard against a
+# double click, a second tab or a scripted client. Keyed like a job_monitor run
+# ("search_test:<search id>", plus "@<account>" for a member, so another account's Test of
+# its own search never blocks this one); the value is the Test's run_id.
+_tests_in_flight: dict[str, str] = {}
+
+
+def _test_flight_key(search_id) -> str:
+    from backend.job_monitor import _make_key, _run_account
+    return _make_key("search_test", str(search_id), _run_account("search_test"))
+
+
+def _account_key() -> Optional[str]:
+    from backend.accounts.context import current_account
+    acc = current_account.get()
+    return str(acc) if acc is not None else None
 
 
 class SearchCreate(BaseModel):
@@ -29,7 +56,8 @@ class SearchCreate(BaseModel):
     search_mode: str = "keyword"
     search_term: Optional[str] = None
     direct_url: Optional[str] = None
-    location: str = "United States"
+    location: str = ""
+    country: str = DEFAULT_COUNTRY
     is_remote: Optional[bool] = None
     job_type: str = "fulltime"
     # Optional so the editor can clear the field: an explicit null falls back to
@@ -69,11 +97,112 @@ def list_searches(db: Session = Depends(get_db)):
     return [_search_to_dict(s, last_log.get(str(s.id))) for s in searches]
 
 
+@router.get("/countries")
+def list_countries():
+    """The countries Indeed supports, straight from the installed jobspy library, so the search form offers exactly what the scraper accepts."""
+    return [{"value": value, "label": label} for value, label in supported_countries()]
+
+
+@router.get("/apify-boards")
+def list_apify_boards():
+    """The boards an Apify search can pick, in PRESETS order; the first one is the default for a new search.
+    `price_per_1k` (USD, Free plan) and `test_max_usd` (the spend cap a Test run of that board is
+    started with) let the Test button name the cost before a paid preview; `max_results` is the
+    per-board cap on Results wanted."""
+    from backend.scraper.sources.apify import MAX_RESULTS, PREVIEW_LIMIT, PRESETS, charge_cap_usd
+    return [{"value": key, "label": p.label, "hint": p.hint, "actor": p.actor,
+             "price_per_1k": p.price_per_1k, "test_max_usd": charge_cap_usd(p, PREVIEW_LIMIT),
+             "preview_limit": PREVIEW_LIMIT, "max_results": MAX_RESULTS}
+            for key, p in PRESETS.items()]
+
+
+def _apify_sources(sources) -> list:
+    """The boards of an Apify search, or 400: a non-empty list of Apify board keys only.
+
+    The JobSpy default list (SearchCreate.sources) or a keyword search patched to
+    `apify` would otherwise reach the paid source with boards nobody picked."""
+    from backend.scraper.sources.apify import PRESETS
+    sources = sources if isinstance(sources, list) else []
+    unknown = [s for s in sources if s not in PRESETS]
+    if not sources or unknown:
+        raise HTTPException(
+            status_code=400,
+            detail="An Apify search needs at least one Apify board from GET /api/searches/apify-boards"
+                   + (f"; not Apify boards: {', '.join(map(str, unknown))}" if unknown else ""),
+        )
+    return sources
+
+
+def _validated_country(value) -> str:
+    """The stored form of a country name, or 400. An unknown name would otherwise reach jobspy and raise mid-scrape."""
+    name = normalize_country(value)
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown country '{value}' — pick one from GET /api/searches/countries",
+        )
+    return name
+
+
+def _validated_location(location, country) -> str:
+    """The location text, or 400 when its own country segment names another country.
+
+    The scraper appends the label of `country` to `location`, so the pair must
+    agree. It used to fail loudly when it did not: Indeed answered a Canadian
+    city on the US site with zero rows. Composed, the same pair becomes a silent
+    wrong-country scrape — "Canada" with country "usa" would query "United
+    States" and store US rows. The write path refuses the pair instead of
+    choosing one side for the user.
+    """
+    named = split_country_suffix(location)[1]
+    if named and named != country:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Location '{location}' names {named}, but Country is {country} "
+                   f"— leave the country out of Location, or change Country",
+        )
+    return location
+
+
 @router.post("")
 def create_search(data: SearchCreate, db: Session = Depends(get_db)):
-    search = Search(**data.model_dump())
+    payload = data.model_dump()
+    payload["country"] = _validated_country(payload["country"])
+    # Only keyword (JobSpy) and Apify searches read location with country; for the URL-driven modes
+    # (Jobright, Levels.fyi, freehire, caribbeanjobs, trulyremote, LinkedIn Personal) country means nothing and must not reject a row.
+    if payload.get("search_mode", "keyword") in COUNTRY_MODES:
+        payload["location"] = _validated_location(payload["location"], payload["country"])
+    if payload.get("search_mode") == "apify":
+        from backend.scraper.sources.apify import clamp_results
+        payload["sources"] = _apify_sources(payload.get("sources"))
+        if payload.get("results_wanted") is not None:
+            payload["results_wanted"] = clamp_results(payload["results_wanted"])
+        # A paid source starts paused unless the client asked for an active search, so
+        # nothing bills before the user has looked at the boards and Results wanted.
+        if "active" not in data.model_fields_set:
+            payload["active"] = False
+    search = Search(**payload)
     db.add(search)
     db.commit()
+    return _search_to_dict(search)
+
+
+@router.get("/clone-sources")
+def search_clone_sources(db: Session = Depends(get_db)):
+    """Other accounts' searches for the "Copy from…" picker: `{accounts: [{id, name, color, role, items: [{id, name, search_mode, search_term, direct_url, location, country, active}]}]}`. Empty `accounts` with a single account; never the caller's own rows; built-in extension searches left out."""
+    from backend.accounts import admin
+    return admin.search_clone_sources(db)
+
+
+@router.post("/clone")
+def clone_search(body: dict, db: Session = Depends(get_db)):
+    """Copy one search of another account (`{source_id}`) into this account, due at once. A name clash becomes "<name> (copy)" / "(copy 2)". 409 `needs_two_accounts` / `builtin_search`, 404 `source_not_found` for an own or unknown id."""
+    from backend.accounts import admin
+    try:
+        new_id = admin.clone_search(db, (body or {}).get("source_id"))
+    except admin.CloneError as e:
+        return JSONResponse(status_code=e.status, content={"detail": e.code, "message": e.message})
+    search = db.query(Search).filter(Search.id == new_id).first()
     return _search_to_dict(search)
 
 
@@ -85,11 +214,35 @@ def update_search(search_id: str, updates: dict, db: Session = Depends(get_db)):
 
     allowed = {
         "name", "active", "sources", "search_mode", "search_term", "direct_url",
-        "location", "is_remote", "job_type", "hours_old", "results_wanted",
+        "location", "country", "is_remote", "job_type", "hours_old", "results_wanted",
         "title_include_keywords", "title_exclude_keywords", "company_filter",
         "company_exclude", "exclude_active_companies", "max_pages", "min_fit_score",
         "require_salary", "auto_scoring_depth", "run_interval_minutes",
     }
+    if "country" in updates:
+        updates["country"] = _validated_country(updates["country"])
+    # The pair is validated, not one field: a patch may carry either one, and the
+    # other keeps its stored value. This runs before the writes, so a rejected
+    # patch leaves the row alone.
+    mode = updates.get("search_mode", search.search_mode) or "keyword"
+    if mode in COUNTRY_MODES and ("location" in updates or "country" in updates):
+        _validated_location(
+            updates.get("location", search.location),
+            updates.get("country", search.country) or DEFAULT_COUNTRY,
+        )
+    if mode == "apify":
+        from backend.scraper.sources.apify import clamp_results
+        switching = search.search_mode != "apify"
+        if switching or "sources" in updates:
+            updates["sources"] = _apify_sources(updates.get("sources", search.sources))
+        if switching or "results_wanted" in updates:
+            rw = updates.get("results_wanted", search.results_wanted)
+            if rw is not None:
+                updates["results_wanted"] = clamp_results(rw)
+        # Switching an existing search to the paid source pauses it too, unless the
+        # patch sets `active` itself (same rule as a new Apify search).
+        if switching and "active" not in updates:
+            updates["active"] = False
     for key, value in updates.items():
         if key in allowed:
             setattr(search, key, value)
@@ -158,6 +311,18 @@ async def trigger_search(search_id: str, auto_score: bool = None, db: Session = 
             detail="Extension searches have no scraper to run — "
                    "jobs arrive from the browser extension",
         )
+    # A keyword source with no term or URL would run, find nothing, and leave the run history
+    # at "nothing ran"; say why up front instead.
+    from backend.scraper.orchestrator import search_config_error
+    config_error = search_config_error(search)
+    if config_error:
+        raise HTTPException(status_code=409, detail=config_error)
+    if search.search_mode == "apify" and _tests_in_flight.get(_test_flight_key(search.id)):
+        # A paid Test of this search is still running; a run now would buy the same
+        # results a second time (R30 S-07).
+        return JSONResponse(status_code=409, content={
+            "detail": "test_running",
+            "message": f"A Test of “{search.name}” is still running; run it when the Test finishes"})
     search_name = search.name
 
     async def _do():
@@ -172,26 +337,48 @@ async def trigger_search(search_id: str, auto_score: bool = None, db: Session = 
         from backend.scraper.orchestrator import summarize_search_run
         return summarize_search_run(search_name, result)
 
-    from backend.job_monitor import launch_background, JobAlreadyRunningError
+    from backend.job_monitor import (
+        launch_background, JobAlreadyRunningError, scheduled_scrape_conflict_response,
+    )
     try:
         run_id = launch_background("search_run", _do, trigger="manual",
                                    scope_key=search_id, meta={"search": search_name})
         return {"run_id": run_id, "status": "running", "search_id": search_id, "search": search_name}
     except JobAlreadyRunningError as e:
-        logger.info("Duplicate search run rejected for %s", search_id)
-        return JSONResponse(status_code=409, content={"detail": f"{e.job_type} is already running"})
+        logger.info("Search run rejected for %s: %s", search_id, e)
+        # QA F6 / R4-01: `scheduled_scrape_running` while the scheduled scrape is live.
+        return scheduled_scrape_conflict_response(e)
 
 
 @router.post("/{search_id}/test")
 async def test_search(search_id: str, db: Session = Depends(get_db)):
-    """Run a search test: keyword mode runs synchronously and returns results directly, while slow modes (levels_fyi, linkedin_personal, jobright, freehire) launch in the background and return a run_id to poll."""
+    """Run a search test: keyword mode runs synchronously and returns results directly, while SLOW_TEST_MODES launch in the background and return a run_id to poll."""
     search = db.query(Search).filter(Search.id == search_id).first()
     if not search:
         raise HTTPException(status_code=404, detail="Search not found")
 
-    if search.search_mode in ("levels_fyi", "linkedin_personal", "jobright", "freehire"):
+    if search.search_mode in SLOW_TEST_MODES:
+        flight_key = _test_flight_key(search.id)
+        in_flight = _tests_in_flight.get(flight_key)
+        if in_flight:
+            # The same search's Test is still running: hand back its run_id to poll instead
+            # of starting another (for Apify, another paid run).
+            return JSONResponse(status_code=409, content={
+                "detail": "test_running", "run_id": in_flight,
+                "message": f"A Test of “{search.name}” is already running"})
+        if search.search_mode == "apify":
+            from backend.job_monitor import is_running
+            if is_running("search_run", search_id) or is_running("search_run", str(search.id)):
+                return JSONResponse(status_code=409, content={
+                    "detail": "search_running",
+                    "message": f"“{search.name}” is running now; test it when the run finishes"})
         run_id = str(uuid.uuid4())[:8]
-        _test_results[run_id] = {"status": "running", "result": None}
+        account = _account_key()
+
+        def _store(status, result):
+            _test_results[run_id] = {"status": status, "result": result, "account": account}
+        _store("running", None)
+        _tests_in_flight[flight_key] = run_id
 
         # Snapshot search fields needed by the test functions (DB session won't survive across await)
         from backend.models.db import SessionLocal
@@ -200,7 +387,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             try:
                 test_search_obj = test_db.query(Search).filter(Search.id == search_id).first()
                 if not test_search_obj:
-                    _test_results[run_id] = {"status": "done", "result": {"error": "Search not found"}}
+                    _store("done", {"error": "Search not found"})
                     return
                 if search.search_mode == "levels_fyi":
                     result = await _test_levelsfyi_search(test_search_obj, test_db)
@@ -210,21 +397,38 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                 elif search.search_mode == "freehire":
                     from backend.scraper.sources.freehire import preview as test_freehire
                     result = await test_freehire(test_search_obj, test_db)
+                elif search.search_mode == "apify":
+                    from backend.scraper.sources.apify import preview as test_apify
+                    result = await test_apify(test_search_obj, test_db)
+                elif search.search_mode == "caribbeanjobs":
+                    from backend.scraper.sources.caribbeanjobs import preview as test_caribbeanjobs
+                    result = await test_caribbeanjobs(test_search_obj, test_db)
+                elif search.search_mode == "trulyremote":
+                    from backend.scraper.sources.trulyremote import preview as test_trulyremote
+                    result = await test_trulyremote(test_search_obj, test_db)
                 else:
                     from backend.scraper.sources.linkedin_personal import preview as test_linkedin_personal
                     result = await test_linkedin_personal(test_search_obj, test_db)
-                _test_results[run_id] = {"status": "done", "result": result}
+                _store("done", result)
             except Exception as e:
                 logger.error(f"Test run {run_id} failed: {e}")
-                _test_results[run_id] = {"status": "done", "result": {"error": str(e)}}
+                _store("done", {"error": str(e)})
             finally:
+                if _tests_in_flight.get(flight_key) == run_id:
+                    _tests_in_flight.pop(flight_key, None)
                 test_db.close()
 
-        asyncio.create_task(_run_test())
+        # QA F4 / R1-08: the browser's owner unlock does not ride along into the task.
+        from backend.accounts.context import owner_unlocked
+
+        async def _run_test_locked():
+            with owner_unlocked(False):
+                await _run_test()
+        asyncio.create_task(_run_test_locked())
         return JSONResponse(status_code=202, content={"run_id": run_id, "status": "running"})
 
     if search.search_mode != "keyword":
-        raise HTTPException(status_code=400, detail="Test only supports keyword, levels_fyi, linkedin_personal, jobright, and freehire searches")
+        raise HTTPException(status_code=400, detail="Test only supports keyword, levels_fyi, linkedin_personal, jobright, freehire, apify, caribbeanjobs, and trulyremote searches")
 
     # ── Keyword (JobSpy) test — runs synchronously ──
     import re
@@ -236,17 +440,16 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
     if not sources:
         raise HTTPException(status_code=400, detail="No JobSpy sources configured")
 
-    proxy_row = db.query(Setting).filter(Setting.key == "proxy_url").first()
-    proxy_url = proxy_row.value if proxy_row and proxy_row.value else None
+    proxy_url = get_setting(db, "proxy_url") or None
 
     kwargs = {
         "site_name": sources,
         "search_term": search.search_term or "",
-        "location": search.location or "United States",
+        "location": compose_location(search.location, search.country),
         "results_wanted": search.results_wanted or 50,
         "hours_old": search.hours_old or 24,
         "job_type": search.job_type or "fulltime",
-        "country_indeed": "USA",
+        "country_indeed": search.country or DEFAULT_COUNTRY,
         "verbose": 2,
     }
 
@@ -256,9 +459,14 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
     if proxy_url:
         kwargs["proxies"] = [proxy_url]
 
+    from backend.scraper.sources.jobspy import _board_errors, _capture_source_errors
+
     start = time.time()
     try:
-        jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
+        # The same capture as the scheduled run: jobspy reports a failed board
+        # only in its log, so without it a failed board just disappears here.
+        with _capture_source_errors(sources) as capture:
+            jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
     except Exception:
         logger.exception("JobSpy scrape_jobs failed during test for search %s", search.name)
         return {
@@ -277,6 +485,8 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         }
 
     duration = round(time.time() - start, 1)
+    # {board: text} for each board that failed; source_breakdown keeps its shape.
+    source_errors = _board_errors(capture.errors, jobs_df, sources)
 
     if jobs_df is None or jobs_df.empty:
         return {
@@ -291,6 +501,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             "body_unchecked_count": 0,
             "body_phrase_count": 0,
             "source_breakdown": {},
+            "source_errors": source_errors,
             "company_breakdown": {},
             "include_keywords": search.title_include_keywords or [],
             "exclude_keywords": search.title_exclude_keywords or [],
@@ -359,11 +570,11 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                 global_hits[idx] = matched_global
                 mask[idx] = False
 
-    body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
+    body_raw = get_setting(db, "body_exclusion_phrases")
     body_phrases = []
-    if body_row and body_row.value:
+    if body_raw:
         try:
-            body_phrases = json.loads(body_row.value)
+            body_phrases = json.loads(body_raw)
         except json.JSONDecodeError:
             pass
     # Record which phrase hit (and which rows couldn't be checked at all) so each row can report it inline.
@@ -479,6 +690,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         "body_unchecked_count": body_unchecked_count,
         "body_phrase_count": len(body_phrases),
         "source_breakdown": source_breakdown,
+        "source_errors": source_errors,
         "company_breakdown": company_breakdown,
         "include_keywords": include_kw,
         "exclude_keywords": exclude_kw,
@@ -502,7 +714,8 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
 async def get_test_result(run_id: str):
     """Poll for async test results. Returns 200 with result when done, 202 while running."""
     entry = _test_results.get(run_id)
-    if not entry:
+    # Another account's run (or an untagged entry) is answered exactly like an unknown id.
+    if not entry or entry.get("account") != _account_key():
         raise HTTPException(status_code=404, detail="Test run not found")
     if entry["status"] == "running":
         return JSONResponse(status_code=202, content={"run_id": run_id, "status": "running"})
@@ -579,18 +792,17 @@ async def _test_levelsfyi_search(search, db):
     exclude_kw = search.title_exclude_keywords or []
     company_filter = search.company_filter or []
 
-    from backend.models.db import Setting
     import json
     from backend.scraper._shared.filters import build_search_exclude_sets
     global_exclude_set, search_exclude_set = build_search_exclude_sets(db, search)
     search_exclude = list(search_exclude_set)
     all_exclude = list(global_exclude_set | search_exclude_set)
 
-    body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
+    body_raw = get_setting(db, "body_exclusion_phrases")
     body_phrases = []
-    if body_row and body_row.value:
+    if body_raw:
         try:
-            body_phrases = json.loads(body_row.value)
+            body_phrases = json.loads(body_raw)
         except json.JSONDecodeError:
             pass
 
@@ -735,6 +947,7 @@ def _search_to_dict(s: Search, last_log=None) -> dict:
         "search_term": s.search_term,
         "direct_url": s.direct_url,
         "location": s.location,
+        "country": s.country,
         "is_remote": s.is_remote,
         "job_type": s.job_type,
         "hours_old": s.hours_old,

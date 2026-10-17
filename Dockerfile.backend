@@ -21,13 +21,37 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
 # Install subscription-backed CLIs for Claude Code and Codex providers.
+# Both are pinned: a layer cache would otherwise keep whatever version the first build found.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code @openai/codex@0.154.0 \
+    && npm install -g @anthropic-ai/claude-code@2.1.281 @openai/codex@0.156.1 \
     && rm -rf /var/lib/apt/lists/*
+
+# Antigravity CLI (Google subscription). The installer pins no version and the
+# binary updates itself, so switch the auto-updater off for reproducible builds.
+# The installer always takes the newest release; AGY_VERSION records the one the
+# last build got and is the cache key, so bumping it reinstalls.
+ARG AGY_VERSION=1.2.13
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash \
+    && echo "agy $("$HOME/.local/bin/agy" --version) installed, AGY_VERSION=${AGY_VERSION}"
+ENV PATH="/root/.local/bin:${PATH}"
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+
+# agy ships 57 tools and reads files unasked. `--sandbox` restricts the terminal
+# only, so the deny list is the lever that keeps the agent inside plain text.
+# It sits outside /root/.gemini because agy rewrites settings.json as it starts
+# and the volume mounts over that path; the adapter installs it before each call.
+COPY backend/antigravity-settings.json /opt/antigravity-settings.json
 
 COPY backend/ ./backend/
 # .env is passed via docker-compose env_file, not baked into image
+
+# Stamp the release this image was built from. Compose bind-mounts ./backend over
+# /app/backend, so after a `git pull` the code can be newer than the image; at
+# startup backend/image_check.py compares this stamp (and the installed packages)
+# with the mounted code and reports a mismatch in the log and on /health.
+RUN mkdir -p /opt/jobnavigator \
+    && python -c "from backend.version import APP_VERSION; print(APP_VERSION)" > /opt/jobnavigator/image-version
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

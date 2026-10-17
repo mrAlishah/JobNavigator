@@ -31,7 +31,7 @@ VOLUME=jn_fe_node_modules
 IMAGE=node:20-alpine
 
 # Repo root from this script's own location, as a path the Docker daemon accepts
-# (V:/JTrakProject, not the MSYS /v/JTrakProject).
+# (D:/src/JobNavigator, not the MSYS /d/src/JobNavigator).
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../.." && { pwd -W 2>/dev/null || pwd; })
 FRONTEND="$ROOT/frontend"

@@ -119,6 +119,45 @@ def test_scrape_summary_ignores_switched_off_entities(test_db):
     assert "empty" not in out
 
 
+def test_scrape_summary_does_not_call_a_productive_run_empty(test_db):
+    """A board that returned nothing sets is_warning, but the run found 40 jobs.
+
+    The digest counted every is_warning row without an error as "empty", which
+    was true only while is_warning meant jobs_found == 0.
+    """
+    from backend.scheduler import _scrape_summary
+    live = Search(name="Live", search_mode="keyword", active=True)
+    test_db.add(live)
+    test_db.commit()
+
+    row = ScrapeLog(search_id=live.id, source="jobspy", jobs_found=40, new_jobs=12,
+                    is_warning=True)
+    row.source_breakdown = {
+        "indeed": {"seen": 0, "new": 0, "returned": 0},
+        "linkedin": {"seen": 40, "new": 12, "returned": 40},
+    }
+    test_db.add(row)
+    test_db.commit()
+
+    out = _scrape_summary(_now() - timedelta(hours=1))
+
+    assert "empty" not in out, out
+    assert "1 with a board that returned nothing" in out, out
+
+
+def test_scrape_summary_still_counts_a_genuinely_empty_run(test_db):
+    """The control: no error, no board detail, nothing found — still "empty"."""
+    from backend.scheduler import _scrape_summary
+    live = Search(name="Live", search_mode="keyword", active=True)
+    test_db.add(live)
+    test_db.commit()
+    test_db.add(ScrapeLog(search_id=live.id, source="levels_fyi", jobs_found=0,
+                          new_jobs=0, is_warning=True))
+    test_db.commit()
+
+    assert "1 empty" in _scrape_summary(_now() - timedelta(hours=1))
+
+
 def test_scrape_summary_still_reports_active_entities(test_db):
     from backend.scheduler import _scrape_summary
     live = Search(name="Live", search_mode="keyword", active=True)

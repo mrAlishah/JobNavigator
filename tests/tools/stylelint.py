@@ -10,8 +10,8 @@ Exit 1 on any finding unless every finding is allowed.
 import re, os, sys, io, collections
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "src")
-# The design system is src/*.jsx + src/screens/*.jsx. classic/ is the untouched
-# Tailwind v1 interface, design-base/ is the git-ignored lab pages and __tests__/
+# The design system is src/*.jsx + src/screens/*.jsx. design-base/ is the git-ignored
+# lab pages and __tests__/
 # is Vitest — none of them are screens, so none are scanned; only ui.jsx (the
 # primitive layer, the one file allowed to carry literals) needs skipping.
 DIRS = [ROOT, os.path.join(ROOT, "screens")]

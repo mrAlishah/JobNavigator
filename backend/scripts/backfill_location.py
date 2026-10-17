@@ -120,6 +120,20 @@ def run(commit: bool = False, reparse: bool = False) -> dict:
             "changes": changes}
 
 
+def run_all_accounts(commit: bool = False, reparse: bool = False) -> dict:
+    """`run()` once per account (QA F4 / R1-10: with no context a script would see only
+    the owner's jobs), reports merged."""
+    from backend.accounts.background import acting_as, all_account_ids
+    tally, unresolved, changes = collections.Counter(), collections.Counter(), []
+    for account in all_account_ids():
+        with acting_as(account):
+            r = run(commit=commit, reparse=reparse)
+        tally.update(r["tally"])
+        unresolved.update(dict(r["unresolved"]))
+        changes.extend(r["changes"][:max(0, 20 - len(changes))])
+    return {"tally": dict(tally), "unresolved": unresolved.most_common(15), "changes": changes}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--commit", action="store_true",
@@ -131,7 +145,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    report = run(commit=args.commit, reparse=args.reparse)
+    report = run_all_accounts(commit=args.commit, reparse=args.reparse)
     tally = report["tally"]
     scanned = tally.get("scanned", 0) or 1
 

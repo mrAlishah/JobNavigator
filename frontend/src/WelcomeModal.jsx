@@ -1,5 +1,5 @@
 import React from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Settings as SettingsIcon, FileUser, Building2, Search } from 'lucide-react'
 import { Button, FooterRow, GlyphBadge, Helper, ModalPanel } from './ui'
 import { useTheme, themeAttrs } from './theme'
@@ -16,12 +16,10 @@ const STEPS = [
 
 export default function WelcomeModal({ onClose }) {
   const navigate = useNavigate()
-  // land in whichever shell you're already in — this overlay is global
-  const base = useLocation().pathname.startsWith('/classic') ? '/classic/' : '/'
   // mounts outside the v2 shell like the sign-in overlay, so it brings the
   // theme with it from the shared store
   const look = useTheme()
-  const go = (slug) => { onClose?.(); navigate(base + slug) }
+  const go = (slug) => { onClose?.(); navigate('/' + slug) }
 
   return (
     // Scrim carries the theme root and its own z-index (below sign-in, above

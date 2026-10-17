@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import MutableMapping
 
 from backend.models.db import (
     SessionLocal, Job,
@@ -17,13 +18,62 @@ from backend.analyzer.h1b_checker import check_job_h1b, determine_h1b_verdict
 
 logger = logging.getLogger("jobnavigator.jobs")
 
-# In-memory LinkedIn import progress tracker (shared with routes_jobs for the
-# progress-polling endpoint). Import this from routes_jobs via the module path.
-_linkedin_import_progress: dict = {}
+class _PerAccountProgress(MutableMapping):
+    """In-memory LinkedIn import progress, one dict per account (QA F5, R5-02).
+
+    Reads and writes go to the entry of the account in the current context (the import
+    task runs under the account that started it), so two accounts' imports never wipe or
+    mix each other's counters and each polls only its own."""
+
+    def __init__(self):
+        self._by_account: dict = {}
+
+    @staticmethod
+    def _key():
+        from backend.accounts.context import current_account
+        acc = current_account.get()
+        return str(acc) if acc is not None else ""
+
+    def _mine(self) -> dict:
+        return self._by_account.setdefault(self._key(), {})
+
+    def __getitem__(self, k):
+        return self._mine()[k]
+
+    def __setitem__(self, k, v):
+        self._mine()[k] = v
+
+    def __delitem__(self, k):
+        del self._mine()[k]
+
+    def __iter__(self):
+        return iter(dict(self._by_account.get(self._key(), {})))
+
+    def __len__(self):
+        return len(self._by_account.get(self._key(), {}))
+
+    def __repr__(self):
+        return repr(self._by_account.get(self._key(), {}))
+
+    def forget(self, account_id) -> None:
+        """Drop a removed account's entry (QA F8 / R5-10)."""
+        self._by_account.pop(str(account_id), None)
+
+    def reset_all(self) -> None:
+        """Tests: forget every account's progress."""
+        self._by_account.clear()
+
+
+# Shared with routes_jobs for the progress-polling endpoint.
+_linkedin_import_progress = _PerAccountProgress()
 
 # Persisted (mounted) Playwright session cookies — written by
 # backend/refresh_linkedin_session.py. Survives container restarts.
-_SESSION_PATH = "/root/.linkedin_api/li_cookies.json"
+def _session_path() -> str:
+    """The current account's cookie jar (MT-16): the owner's is today's
+    /root/.linkedin_api/li_cookies.json, a member's lives under accounts/<id>/."""
+    from backend.accounts.credentials import linkedin_extension_cookies
+    return linkedin_extension_cookies()
 
 # The exact Voyager endpoint + decoration the linkedin-api library used; returns plain JSON
 # with top-level title/companyDetails/description/formattedLocation/applyMethod.
@@ -77,7 +127,7 @@ def _voyager_arrangement(job_data: dict) -> str | None:
 def _load_session_cookies():
     """Load persisted Playwright cookies, or None if the session file is absent."""
     try:
-        with open(_SESSION_PATH) as f:
+        with open(_session_path()) as f:
             cookies = json.load(f)
         return cookies or None
     except (OSError, ValueError):
@@ -135,10 +185,10 @@ async def enrich(linkedin_ids: list[str], db=None):
         session_cookies = _load_session_cookies()
         if not session_cookies:
             logger.error("LinkedIn import: no session cookies at %s — run "
-                         "`python -m backend.refresh_linkedin_session` first", _SESSION_PATH)
+                         "`python -m backend.refresh_linkedin_session [--account <name>]` first", _session_path())
             _linkedin_import_progress["status"] = "error"
             _linkedin_import_progress["error_details"] = [{"stage": "session",
-                "error": "no LinkedIn session — run refresh_linkedin_session"}]
+                "error": "no LinkedIn session — refresh it in Settings › LinkedIn"}]
             return
 
         existing_ext_ids = get_existing_external_ids(db)
@@ -174,10 +224,10 @@ async def enrich(linkedin_ids: list[str], db=None):
                     "}")
                 if me_status != 200:
                     logger.error("LinkedIn import: session invalid (me=%s) — run "
-                                 "`python -m backend.refresh_linkedin_session`", me_status)
+                                 "`python -m backend.refresh_linkedin_session [--account <name>]`", me_status)
                     _linkedin_import_progress["status"] = "error"
                     _linkedin_import_progress["error_details"] = [{"stage": "session",
-                        "error": f"session invalid (me={me_status}) — run refresh_linkedin_session"}]
+                        "error": f"session invalid (me={me_status}) — refresh it in Settings › LinkedIn"}]
                     return
 
             for lid in pre_dedup:

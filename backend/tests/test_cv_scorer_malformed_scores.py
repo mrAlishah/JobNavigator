@@ -73,3 +73,36 @@ async def test_valid_scores_still_succeed(scorer_db, monkeypatch):
     )
     assert result is not None
     assert result["scores"] == {"PM": 72}
+
+
+@pytest.mark.asyncio
+async def test_prose_reply_is_a_transient_failure_worded_in_the_log(scorer_db, monkeypatch):
+    """A model that answers in prose must not crash the batch, and the logged reason must read as a sentence."""
+    from backend.analyzer import cv_scorer
+    from backend.analyzer.model_json import UNPARSEABLE_MESSAGE
+
+    logged = {}
+    monkeypatch.setattr("backend.analyzer.cv_scorer.log_llm_call",
+                        lambda **kw: logged.update(kw))
+    monkeypatch.setattr("backend.analyzer.cv_scorer.call_llm",
+                        _llm_returning("I can't score that resume."))
+
+    result = await cv_scorer.score_job_sync(
+        FakeJob(), {"PM": "cv text"}, db=None, depth="light",
+        preloaded_text="JD text",
+    )
+    assert result is None
+    assert logged.get("success") is False
+    assert logged.get("error") == UNPARSEABLE_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_scores_wrapped_in_prose_still_parse(scorer_db, monkeypatch):
+    monkeypatch.setattr("backend.analyzer.cv_scorer.call_llm",
+                        _llm_returning('Here you go:\n```json\n{"scores": {"PM": 72}}\n```\nDone!'))
+    from backend.analyzer import cv_scorer
+    result = await cv_scorer.score_job_sync(
+        FakeJob(), {"PM": "cv text"}, db=None, depth="light",
+        preloaded_text="JD text",
+    )
+    assert result["scores"] == {"PM": 72}

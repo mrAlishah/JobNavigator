@@ -5,8 +5,11 @@ import logging
 import re as _re
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from backend.models.db import SessionLocal, Setting, Persona
+from backend.accounts.owned import get_persona
+from backend.models.db import SessionLocal, Persona
+from backend.accounts.settings import get_setting
 from backend.analyzer.llm_client import call_autofill_llm, call_autofill_llm_stream
+from backend.analyzer.model_json import first_json_object
 from backend.analyzer.llm_logger import track_llm_call
 from backend.autofill_schema import ANSWER_SCHEMA, project_answers
 
@@ -53,33 +56,10 @@ def _strip_code_fences(text: str) -> str:
     return t
 
 
-def _first_json_object(text: str):
-    r"""Return the first balanced {...} in text (string/escape aware), or None; a naive brace regex would span to the last "}" in the reply and break on trailing prose."""
-    depth = 0
-    start = -1
-    in_str = False
-    esc = False
-    for i, ch in enumerate(text or ""):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            if depth:
-                depth -= 1
-                if depth == 0 and start >= 0:
-                    return text[start:i + 1]
-    return None
+# Lives in analyzer/model_json.py now, so cv_scorer and the cover-letter
+# generator can read a reply the same way; kept under its old name here because
+# callers and tests import it from this module.
+_first_json_object = first_json_object
 
 
 def _last_unescaped_quote(body: str) -> int:
@@ -273,8 +253,8 @@ def _flatten_qa_bank(bank) -> str:
 
 
 def _setting(db, key, default=""):
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return row.value if row and row.value is not None else default
+    value = get_setting(db, key)
+    return value if value is not None else default
 
 
 def _json_setting(db, key, default):
@@ -289,7 +269,7 @@ def autofill_config():
     """Serve everything the extension needs to fill structured fields: the projected fixed answers, matching dictionaries, and the schema."""
     db = SessionLocal()
     try:
-        p = db.query(Persona).filter(Persona.id == 1).first()
+        p = get_persona(db, create=False)
         persona = {
             "contact": (p.contact if p else None) or {},
             "work_auth": (p.work_auth if p else None) or {},
@@ -328,13 +308,12 @@ def _build_autofill_prompt(body: dict, *, want_provider: bool = False) -> dict:
     provider = model = None
     db = SessionLocal()
     try:
-        persona = db.query(Persona).filter(Persona.id == 1).first()
-        len_row = db.query(Setting).filter(Setting.key == "autofill_default_length").first()
-        default_len = int(len_row.value) if len_row and (len_row.value or "").isdigit() else 120
-        tmpl_row = db.query(Setting).filter(Setting.key == "autofill_prompt").first()
-        if not tmpl_row or not (tmpl_row.value or "").strip():
+        persona = get_persona(db, create=False)
+        len_raw = get_setting(db, "autofill_default_length") or ""
+        default_len = int(len_raw) if len_raw.isdigit() else 120
+        template = get_setting(db, "autofill_prompt") or ""
+        if not template.strip():
             raise HTTPException(500, "autofill_prompt setting is empty")
-        template = tmpl_row.value
         persona_txt = _flatten_persona(persona) if persona else "(no persona)"
         qa_txt = _flatten_qa_bank(persona.qa_bank if persona else [])
 

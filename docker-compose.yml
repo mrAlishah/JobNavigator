@@ -48,6 +48,8 @@ services:
       - ./backups:/app/backups
       - ./backend/.linkedin_api:/root/.linkedin_api
       - codex_auth:/root/.codex
+      # agy keeps its OAuth token in a file here; no keyring in this image.
+      - antigravity_auth:/root/.gemini
 
   frontend:
     image: ghcr.io/vesaias/jobnavigator-frontend:${JN_IMAGE_TAG:-latest}
@@ -60,8 +62,8 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
-    ports:
-      - "127.0.0.1:3000:80"   # the frontend container alone; everything external goes through Caddy
+    # No published port: Caddy reaches this container over the compose network (frontend:80), and a
+    # host port only invites clashes (Windows reserves ranges around 3000 for Hyper-V after a restart).
     depends_on:
       - backend
 
@@ -89,3 +91,4 @@ volumes:
   caddy_data:
   caddy_config:
   codex_auth:
+  antigravity_auth:

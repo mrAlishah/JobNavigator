@@ -97,6 +97,98 @@ def test_search_flagged_and_count(test_db):
     assert r["count"] == len(r["companies"]) + len(r["searches"])
 
 
+# ── the reason text when one board returned nothing ─────────────────────────
+# is_warning also fires for "one board returned nothing while the others
+# worked". These tests pin which sentence the reason carries: the board name
+# when one board was quiet across the whole window, the original
+# "No results in the last N scrapes" in every other case.
+
+def _quiet_log(search_id, quiet_boards, ago_min, jobs_found=40):
+    """A run that found jobs, where each named board returned no rows."""
+    row = _log(search_id=search_id, is_warning=True, ago_min=ago_min)
+    row.jobs_found = jobs_found
+    row.new_jobs = 0
+    breakdown = {"linkedin": {"seen": jobs_found, "new": 0, "returned": jobs_found}}
+    for board in quiet_boards:
+        breakdown[board] = {"seen": 0, "new": 0, "returned": 0}
+    row.source_breakdown = breakdown
+    return row
+
+
+def _reason_for(name):
+    return next((x["reason"] for x in _run()["searches"] if x["name"] == name), None)
+
+
+def test_reason_names_a_board_quiet_across_the_whole_window(test_db):
+    s = Search(name="QuietIndeed", search_mode="keyword", active=True)
+    test_db.add(s)
+    test_db.commit()
+    for i in range(3):
+        test_db.add(_quiet_log(s.id, ["indeed"], ago_min=i))
+    test_db.commit()
+
+    assert _reason_for("QuietIndeed") == "Indeed returned nothing in the last 3 scrapes"
+
+
+def test_reason_names_every_board_quiet_across_the_whole_window(test_db):
+    s = Search(name="QuietTwo", search_mode="keyword", active=True)
+    test_db.add(s)
+    test_db.commit()
+    for i in range(3):
+        test_db.add(_quiet_log(s.id, ["indeed", "google"], ago_min=i))
+    test_db.commit()
+
+    reason = _reason_for("QuietTwo")
+    assert "Indeed returned nothing" in reason
+    assert "Google returned nothing" in reason
+    assert reason.endswith("in the last 3 scrapes")
+
+
+def test_reason_names_no_board_when_the_quiet_one_changes(test_db):
+    """Indeed, then Google, then Indeed: no board was quiet throughout.
+
+    The choice: name none, and fall back to the original sentence. A board that
+    did deliver rows must never be named. The fallback can be false about a run
+    that found 40 jobs; the user accepts that cost and keeps the wording.
+    """
+    s = Search(name="Alternating", search_mode="keyword", active=True)
+    test_db.add(s)
+    test_db.commit()
+    test_db.add(_quiet_log(s.id, ["indeed"], ago_min=2))
+    test_db.add(_quiet_log(s.id, ["google"], ago_min=1))
+    test_db.add(_quiet_log(s.id, ["indeed"], ago_min=0))
+    test_db.commit()
+
+    reason = _reason_for("Alternating")
+    assert reason == "No results in the last 3 scrapes"
+    assert "Indeed" not in reason and "Google" not in reason
+
+
+def test_reason_keeps_the_old_wording_without_board_evidence(test_db):
+    """A row with no source_breakdown is every non-JobSpy source and every row an older build wrote."""
+    s = Search(name="PlainEmpty", search_mode="levels_fyi", active=True)
+    test_db.add(s)
+    test_db.commit()
+    for i in range(3):
+        test_db.add(_log(search_id=s.id, is_warning=True, ago_min=i))
+    test_db.commit()
+
+    assert _reason_for("PlainEmpty") == "No results in the last 3 scrapes"
+
+
+def test_a_refused_board_still_wins_over_the_quiet_wording(test_db):
+    """A board that refused the request is reported on the last run alone — that branch runs first and must keep doing so."""
+    s = Search(name="RefusedBoard", search_mode="keyword", active=True)
+    test_db.add(s)
+    test_db.commit()
+    row = _quiet_log(s.id, ["indeed"], ago_min=0)
+    row.source_breakdown["zip_recruiter"] = {"seen": 0, "new": 0, "returned": 0, "error": "403"}
+    test_db.add(row)
+    test_db.commit()
+
+    assert _reason_for("RefusedBoard") == "ZipRecruiter failed (403) on the last run"
+
+
 def test_inactive_search_not_flagged(test_db):
     """A paused search was switched off deliberately, so its failed history must not drive the rail dot or header count."""
     s = Search(name="OffSearch", search_mode="keyword", active=False)

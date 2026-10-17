@@ -65,6 +65,7 @@
   --cc-oraclehcm-bg:#f7ebe7; --cc-oraclehcm-fg:#96402f;
   --cc-smartrecruiters-bg:#e8eef6; --cc-smartrecruiters-fg:#3a5a86;
   --cc-rippling-bg:#edeaf6; --cc-rippling-fg:#5a4488;
+  --cc-amazon-bg:#f6eee0; --cc-amazon-fg:#8a5c22;
   --cc-eightfold-bg:#f6eee0; --cc-eightfold-fg:#8a5c22;
   --cc-talentbrew-bg:#f3e8f0; --cc-talentbrew-fg:#7a4066;
   --cc-meta-bg:#e8eef6; --cc-meta-fg:#3a5a86;
@@ -79,6 +80,9 @@
   --sm-lipersonal-bg:#f3e8f0; --sm-lipersonal-fg:#7a4066;
   --sm-jobright-bg:#e3efee; --sm-jobright-fg:#2f6a62;
   --sm-freehire-bg:#f6eee0; --sm-freehire-fg:#8a5c22;
+  --sm-apify-bg:#ecebf6; --sm-apify-fg:#4f4a86;
+  --sm-caribbeanjobs-bg:#e0f0f4; --sm-caribbeanjobs-fg:#22627a;
+  --sm-trulyremote-bg:#eef0e0; --sm-trulyremote-fg:#5a6326;
   --sm-extension-bg:#f1efe8; --sm-extension-fg:#57534a;
   --rail:#22211c; --rail-text:#a8a396; --rail-dim:#948d7a; --rail-accent:#8dbb9f; --rail-line:#2e2c24; --rail-ink:#f6f3ea;
 
@@ -133,6 +137,7 @@
   --radius-mark:3px; --radius-inline:4px; --radius-mini:5px;
   --radius-field:6px; --radius-round:99px; --radius-row:7px; --radius-cell:8px; --radius-card:9px;
   --radius-menu:10px; --radius-modal:12px; --radius-control:99px;
+  --radius-avatar:var(--radius-round);
   /* buttons */
   --btn-primary-bg:var(--accent); --btn-primary-ink:var(--accent-ink);
   --btn-primary-disabled-bg:var(--line); --btn-primary-disabled-ink:var(--muted);
@@ -303,6 +308,10 @@
   --glyph-neutral-bg:var(--surface-2); --glyph-neutral-ink:var(--text-2);
   --glyph-accent-bg:var(--accent); --glyph-accent-ink:var(--accent-ink);
   --glyph-bad-bg:var(--bad); --glyph-bad-ink:var(--accent-ink);
+  /* Avatar (MT-12): the fill is the account's own colour (data, inline); the
+     initials are white on it in every theme and appearance. --avatar-bg is the
+     fallback ground for an account with no colour. */
+  --avatar-ink:#ffffff; --avatar-bg:var(--muted);
   --notice-warn-bg:var(--warn-soft); --notice-warn-border:var(--warn); --notice-warn-mark:var(--warn);
   --notice-bad-bg:var(--bad-soft); --notice-bad-border:var(--bad); --notice-bad-mark:var(--bad);
   --notice-quiet-bg:var(--recessed); --notice-quiet-border:var(--line); --notice-quiet-mark:var(--muted);
@@ -458,6 +467,7 @@
   --cc-oraclehcm-bg:#3d2823; --cc-oraclehcm-fg:#dba393;
   --cc-smartrecruiters-bg:#232f3f; --cc-smartrecruiters-fg:#a3bedd;
   --cc-rippling-bg:#2d2a3d; --cc-rippling-fg:#b7abdd;
+  --cc-amazon-bg:#3a3021; --cc-amazon-fg:#d3b083;
   --cc-eightfold-bg:#3a3021; --cc-eightfold-fg:#d3b083;
   --cc-talentbrew-bg:#392a34; --cc-talentbrew-fg:#d3aac4;
   --cc-meta-bg:#232f3f; --cc-meta-fg:#a3bedd;
@@ -472,6 +482,9 @@
   --sm-lipersonal-bg:#392a34; --sm-lipersonal-fg:#d3aac4;
   --sm-jobright-bg:#1f3432; --sm-jobright-fg:#96c8c0;
   --sm-freehire-bg:#3a3021; --sm-freehire-fg:#d3b083;
+  --sm-apify-bg:#2a283c; --sm-apify-fg:#b7b2dd;
+  --sm-caribbeanjobs-bg:#1c3239; --sm-caribbeanjobs-fg:#92c6d6;
+  --sm-trulyremote-bg:#2d3121; --sm-trulyremote-fg:#c5cf96;
   --sm-extension-bg:#34322c; --sm-extension-fg:#b5b0a3;
   --rail:#100f0b; --rail-text:#948f82; --rail-dim:#8a8371; --rail-accent:#8dbb9f;
   /* light alphas vanish against #1e1c17 — dark surfaces need a higher alpha
@@ -523,6 +536,7 @@
   --radius-mark:3px; --radius-inline:4px; --radius-mini:5px;
   --radius-field:6px; --radius-round:99px; --radius-row:7px; --radius-cell:8px; --radius-card:9px;
   --radius-menu:10px; --radius-modal:12px; --radius-control:99px;
+  --radius-avatar:var(--radius-round);
   /* buttons */
   --btn-primary-bg:var(--accent); --btn-primary-ink:var(--accent-ink);
   --btn-primary-disabled-bg:var(--line); --btn-primary-disabled-ink:var(--muted);
@@ -693,6 +707,10 @@
   --glyph-neutral-bg:var(--surface-2); --glyph-neutral-ink:var(--text-2);
   --glyph-accent-bg:var(--accent); --glyph-accent-ink:var(--accent-ink);
   --glyph-bad-bg:var(--bad); --glyph-bad-ink:var(--accent-ink);
+  /* Avatar (MT-12): the fill is the account's own colour (data, inline); the
+     initials are white on it in every theme and appearance. --avatar-bg is the
+     fallback ground for an account with no colour. */
+  --avatar-ink:#ffffff; --avatar-bg:var(--muted);
   --notice-warn-bg:var(--warn-soft); --notice-warn-border:var(--warn); --notice-warn-mark:var(--warn);
   --notice-bad-bg:var(--bad-soft); --notice-bad-border:var(--bad); --notice-bad-mark:var(--bad);
   --notice-quiet-bg:var(--recessed); --notice-quiet-border:var(--line); --notice-quiet-mark:var(--muted);
@@ -1505,6 +1523,7 @@
   --font-ascii:'Lucida Console','Courier New',Consolas,monospace;
   --titlebar-face:'Pixelated MS Sans Serif','Microsoft Sans Serif',Tahoma,sans-serif;
   --radius-mark:0; --radius-inline:0; --radius-mini:0; --radius-field:0; --radius-row:0; --radius-cell:0; --radius-card:0; --radius-menu:0; --radius-modal:0; --radius-control:0; --radius-rail-item:0;
+  --radius-avatar:0;   /* MT-12: 98 had no round marks; an account is a square swatch */
   --bw-hair:1px; --bw-control:1px; --bw-panel:1px;
   --shadow-modal:none; --shadow-menu:none; --shadow-pop:none; --shadow-toast:none; --shadow-drawer:none;   /* 98 had no drop shadows at all */
   --btn-shadow:none; --pill-shadow:none; --field-shadow:none; --card-shadow:none; --seg-on-shadow:none;
@@ -1734,6 +1753,7 @@
   --font-ascii:'Lucida Console','Courier New',Consolas,monospace;
   --titlebar-face:'Pixelated MS Sans Serif','Microsoft Sans Serif',Tahoma,sans-serif;
   --radius-mark:0; --radius-inline:0; --radius-mini:0; --radius-field:0; --radius-row:0; --radius-cell:0; --radius-card:0; --radius-menu:0; --radius-modal:0; --radius-control:0; --radius-rail-item:0;
+  --radius-avatar:0;   /* MT-12: 98 had no round marks; an account is a square swatch */
   --bw-hair:1px; --bw-control:1px; --bw-panel:1px;
   --shadow-modal:none; --shadow-menu:none; --shadow-pop:none; --shadow-toast:none; --shadow-drawer:none;
   --btn-shadow:none; --pill-shadow:none; --field-shadow:none; --card-shadow:none; --seg-on-shadow:none;
@@ -1949,6 +1969,7 @@
 .jn-v2 .cc-oraclehcm{background:var(--cc-oraclehcm-bg);color:var(--cc-oraclehcm-fg)}
 .jn-v2 .cc-smartrecruiters{background:var(--cc-smartrecruiters-bg);color:var(--cc-smartrecruiters-fg)}
 .jn-v2 .cc-rippling{background:var(--cc-rippling-bg);color:var(--cc-rippling-fg)}
+.jn-v2 .cc-amazon{background:var(--cc-amazon-bg);color:var(--cc-amazon-fg)}
 .jn-v2 .cc-eightfold{background:var(--cc-eightfold-bg);color:var(--cc-eightfold-fg)}
 .jn-v2 .cc-talentbrew{background:var(--cc-talentbrew-bg);color:var(--cc-talentbrew-fg)}
 .jn-v2 .cc-meta{background:var(--cc-meta-bg);color:var(--cc-meta-fg)}
@@ -1963,6 +1984,9 @@
 .jn-v2 .sm-lipersonal{background:var(--sm-lipersonal-bg);color:var(--sm-lipersonal-fg)}
 .jn-v2 .sm-jobright{background:var(--sm-jobright-bg);color:var(--sm-jobright-fg)}
 .jn-v2 .sm-freehire{background:var(--sm-freehire-bg);color:var(--sm-freehire-fg)}
+.jn-v2 .sm-apify{background:var(--sm-apify-bg);color:var(--sm-apify-fg)}
+.jn-v2 .sm-caribbeanjobs{background:var(--sm-caribbeanjobs-bg);color:var(--sm-caribbeanjobs-fg)}
+.jn-v2 .sm-trulyremote{background:var(--sm-trulyremote-bg);color:var(--sm-trulyremote-fg)}
 .jn-v2 .sm-extension{background:var(--sm-extension-bg);color:var(--sm-extension-fg)}
 
 
@@ -1995,6 +2019,21 @@
    for it is. `.v2-spin` above is untouched. */
 @keyframes v2-march { from { transform:translateX(-100%); } to { transform:translateX(var(--march-run,140px)); } }
 .v2-march { animation:v2-march var(--march-dur,1.4s) linear infinite; }
+/* MT-12 · PinPad's wrong-PIN shake: the cell row nudges sideways and settles.
+   Theme-independent like the two loaders above; reduced motion drops it. */
+@keyframes v2-shake { 0%,100% { transform:translateX(0); } 20% { transform:translateX(-6px); } 40% { transform:translateX(5px); } 60% { transform:translateX(-4px); } 80% { transform:translateX(2px); } }
+.v2-shake { animation:v2-shake .34s ease-in-out; }
+@media (prefers-reduced-motion: reduce) { .v2-shake { animation:none; } }
+/* MT-12 · Avatar on win98: the five default account colours become the 16-colour
+   palette's navy / maroon / teal / olive / purple squares (the square is
+   --radius-avatar:0 in the win98 blocks). `data-swatch` is the default colour's
+   index (ui.jsx ACCOUNT_SWATCHES); a custom colour has none and keeps its own
+   fill. !important because the account colour is an inline style. */
+.jn-v2[data-theme="win98"] .v2-avatar[data-swatch="0"] { background:#000080 !important; }
+.jn-v2[data-theme="win98"] .v2-avatar[data-swatch="1"] { background:#800000 !important; }
+.jn-v2[data-theme="win98"] .v2-avatar[data-swatch="2"] { background:#008080 !important; }
+.jn-v2[data-theme="win98"] .v2-avatar[data-swatch="3"] { background:#808000 !important; }
+.jn-v2[data-theme="win98"] .v2-avatar[data-swatch="4"] { background:#800080 !important; }
 /* beat the classic UI's global `.dark input::placeholder` (Tailwind gray-500) that bleeds in at equal specificity */
 /* A Menu is a column flex box, so a child's height is only a flex-basis: once
    the list exceeds maxHeight the browser shrinks children instead of scrolling. */
@@ -2085,6 +2124,11 @@
    whole window to the sunken bevel for as long as the button was held. A window
    frame has no pressed state in 98; only the controls inside it do. `Drawer`
    carries no `v2-raised` at all and was never affected. */
+/* QA F7 / T7-09 · the underline SearchInput (Cover Letters, Résumés) is a search
+   FIELD like the boxed one on Jobs / Companies: 98 has no underline field, so it
+   takes the same sunken well on the field ground instead of a bare bottom rule. */
+.jn-v2[data-theme="win98"] .v2-inset.v2-underline:not([aria-invalid="true"]) { background:var(--search-bg) !important; border-bottom:0 !important; }
+.jn-v2[data-theme="win98"] .v2-inset.v2-underline:not([aria-invalid="true"]),
 .jn-v2[data-theme="win98"] .v2-inset:not(.v2-underline):not([aria-invalid="true"]),
 .jn-v2[data-theme="win98"] .v2-raised:active:not([role="dialog"]) { border:var(--bevel-inset-border) !important; border-color:var(--bevel-inset-color) !important; box-shadow:var(--bevel-inset-shadow) !important; }
 
@@ -2582,6 +2626,16 @@
 .jn-v2[data-theme="win98"] .v2-rail .v2-railfoot:last-child {
   box-shadow:inset -1px -1px 0 var(--bevel-highlight), inset 1px 0 0 var(--bevel-shadow);
 }
+
+/* QA F7 / T7-05 · the health line ("Scraper healthy · 18d ago") lost its time to
+   the ellipsis in 98's wider type. On the open rail the row gives back the room
+   the default theme spends on air: a tighter left pad and a 16px dot slot (the
+   dot is 7px). The status bar's own 2px inner margin is kept. */
+.jn-v2[data-theme="win98"] .v2-rail[data-open="true"] .v2-railhealth { padding:0 6px 0 10px !important; }
+.jn-v2[data-theme="win98"] .v2-rail[data-open="true"] .v2-railhealth > span:first-child { flex:0 0 14px !important; }
+/* … and Settings › Accounts' per-account counts line wraps to two lines there
+   instead of losing "… 129 compa…" to the ellipsis (the default themes fit one). */
+.jn-v2[data-theme="win98"] .v2-acctstats { white-space:normal !important; display:-webkit-box !important; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 
 /* ── Round 7 #8 · the tree's hover ───────────────────────────────────────────
    `.v2-navdark:hover` repaints every rail control --rail-ink, which here is

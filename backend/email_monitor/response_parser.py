@@ -108,19 +108,18 @@ def classify_email(subject: str, body: str) -> dict:
 async def classify_email_llm(from_header: str, subject: str, body: str, active_apps: list) -> dict | None:
     """Classify an ambiguous email via LLM; returns dict with match_index/status/confidence/summary, or None on failure.
     active_apps: list of dicts with keys index (1-based), id, company, title, status, applied_at."""
-    from backend.models.db import SessionLocal, Setting
+    from backend.models.db import SessionLocal
+    from backend.accounts.settings import get_setting
 
     db = SessionLocal()
     try:
-        enabled_row = db.query(Setting).filter(Setting.key == "email_llm_enabled").first()
-        if not enabled_row or enabled_row.value != "true":
+        if get_setting(db, "email_llm_enabled") != "true":
             return None
 
-        prompt_row = db.query(Setting).filter(Setting.key == "email_llm_prompt").first()
-        if not prompt_row or not prompt_row.value:
+        prompt_template = get_setting(db, "email_llm_prompt")
+        if not prompt_template:
             logger.warning("email_llm_prompt setting is empty, skipping LLM classification")
             return None
-        prompt_template = prompt_row.value
     finally:
         db.close()
 

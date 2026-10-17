@@ -5,8 +5,9 @@ import { useToasts, ToastStack } from '../Toast'
 import ConfirmDialog from '../ConfirmDialog'
 import { useEscape, useSettled, useSingleOpen, useWarm, NBSP, DASH } from '../hooks'
 import { Button, Card, Check as UICheck, CheckGlyph, CopyGlyph, CrossGlyph, FooterRow, GlyphBadge, Heading, HeaderRow, Helper, IconButton, Input, kb, Label, Link, Menu, MenuItem, Meter, ModalPanel, NavLink, PageTitle, Pill, Row, Rule, ScoreRing, SearchInput, SectionHead, Segmented, Spinner, TableHead, TableRow, ZOOM_MAX, ZOOM_MIN, ZoomFloater } from '../ui'
-import { ANALYZE, SCORE_RESUME, TAILOR, activityText, feedActivity, flightDetail, flightTypes, ghostTabs, tabBusy, tabBusyHint, tailorMarkTitle } from './feedActivity'
+import { ANALYZE, NO_BASES_HINT, SCORE_RESUME, TAILOR, activityText, noScoreSource,feedActivity, flightDetail, flightTypes, ghostTabs, tabBusy, tabBusyHint, tailorMarkTitle } from './feedActivity'
 import { PICK_KEY, clickMods, clickSelection } from './rowSelect'
+import { useApifyBoards, apifySourceLabel } from '../apifyBoards'
 
 const FILTERS_KEY = 'v2_feed_filters'
 const SORT_KEY = 'v2_feed_sort'
@@ -90,11 +91,19 @@ const RAIL_BTN = {
 const SOURCE_LABELS = {
   direct: 'Direct', extension: 'Extension', jobspy_linkedin: 'LinkedIn', jobspy_indeed: 'Indeed',
   jobspy_zip_recruiter: 'ZipRecruiter', jobspy_google: 'Google', levels_fyi: 'Levels', linkedin_personal: 'LinkedIn Personal',
-  linkedin_extension: 'LinkedIn Extension', jobright: 'Jobright', freehire: 'FreeHire', playwright_url: 'Company careers', playwright_direct: 'Career page',
+  linkedin_extension: 'LinkedIn Extension', jobright: 'Jobright', freehire: 'FreeHire', caribbeanjobs: 'CaribbeanJobs', trulyremote: 'TrulyRemoteWork', playwright_url: 'Company careers', playwright_direct: 'Career page',
 }
-const srcLabel = (s) => SOURCE_LABELS[s] || s || ''
+// `boards` (useApifyBoards) names the `apify_<board>` sources.
+const srcLabel = (s, boards = []) => SOURCE_LABELS[s] || apifySourceLabel(boards, s) || s || ''
 const STATUS_OPTS = [['new', 'New'], ['saved', 'Saved'], ['applied', 'Applied'], ['skip', 'Skip'], ['ignored', 'Ignored']]
 const SORT_OPTS = [['score', 'Top score'], ['date', 'Newest first'], ['salary', 'Salary, high to low'], ['company', 'Company A–Z']]
+// "45 minutes", "1 hour", "2 hours 30 minutes" — the scrape interval in the never-scraped empty state
+const everyText = (min) => {
+  const m = Math.round(min), h = Math.floor(m / 60), r = m % 60
+  const part = (n, u) => `${n} ${u}${n === 1 ? '' : 's'}`
+  if (!h) return part(r, 'minute')
+  return r ? `${part(h, 'hour')} ${part(r, 'minute')}` : part(h, 'hour')
+}
 const DEFAULTS = { status: ['new'], company: [], source: [], h1b_verdict: [], location: [], arrangement: [], min_score: '', min_salary: '', max_salary: '' }
 
 // small dropdown shell (trigger pill + panel + backdrop). Flips to right-align
@@ -149,6 +158,7 @@ const SHORTCUTS = [['j / f / ↓', 'Next job'], ['k / g / ↑', 'Previous job'],
 
 // ── component ────────────────────────────────────────────────────────────
 export default function V2JobFeed() {
+  const apifyBoards = useApifyBoards()
   const [jobs, setJobs] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -240,8 +250,11 @@ export default function V2JobFeed() {
   const [sourceCounts, setSourceCounts] = useState({}); const [verdictCounts, setVerdictCounts] = useState({})
   const [verdictList, setVerdictList] = useState([])
   const [statusCounts, setStatusCounts] = useState({})   // {status: n} — counted with the Status filter itself lifted
+  const [facetsOk, setFacetsOk] = useState(false)        // the facets answered at least once (T7-08)
+  const [scrapeEvery, setScrapeEvery] = useState(null)   // scrape_interval_minutes, for the never-scraped empty state
   const [scoreBands, setScoreBands] = useState({})       // {"70": n, …} — what each Score preset would leave
   const [resumes, setResumes] = useState([])
+  const [resumesLoaded, setResumesLoaded] = useState(false)   // V-05: the base list answered
   const [stats, setStats] = useState({ arrived_today: 0, unscored: 0 })
   const [picker, setPicker] = useState(null)      // {mode, jobs:[...]} — opens the Create-copy modal
   const [cvMode, setCvMode] = useState('tailor')  // 'tailor' | 'copy' method toggle
@@ -252,6 +265,10 @@ export default function V2JobFeed() {
   const lastIdx = useRef(null)
 
   const [personaAvailable, setPersonaAvailable] = useState(false)
+  const [personaLoaded, setPersonaLoaded] = useState(false)
+  // V-05: nothing to score against (no base résumé, empty Persona) — the score
+  // actions are disabled with a hint instead of opening an empty picker.
+  const cannotScore = noScoreSource({ basesLoaded: resumesLoaded, bases: resumes, personaLoaded, personaHasContent: personaAvailable })
   // Default depth for no-choice paths (one-click SCORE pill etc); the r / ⋯ → Rescore picker is separate.
   // Light until Settings says otherwise.
   const [defaultDepth, setDefaultDepth] = useState('light')
@@ -328,12 +345,13 @@ export default function V2JobFeed() {
     setVerdictList(named(data.h1b_verdicts).map((x) => x.name))
     setVerdictCounts(Object.fromEntries(named(data.h1b_verdicts).map((x) => [x.name, x.count])))
     setStatusCounts(Object.fromEntries(named(data.statuses).map((x) => [x.name, x.count])))
+    setFacetsOk(true)
     setScoreBands(Object.fromEntries(named(data.score_bands).map((x) => [x.name, x.count])))
   }).catch(() => { /* silent: the filter menus; the list itself shows its own error state */ }), [])
   // The screen-level facets settle as one, so the header doesn't flash "0 open roles" before each answers.
   const { ready: facetsReady } = useSettled([
     loadFacets,
-    () => api.get('/resumes?is_base=true').then(({ data }) => setResumes(data || [])).catch(() => { /* silent: only names the résumés in the score modal; scoring reports its own failures */ }),
+    () => api.get('/resumes?is_base=true').then(({ data }) => { setResumes(data || []); setResumesLoaded(true) }).catch(() => { /* silent: only names the résumés in the score modal; scoring reports its own failures */ }),
     () => api.get('/jobs/feed-stats').then(({ data }) => setStats(data)).catch(() => { /* silent: the header counters; refreshStats re-runs them after every action */ }),
   ])
   // One trailing timer shared by both callers (a filter change and a triage refresh),
@@ -576,6 +594,28 @@ export default function V2JobFeed() {
       pushToast({ kind: 'success', msg: `Ignoring "${name}" — ${n} job${n === 1 ? '' : 's'} hidden` })
     } catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Couldn't ignore "${name}"` }); fetchJobs() }
   }, [fetchJobs, pushToast])
+  // Delete one job or a selection, with everything made for it (tailored résumés, cover letters, applications).
+  // Not undoable, so it confirms first and only touches the list once the server has answered.
+  const doDeleteJobs = useCallback(async (ids) => {
+    try {
+      await api.post('/jobs/bulk-delete', { job_ids: ids })
+      setChecked(new Set())
+      patchLocalMany(ids, { status: 'deleted' })   // no row has this status, so leavesView() drops them and advances the panel
+      refreshStats()
+      pushToast({ kind: 'success', msg: `Deleted ${ids.length} job${ids.length === 1 ? '' : 's'}` })
+    } catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Couldn't delete ${ids.length} job${ids.length === 1 ? '' : 's'}` }); fetchJobs() }
+  }, [patchLocalMany, refreshStats, pushToast, fetchJobs])
+  const deleteJobs = useCallback((list) => {
+    const n = list.length
+    if (!n) return
+    const applied = list.filter((x) => x.status === 'applied').length
+    setConfirm({
+      title: n === 1 ? `Delete “${list[0].title}”?` : `Delete ${n} jobs?`,
+      body: `This permanently deletes ${n === 1 ? 'the job' : 'these jobs'} with their tailored résumés, cover letters and application history${applied ? ` (${applied} applied)` : ''}. Base résumés are kept. This can't be undone.`,
+      label: 'Delete', danger: true,
+      onConfirm: () => { setConfirm(null); doDeleteJobs(list.map((x) => x.id)) },
+    })
+  }, [doDeleteJobs])
   // One optimistic write for "this job now has a run in flight": both the plain
   // in_flight list the card reads and the in_flight_detail the band and tabs
   // read, on the row AND on the open detail, plus the watch that polls it.
@@ -840,13 +880,15 @@ export default function V2JobFeed() {
   }), [postZoom])
 
   // persona availability (adds a "Persona" option to score/tailor)
-  useEffect(() => { api.get('/persona').then(({ data }) => setPersonaAvailable(Object.keys(data?.resume_content || {}).length > 0)).catch(() => { /* silent: Persona is one optional entry in the score modal */ }) }, [])
+  useEffect(() => { api.get('/persona').then(({ data }) => { setPersonaAvailable(Object.keys(data?.resume_content || {}).length > 0); setPersonaLoaded(true) }).catch(() => { /* silent: Persona is one optional entry in the score modal */ }) }, [])
   // `scoring_default_depth` is the setting the scorer itself falls back to; the Feed's one-click path reads it too.
   // `feed_zoom_floater` rides along: same call, and the default is ON, so only an explicit false hides the pill.
   useEffect(() => {
     api.get('/settings').then(({ data }) => {
       setDefaultDepth(data?.scoring_default_depth === 'full' ? 'full' : 'light')
       setZoomFloater(!(data?.feed_zoom_floater === false || data?.feed_zoom_floater === 'false'))
+      const every = Number(data?.scrape_interval_minutes)
+      setScrapeEvery(Number.isFinite(every) ? every : null)
     }).catch(() => { /* silent: the light default already applies */ })
   }, [])
 
@@ -1015,6 +1057,11 @@ export default function V2JobFeed() {
   const reportCovers = reportShown && !anaCollapsed
   const anaHint = anaCollapsed ? 'Show job details & analysis' : 'Hide job details & analysis — posting only'
   const dCached = cachedAvail   // hoisted above the frame effects, which need it too
+  // T7-08: no job in any status under the other (default, empty) filters = never scraped into
+  const neverScraped = facetsOk && !dSearch && !searchId
+    && ['company', 'source', 'h1b_verdict', 'location', 'arrangement'].every((k) => !(filters[k] || []).length)
+    && filters.min_score === '' && !filters.min_salary && !filters.max_salary
+    && Object.values(statusCounts).reduce((a, n) => a + (Number(n) || 0), 0) === 0
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1025,7 +1072,8 @@ export default function V2JobFeed() {
           <span style={{ fontSize: 13, lineHeight: '20px', color: 'var(--muted)', ...headStyle }}>{head ? `${head.total} open roles · ${head.arrived} arrived today · ${head.unscored} not yet scored` : loadError ? DASH : NBSP}</span>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          {head && head.unscored > 0 && <Button variant="ai" onClick={openRescoreBulk} title="Pick résumés + depth, then score every unscored job" style={headStyle}>Score {head.unscored} unscored jobs</Button>}
+          {head && head.unscored > 0 && cannotScore && <Helper style={headStyle}>{NO_BASES_HINT}</Helper>}
+          {head && head.unscored > 0 && <Button variant="ai" disabled={cannotScore} onClick={cannotScore ? undefined : openRescoreBulk} title={cannotScore ? NO_BASES_HINT : 'Pick résumés + depth, then score every unscored job'} style={headStyle}>Score {head.unscored} unscored jobs</Button>}
         </div>
       </HeaderRow>
 
@@ -1045,7 +1093,7 @@ export default function V2JobFeed() {
         <Drop label={`Source${filters.source.length ? ` · ${filters.source.length}` : ''}`} active={filters.source.length > 0} onClear={() => setF({ source: [] })} open={menu === 'source'} onToggle={() => setMenu(menu === 'source' ? null : 'source')}>
           {/* warm-started: the option list is the cached one until the facets settle,
               so an early click on Source is not an empty menu */}
-          {facetSources.length ? facetSources.map((s) => <Check key={s} on={filters.source.includes(s)} label={srcLabel(s)} count={facetSourceCounts[s]} onClick={() => togF('source', s)} />) : <div style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>No sources</div>}
+          {facetSources.length ? facetSources.map((s) => <Check key={s} on={filters.source.includes(s)} label={srcLabel(s, apifyBoards)} count={facetSourceCounts[s]} onClick={() => togF('source', s)} />) : <div style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>No sources</div>}
         </Drop>
         <Drop label={`Work${filters.arrangement.length ? ` · ${filters.arrangement.length}` : ''}`} active={filters.arrangement.length > 0} onClear={() => setF({ arrangement: [] })} open={menu === 'arrangement'} onToggle={() => setMenu(menu === 'arrangement' ? null : 'arrangement')} width={214}>
           {['remote', 'hybrid', 'onsite', 'unknown'].map((key) => (
@@ -1214,6 +1262,8 @@ export default function V2JobFeed() {
               {/* ui: keep — RAIL_BTN, as above */}
               <div onClick={bulkScore} className="v2-onrail v2-ctl" style={RAIL_BTN}>Score</div>
               <div onClick={() => setPicker({ mode: 'tailor', jobs: jobs.filter((j) => checked.has(j.id)) })} className="v2-onrail v2-ctl" style={{ ...RAIL_BTN, gap: 5 }}><span style={{ color: 'var(--rail-accent)' }}>✦</span>Tailor</div>
+              {/* ui: keep — RAIL_BTN, as above */}
+              <div onClick={() => deleteJobs(jobs.filter((j) => checked.has(j.id)))} className="v2-onrail v2-ctl" style={RAIL_BTN}>Delete</div>
               <div onClick={() => setChecked(new Set())} className="v2-onrail" style={{ width: 27, height: 27, borderRadius: 'var(--radius-control)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--on-rail-dim)', cursor: 'pointer' }}>✕</div>
             </div>
           )}
@@ -1230,7 +1280,17 @@ export default function V2JobFeed() {
                         <Heading style={{ display: 'block', marginBottom: 6 }}>No open roles yet</Heading>
                         Jobs come from <a href="/searches" onClick={(e) => { e.preventDefault(); navigate('/searches') }}>Searches</a> and <a href="/companies" onClick={(e) => { e.preventDefault(); navigate('/companies') }}>Companies</a>. Activate one, or change the Status filter to include skipped and applied jobs.
                       </div>
-                    : <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontSize: 13, lineHeight: '20px' }}>No jobs match.<br /><Link onClick={() => { setFilters(DEFAULTS); setSearch(''); setSearchId('') }}>Clear filters</Link></div>)
+                    // T7-08: an account with no jobs at all (a brand-new member) under the default
+                    // Status·New filter has nothing to clear — it has not been scraped into yet
+                    : (neverScraped
+                      ? <div data-empty="never-scraped" style={{ padding: '48px 40px', textAlign: 'center', color: 'var(--muted)', fontSize: 13, lineHeight: '20px' }}>
+                          <Heading style={{ display: 'block', marginBottom: 6 }}>Nothing scraped yet</Heading>
+                          {scrapeEvery > 0
+                            ? `Your first scrape runs within ${everyText(scrapeEvery)}. `
+                            : 'Scheduled scraping is off — run a search or a company by hand. '}
+                          Jobs come from your <a href="/searches" onClick={(e) => { e.preventDefault(); navigate('/searches') }}>Searches</a> and <a href="/companies" onClick={(e) => { e.preventDefault(); navigate('/companies') }}>Companies</a>.
+                        </div>
+                      : <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontSize: 13, lineHeight: '20px' }}>No jobs match.<br /><Link onClick={() => { setFilters(DEFAULTS); setSearch(''); setSearchId('') }}>Clear filters</Link></div>))
               : jobs.map((j, i) => {
                 const score = bestScore(j), nsc = scoredCount(j)
                 const badge = BADGE[j.status]
@@ -1324,7 +1384,7 @@ export default function V2JobFeed() {
                       <div className="v2-rail-copy v2-rail-cell" title="More" onClick={(ev) => {
                         if (rowMenu?.id === j.id) { setRowMenu(null); return }
                         const r = ev.currentTarget.getBoundingClientRect()
-                        const up = r.bottom + 236 > window.innerHeight
+                        const up = r.bottom + 270 > window.innerHeight
                         setRowMenu({ id: j.id, left: Math.max(8, r.right - 228), top: up ? undefined : r.bottom + 3, bottom: up ? window.innerHeight - r.top + 3 : undefined })
                       }} style={{ flex: 1, fontSize: 12, color: rowMenu?.id === j.id ? 'var(--text)' : 'var(--muted)', background: rowMenu?.id === j.id ? 'var(--surface-2)' : 'transparent' }}>⋯</div>
                       {rowMenu?.id === j.id && (
@@ -1337,6 +1397,7 @@ export default function V2JobFeed() {
                             ))}
                             <MenuItem danger onClick={() => { setRowMenu(null); ignoreCompany(j) }}
                               style={{ display: j.company ? 'flex' : 'none' }}>Ignore {j.company} everywhere</MenuItem>
+                            <MenuItem danger onClick={() => { setRowMenu(null); deleteJobs([j]) }}>Delete job…</MenuItem>
                           </Menu>
                         </>
                       )}
@@ -1380,7 +1441,7 @@ export default function V2JobFeed() {
                   <div onClick={() => setHeadOpen((v) => !v)} className="v2-hover-accent" style={{ flex: '0 0 auto', width: 19, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--muted)', cursor: 'pointer' }}>{headOpen ? '⌄' : '›'}</div>
                   <div onClick={() => setHeadOpen((v) => !v)} style={{ flex: 1, minWidth: 190, display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}>
                     {headOpen && <Label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      {d.company && <><span style={{ maxWidth: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.company}</span><span>·</span></>}<span>{srcLabel(d.source)}</span><span>·</span><span>{timeAgo(d.discovered_at)}</span>
+                      {d.company && <><span style={{ maxWidth: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.company}</span><span>·</span></>}<span>{srcLabel(d.source, apifyBoards)}</span><span>·</span><span>{timeAgo(d.discovered_at)}</span>
                     </Label>}
                     {/* ui: keep — the collapsing detail title: serif 26/17, -.025em, line-clamped — outside the 18/19 heading scale */}
                     <h2 title={d.title} style={{ margin: 0, fontFamily: 'var(--serif)', fontSize: headOpen ? 26 : 17, fontWeight: 400, letterSpacing: '-.025em', lineHeight: headOpen ? '30px' : '20px', display: '-webkit-box', WebkitLineClamp: headOpen ? 2 : 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{d.title}</h2>
@@ -1391,7 +1452,7 @@ export default function V2JobFeed() {
                           visaText && <span key="visa" title={visaTitle} style={{ color: visaCol }}>{visaText}</span>,
                         ].filter(Boolean).flatMap((el, i) => i ? [<span key={`sep${i}`} style={{ color: 'var(--line)' }}>|</span>, el] : [el])}
                       </div>
-                    ) : <Helper style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[d.company, fmtSalary(d.salary_min, d.salary_max), d.location, visaText, srcLabel(d.source), timeAgo(d.discovered_at)].filter(Boolean).join(' · ')}</Helper>}
+                    ) : <Helper style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[d.company, fmtSalary(d.salary_min, d.salary_max), d.location, visaText, srcLabel(d.source, apifyBoards), timeAgo(d.discovered_at)].filter(Boolean).join(' · ')}</Helper>}
                   </div>
                   {/* actions */}
                   <div style={{ flex: '0 0 auto', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1622,8 +1683,11 @@ export default function V2JobFeed() {
                   <ScoreRing value={null} size="sm" label="No fit" style={{ marginLeft: -4 }} />
                   <div style={{ flex: 1, minWidth: 0, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--text-2)' }}>Not scored yet</span>
+                    {cannotScore && <span style={{ color: 'var(--muted)' }}>{' · '}{NO_BASES_HINT}</span>}
+                    {!cannotScore && <>
                     <span style={{ color: 'var(--muted)' }}>{' '}Score against your résumés for the </span>
                     <span style={{ color: 'var(--accent)' }}>fit breakdown, requirements and keywords</span>
+                    </>}
                   </div>
                   {/* nothing scored yet, but a tailor is out: the same trailing item the
                       report band gets, so activity is never invisible */}
@@ -1636,7 +1700,7 @@ export default function V2JobFeed() {
                       </div>
                     </>
                   )}
-                  <Button variant="ai" size="xs" onClick={() => openRescore(d)}>Score this role</Button>
+                  <Button variant="ai" size="xs" disabled={cannotScore} title={cannotScore ? NO_BASES_HINT : undefined} onClick={cannotScore ? undefined : () => openRescore(d)}>Score this role</Button>
                 </div>
               )}
               {/* the takeover, and ONLY here: no score at all and a scoring run in flight.

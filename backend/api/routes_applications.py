@@ -5,9 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from backend.models.db import get_db, Application, Job, Company, Setting, utcnow, SessionLocal
+from backend.models.db import get_db, Application, Job, Company, utcnow, SessionLocal
+from backend.accounts.settings import get_setting, default_resume_ids
+from backend.scraper._shared.bot_wall import is_bot_wall
 
 logger = logging.getLogger("jobnavigator.applications")
+
+_BOT_WALL_ERROR = "blocked by bot protection"
+
+# Statuses a board answers with when it refuses a server-side read of a posting.
+_BLOCKED_STATUSES = {401, 403, 429}
+
+
+class _ReadBlocked(Exception):
+    """The posting site refused the read; the page parse is skipped."""
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -198,6 +209,12 @@ async def _cache_job_page(job_id: str, url: str):
                 logger.info(f"httpx failed for job {job_id}, will try Playwright: {e}")
                 last_error = f"httpx: {e}"
 
+            # A challenge page has enough text to pass as content, and the cached
+            # text is what tailoring falls back to as the JD.
+            if is_bot_wall(html):
+                last_error = f"httpx: {_BOT_WALL_ERROR}"
+                html = None
+
             clean_html, text = _extract_clean_content(html) if html else ("", "")
             # Up to 1 MB of raw markup plus the soup built from it; drop the
             # reference before the (slow) Playwright branch so it is not pinned
@@ -209,7 +226,9 @@ async def _cache_job_page(job_id: str, url: str):
                 logger.info(f"Thin content ({len(text)} chars) for job {job_id}, trying Playwright")
                 try:
                     pw_html = await _fetch_with_playwright(url)
-                    if pw_html:
+                    if is_bot_wall(pw_html):
+                        last_error = f"playwright: {_BOT_WALL_ERROR}"
+                    elif pw_html:
                         clean_html, text = _extract_clean_content(pw_html)
                         logger.info(f"Playwright got {len(text)} text chars for job {job_id}")
                     pw_html = None
@@ -351,11 +370,9 @@ def create_application(
         from backend.models.db import find_company_by_name
         existing_co = find_company_by_name(db, company_name)
         if not existing_co:
-            default_resume_row = db.query(Setting).filter(Setting.key == "default_resume_id").first()
-            default_resume_ids = [default_resume_row.value] if default_resume_row and default_resume_row.value else []
             new_co = Company(
                 name=company_name, tier=None, active=False, playwright_enabled=False,
-                selected_resume_ids=default_resume_ids,
+                selected_resume_ids=default_resume_ids(db),
             )
             db.add(new_co)
             db.flush()
@@ -670,9 +687,30 @@ def _decode_entities(value):
     return text
 
 
+def _known_posting(url: str):
+    """(title, company) of a job already stored under this URL's dedup identity, or None.
+
+    Boards that wall off server-side fetches (Indeed, LinkedIn) are exactly the
+    ones the scrapers already read through their own APIs.
+    """
+    from backend.scraper._shared.dedup import make_external_id
+    db = SessionLocal()
+    try:
+        row = (db.query(Job.title, Job.company)
+               .filter(Job.external_id == make_external_id("", "", url)).first())
+    except Exception as e:  # a shortcut only: the page read below still answers
+        logger.warning("extract: stored-job lookup failed for %s: %s", url, e)
+        return None
+    finally:
+        db.close()
+    if row and (row.title or "").strip() and (row.company or "").strip():
+        return row.title, row.company
+    return None
+
+
 @router.post("/extract")
 async def extract_posting(payload: ExtractRequest):
-    """Read title + company off a posting URL for the Log-application modal (JSON-LD JobPosting, then OpenGraph, then <title>/hostname); always returns 200 with whatever it found so form fields stay editable."""
+    """Read title + company off a posting URL for the Log-application modal: a job already stored under that URL first, then the page (JSON-LD JobPosting, OpenGraph, <title>/hostname); always returns 200 with whatever it found so form fields stay editable, and `blocked` says the site refused the read."""
     import json
     import re
     from urllib.parse import urlparse
@@ -685,10 +723,21 @@ async def extract_posting(payload: ExtractRequest):
     except UnsafeURLError as e:
         raise HTTPException(status_code=400, detail=f"Unsafe URL: {e}")
 
+    known = _known_posting(url)
+    if known:
+        return {"title": known[0].strip(), "company": known[1].strip(), "blocked": False}
+
     title = company = None
+    blocked = False
     try:
         resp = await safe_get(url, timeout=15, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        # Checked before the status: a challenge can arrive as a 200, and its
+        # <title> ("Just a moment...") would otherwise become the job title.
+        blocked = resp.status_code in _BLOCKED_STATUSES or is_bot_wall(resp.text)
+        if blocked:
+            logger.warning("extract: %s refused the read (HTTP %s)", url, resp.status_code)
+            raise _ReadBlocked()
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text[:1_000_000], "html.parser")
 
@@ -724,6 +773,8 @@ async def extract_posting(payload: ExtractRequest):
             title = re.split(r"\s+[|–—-]\s+", soup.title.string.strip())[0]
     except HTTPException:
         raise
+    except _ReadBlocked:
+        pass  # already logged; the URL-only readings below still apply
     except Exception as e:
         logger.info("extract failed for %s: %s", url, e)
 
@@ -740,7 +791,8 @@ async def extract_posting(payload: ExtractRequest):
         company = candidate if candidate and not _is_ats_brand(candidate) else None
 
     return {"title": (_decode_entities(title) or "").strip() or None,
-            "company": (_decode_entities(company) or "").strip() or None}
+            "company": (_decode_entities(company) or "").strip() or None,
+            "blocked": blocked}
 
 
 @router.post("/{app_id}/interviews", status_code=201)
@@ -800,8 +852,7 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         return k(lo or hi) if (lo or hi) else None
 
     # Which optional sections to include (Settings -> Interview prep).
-    inc_row = db.query(Setting).filter(Setting.key == "prep_include").first()
-    inc = {x.strip() for x in ((inc_row.value if inc_row else None) or "resume,posting,notes").split(",") if x.strip()}
+    inc = {x.strip() for x in (get_setting(db, "prep_include") or "resume,posting,notes").split(",") if x.strip()}
 
     L = []
     add = L.append
@@ -868,10 +919,10 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         add(posting.strip() or "[no posting text was captured]")
 
     # ── 4. the ask — editable in Settings → AI ───────────────────────────────
-    ask = db.query(Setting).filter(Setting.key == "prep_ask").first()
+    ask = get_setting(db, "prep_ask") or ""
     add("")
     add("## What I need from you")
-    add((ask.value.strip() if ask and ask.value else "") or "Prepare me for this interview.")
+    add(ask.strip() or "Prepare me for this interview.")
     return {"text": "\n".join(L)}
 
 

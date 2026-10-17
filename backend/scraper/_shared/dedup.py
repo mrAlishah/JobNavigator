@@ -51,16 +51,31 @@ _IDENTITY_PARAMS = {
 # path, so `currentJobId` is noise there — it's an identity only on search shapes.
 _LINKEDIN_ID_IN_PATH = re.compile(r"/jobs/view/\d+")
 
+# Hosts whose identity params are the WHOLE identity: once one is present, every
+# other param is search context (`vjs`, `advn`, `tk`, ...) that no tracking list
+# can enumerate, so it is dropped. Without this, a /viewjob URL copied off an
+# Indeed search page hashes apart from the same posting the scraper stored.
+_IDENTITY_ONLY_HOSTS = ("indeed.com",)
+
+
+def _host_of(parsed) -> str:
+    return (parsed.netloc or "").lower().split(":")[0]
+
 
 def _identity_params_for(parsed) -> set:
     """Query params that must survive normalization for this host."""
-    host = (parsed.netloc or "").lower().split(":")[0]
+    host = _host_of(parsed)
     for domain, keys in _IDENTITY_PARAMS.items():
         if host == domain or host.endswith("." + domain):
             if domain == "linkedin.com" and _LINKEDIN_ID_IN_PATH.search(parsed.path or ""):
                 return set()
             return keys
     return set()
+
+
+def _is_identity_only_host(parsed) -> bool:
+    host = _host_of(parsed)
+    return any(host == d or host.endswith("." + d) for d in _IDENTITY_ONLY_HOSTS)
 
 
 # Module-level cache — loaded from DB on first use or reload
@@ -73,12 +88,13 @@ def _get_tracking_params() -> set:
     if _tracking_params_cache is not None:
         return _tracking_params_cache
     try:
-        from backend.models.db import SessionLocal, Setting
+        from backend.models.db import SessionLocal
+        from backend.accounts.settings import get_install_setting
         db = SessionLocal()
         try:
-            row = db.query(Setting).filter(Setting.key == "dedup_tracking_params").first()
-            if row and row.value:
-                params = json.loads(row.value)
+            raw = get_install_setting(db, "dedup_tracking_params")
+            if raw:
+                params = json.loads(raw)
                 _tracking_params_cache = {p.lower() for p in params}
                 logger.info(f"Loaded {len(_tracking_params_cache)} dedup tracking params from DB")
                 return _tracking_params_cache
@@ -114,9 +130,12 @@ def _normalize_url(url: str) -> str:
         # Remove tracking params + utm_* except the ones that ARE the posting's
         # identity on this host — stripping those merges unrelated jobs onto one id.
         keep = _identity_params_for(parsed)
-        cleaned = {k: v for k, v in qs.items()
-                   if k.lower() in keep
-                   or (k.lower() not in params and not k.lower().startswith("utm_"))}
+        if _is_identity_only_host(parsed) and keep & {k.lower() for k in qs}:
+            cleaned = {k: v for k, v in qs.items() if k.lower() in keep}
+        else:
+            cleaned = {k: v for k, v in qs.items()
+                       if k.lower() in keep
+                       or (k.lower() not in params and not k.lower().startswith("utm_"))}
         # Param ORDER is deliberately preserved here: this value is stored as
         # Job.url by the company-page scraper, and a board can be picky about the
         # URL it handed out. Order-independence belongs to the hash, and is done
@@ -195,3 +214,15 @@ def make_content_hash(company: str, title: str) -> str:
     """Hash of company+title only (no URL) for cross-source dedup."""
     raw = f"{(company or '').lower().strip()}{(title or '').lower().strip()}"
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def mark_ignored(job) -> None:
+    """Turn a Job about to be stored into an "ignored" row: one the filters dropped, kept only
+    so its external_id stays in the dedup set and its page is not read again.
+
+    An ignored row carries no content_hash (R30 S-10), in every source. The content hash is the
+    cross-source key that save-from-extension and the manual add match on, and a match on an
+    ignored row would refuse the user's own save of the same company + title from another URL
+    because one search's filters dropped it once. Scrapers dedup on external_id only."""
+    job.status = "ignored"
+    job.content_hash = None

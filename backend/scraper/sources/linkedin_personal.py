@@ -10,12 +10,34 @@ from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
-from backend.models.db import SessionLocal, Job, Search, Setting, get_existing_external_ids
+from backend.models.db import SessionLocal, Job, Search, get_existing_external_ids
+from backend.accounts.settings import get_setting
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
 
 logger = logging.getLogger("jobnavigator.linkedin")
 
-COOKIE_PATH = "/tmp/linkedin_cookies.json"
+
+def cookie_path() -> str:
+    """The current account's LinkedIn Personal cookie jar (MT-16): the owner keeps
+    /tmp/linkedin_cookies.json, a member's is under ~/.linkedin_api/accounts/<id>/."""
+    from backend.accounts.credentials import linkedin_personal_cookies
+    return linkedin_personal_cookies()
+
+
+NOT_SET_UP = ("LinkedIn is not set up for this account: add your LinkedIn email and "
+              "password in Settings › LinkedIn")
+
+
+def _check_set_up(email: str, password: str) -> None:
+    """Fail before opening a browser when the account has neither a saved session nor
+    credentials (T7-11: a member's copied LinkedIn Personal search on its own, empty
+    LinkedIn section fails clearly; it never borrows the owner's credentials)."""
+    if email and password:
+        return
+    import os
+    if not os.path.exists(cookie_path()):
+        raise RuntimeError(NOT_SET_UP)
+
 
 # Delay ranges (seconds) — tuned to avoid 429s
 DELAY_BETWEEN_CARDS = (1.5, 3.0)       # after clicking each card
@@ -57,6 +79,11 @@ class LinkedInRateLimitError(RuntimeError):
     pass
 
 
+class LinkedInSessionExpiredError(RuntimeError):
+    """Raised when a collection lands on the login wall: every later collection would too."""
+    pass
+
+
 async def _handle_rate_limit(page, context_msg: str = "") -> bool:
     """If rate-limited, wait progressively and return True. Returns False if not rate-limited."""
     if not await _check_rate_limit(page):
@@ -86,9 +113,10 @@ async def _get_linkedin_browser():
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
 
-    if os.path.exists(COOKIE_PATH):
+    path = cookie_path()
+    if os.path.exists(path):
         try:
-            with open(COOKIE_PATH, "r") as f:
+            with open(path, "r") as f:
                 cookies = json.load(f)
             if cookies:
                 await context.add_cookies(cookies)
@@ -102,7 +130,8 @@ async def _get_linkedin_browser():
 
 # The feed is server-driven: LinkedIn renames its nav and avatar markup often, so
 # a DOM probe reports "logged out" for a live session. Ask the API instead —
-# voyager /me answers 200 only for a signed-in member.
+# voyager /me answers 200 only for a signed-in member (it can also 401 a live
+# session outright, which is why _is_logged_in below does not depend on it alone).
 _VOYAGER_ME_JS = """
 async () => {
   const csrf = (document.cookie.match(/JSESSIONID="?([^;"]+)/) || [])[1] || '';
@@ -125,14 +154,42 @@ async def _voyager_me_status(page) -> int:
         return 0
 
 
-async def _is_logged_in(page) -> bool:
-    """Check if the current page holds a live LinkedIn session."""
+# A URL that only a signed-out visitor lands on. An anonymous /feed redirects here, so the URL
+# check alone catches the common case; `li_at` (below) covers the public surfaces it does not.
+_SIGNED_OUT_URLS = ("/login", "/checkpoint", "/authwall", "/signup")
+# Surfaces only a session reaches, so with the cookie they count as signed in. /jobs is not one:
+# LinkedIn serves public job pages there to anyone, so a revoked `li_at` still in the jar would
+# pass, and every run would scrape empty collections instead of logging in again.
+_SIGNED_IN_SURFACES = ("/feed", "/mynetwork")
+
+
+async def _has_auth_cookie(context) -> bool:
+    """`li_at` is LinkedIn's authentication cookie; without it the session is anonymous."""
     try:
-        if "/login" in page.url or "/checkpoint" in page.url:
-            return False
+        return any(c.get("name") == "li_at" and c.get("value") for c in await context.cookies())
     except Exception:
         return False
-    return await _voyager_me_status(page) == 200
+
+
+async def _is_logged_in(page, context=None) -> bool:
+    """Check if the current page holds a live LinkedIn session.
+
+    /me is definitive when it answers 200, but it can 401/403 on a live session (a cold page,
+    app-level blocks), and a false negative used to send every run into a credential login that
+    an already-authenticated browser redirects straight back to the feed — the fill then times
+    out on a username field that never renders. So when /me refuses, a signed-in surface
+    (/feed, /mynetwork) reached with the `li_at` cookie still counts as logged in."""
+    try:
+        url = page.url or ""
+    except Exception:
+        return False
+    if any(part in url for part in _SIGNED_OUT_URLS):
+        return False
+    if await _voyager_me_status(page) == 200:
+        return True
+    if context is not None and await _has_auth_cookie(context):
+        return any(surface in url for surface in _SIGNED_IN_SURFACES)
+    return False
 
 
 # The login page renders no <form>, gives each input a generated id ("«r0»"),
@@ -142,14 +199,22 @@ _LOGIN_EMAIL = 'input[autocomplete="username"]:visible'
 _LOGIN_PASSWORD = 'input[autocomplete="current-password"]:visible'
 
 
-async def _fill_login_form(page, email: str, password: str):
-    """Fill the credentials on an open LinkedIn login page and submit them."""
-    await page.locator(_LOGIN_EMAIL).first.fill(email)
+async def _fill_login_form(page, email: str, password: str, timeout: int = 30000):
+    """Fill the credentials on an open LinkedIn login page and submit them. `_login` passes a
+    short wait so a page redirecting to the feed doesn't stall; the manual session refresh keeps
+    the full wait for a slow login page."""
+    await page.locator(_LOGIN_EMAIL).first.fill(email, timeout=timeout)
     await asyncio.sleep(random.uniform(0.5, 1.0))
     pwd = page.locator(_LOGIN_PASSWORD).first
-    await pwd.fill(password)
+    await pwd.fill(password, timeout=timeout)
     await asyncio.sleep(random.uniform(0.5, 1.0))
     await pwd.press("Enter")
+
+
+async def _save_session(context, message: str) -> None:
+    """A live session found without filling the form: log why, then persist the cookies."""
+    logger.info(message)
+    await _save_cookies(context)
 
 
 async def _login(page, context, email: str, password: str):
@@ -158,7 +223,22 @@ async def _login(page, context, email: str, password: str):
     await page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(random.uniform(1.5, 3.0))
 
-    await _fill_login_form(page, email, password)
+    # An authenticated session redirects /login to the feed, so the username field never
+    # renders; filling it would time out. Treat that redirect as the login.
+    if await _is_logged_in(page, context):
+        await _save_session(context, "LinkedIn already signed in — /login redirected to the feed")
+        return
+
+    try:
+        await _fill_login_form(page, email, password, timeout=10000)
+    except Exception:
+        # Waiting for the username field can time out because the browser is being redirected to
+        # the feed (already signed in), so the form never renders. Landing on a signed-in page is
+        # a login, not a failure.
+        if await _is_logged_in(page, context):
+            await _save_session(context, "LinkedIn already signed in — the login page redirected to the feed")
+            return
+        raise
 
     try:
         await page.wait_for_url(
@@ -178,7 +258,7 @@ async def _login(page, context, email: str, password: str):
                 "LinkedIn login failed — still on login page. Check credentials."
             )
         # Might have landed on an unexpected page but still logged in
-        if not await _is_logged_in(page):
+        if not await _is_logged_in(page, context):
             raise RuntimeError(f"LinkedIn login failed — landed on unexpected page: {current_url}")
 
     await _save_cookies(context)
@@ -189,7 +269,9 @@ async def _save_cookies(context):
     """Persist browser cookies to disk for session reuse."""
     try:
         cookies = await context.cookies()
-        with open(COOKIE_PATH, "w") as f:
+        path = cookie_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
             json.dump(cookies, f)
     except Exception as e:
         logger.warning(f"Failed to save LinkedIn cookies: {e}")
@@ -201,7 +283,7 @@ async def _ensure_logged_in(page, context, email: str, password: str):
     await page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
     await asyncio.sleep(random.uniform(2.0, 3.5))
 
-    if await _is_logged_in(page):
+    if await _is_logged_in(page, context):
         logger.info("LinkedIn session active via cookies")
         return
 
@@ -221,6 +303,12 @@ def _parse_salary_text(text: str) -> dict:
         return result
 
     text = text.strip()
+    # "$45/hr" or "$8K/mo" is not a yearly figure (the bare-number rule below would read
+    # $45 as $45K); keep it as text only.
+    from backend.analyzer.salary_extractor import is_non_annual
+    if is_non_annual(text):
+        result["salary_text"] = text
+        return result
     # Match $120K, $120,000, $120000, $120.5K etc.
     amounts = []
     for m in re.finditer(r'\$([\d,]+(?:\.\d+)?)\s*([Kk])?', text):
@@ -669,6 +757,12 @@ async def _scrape_collection(page, url: str, collection_name: str) -> list[dict]
         await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(random.uniform(*DELAY_PAGE_LOAD))
 
+        # A session that died mid-run lands on the login wall: say so instead of reporting 0 jobs.
+        if any(part in (page.url or "") for part in _SIGNED_OUT_URLS):
+            raise LinkedInSessionExpiredError(
+                f"LinkedIn session expired — {collection_name} redirected to the login page."
+            )
+
         if await _handle_rate_limit(page, f"page {page_num + 1}"):
             rate_limit_hits += 1
             await page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
@@ -712,12 +806,11 @@ async def run(search: Search) -> dict:
     try:
         db_settings = SessionLocal()
         try:
-            email_row = db_settings.query(Setting).filter(Setting.key == "linkedin_email").first()
-            pass_row = db_settings.query(Setting).filter(Setting.key == "linkedin_password").first()
-            email = email_row.value if email_row else ""
-            password = pass_row.value if pass_row else ""
+            email = get_setting(db_settings, "linkedin_email", "")
+            password = get_setting(db_settings, "linkedin_password", "")
         finally:
             db_settings.close()
+        _check_set_up(email, password)
 
         collections_to_scrape = search.sources or ["recommended", "top-applicant"]
         collections_to_scrape = [c for c in collections_to_scrape if c in ALL_COLLECTIONS]
@@ -736,6 +829,8 @@ async def run(search: Search) -> dict:
             try:
                 coll_jobs = await _scrape_collection(page, coll_url, coll_name)
                 all_jobs.extend(coll_jobs)
+            except LinkedInSessionExpiredError:
+                raise
             except Exception as coll_err:
                 logger.warning(f"Collection '{coll_name}' error (continuing): {coll_err}")
 
@@ -799,6 +894,14 @@ async def run(search: Search) -> dict:
             # Load existing LinkedIn job IDs to skip jobs already imported via extension
             existing_li_ids = {r[0] for r in db.query(Job.linkedin_job_id).filter(Job.linkedin_job_id != None).all()}
 
+            # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
+            from backend.scraper._shared.analysis import prefetch_h1b
+            await prefetch_h1b([
+                j["company"] for j in kept_jobs
+                if not (j.get("job_id") and j["job_id"] in existing_li_ids)
+                and make_external_id(j["company"], j["title"], j.get("apply_url") or j["url"]) not in existing_ids
+            ])
+
             for j in kept_jobs:
                 # Use apply URL (company career page) as primary, LinkedIn URL as fallback
                 job_url = j.get("apply_url") or j["url"]
@@ -860,7 +963,7 @@ async def run(search: Search) -> dict:
 
                 if job.h1b_jd_flag:
                     _phrase = getattr(job, "_h1b_matched_phrase", None) or "?"
-                    logger.info(f"Skipping job (body exclusion): {j['title']} @ {j.get('company', '?')} — matched phrase: {_phrase!r}")
+                    logger.info(f"Skipping job (body exclusion): {j['title']} @ {job.company or j.get('company') or '?'} — matched phrase: {_phrase!r}")
                     continue
 
                 # Use savepoint so one duplicate doesn't kill the whole batch
@@ -923,10 +1026,9 @@ async def preview(search, db) -> dict:
 
     # --- Phase 1: Browser setup + login ---
     try:
-        email_row = db.query(Setting).filter(Setting.key == "linkedin_email").first()
-        pass_row = db.query(Setting).filter(Setting.key == "linkedin_password").first()
-        email = email_row.value if email_row else ""
-        password = pass_row.value if pass_row else ""
+        email = get_setting(db, "linkedin_email", "")
+        password = get_setting(db, "linkedin_password", "")
+        _check_set_up(email, password)
 
         collections_to_scrape = search.sources or ["recommended", "top-applicant"]
         collections_to_scrape = [c for c in collections_to_scrape if c in ALL_COLLECTIONS]
@@ -977,18 +1079,18 @@ async def preview(search, db) -> dict:
         include_kw = search.title_include_keywords or []
         exclude_kw = list(set((search.title_exclude_keywords or []) + _global_title_excl))
 
-        global_exclude_row = db.query(Setting).filter(Setting.key == "company_exclude_global").first()
-        global_exclude = json.loads(global_exclude_row.value) if global_exclude_row and global_exclude_row.value else []
+        global_exclude_raw = get_setting(db, "company_exclude_global")
+        global_exclude = json.loads(global_exclude_raw) if global_exclude_raw else []
         global_exclude_set = {e.lower() for e in global_exclude}
         search_exclude = [e.lower() for e in (search.company_exclude or [])]
         search_exclude_set = set(search_exclude)
         all_exclude = list(global_exclude_set | search_exclude_set)
 
-        body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
+        body_raw = get_setting(db, "body_exclusion_phrases")
         body_phrases = []
-        if body_row and body_row.value:
+        if body_raw:
             try:
-                body_phrases = json.loads(body_row.value)
+                body_phrases = json.loads(body_raw)
             except json.JSONDecodeError:
                 pass
 

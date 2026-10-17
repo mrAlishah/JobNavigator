@@ -115,3 +115,26 @@ def test_idempotent(db):
     migrate_llm_settings(db)
     second = db.query(Setting).filter(Setting.key == "llm_models_list").first().value
     assert first == second == json.dumps(_default_list())
+
+
+def test_go_minimax_and_qwen_reach_an_existing_list_without_overwriting_it(db):
+    """#25 follow-up: MiniMax and Qwen answer on Go's chat/completions, so they join the starter
+    list. An install that already saw the earlier defaults gains them, and keeps its own
+    removals and custom entries."""
+    new = {"opencode_go|minimax-m3", "opencode_go|qwen3.8-max", "opencode_go|qwen3.8-flash"}
+    key = lambda m: f'{m["provider"]}|{m["model"]}'
+    assert new <= {key(m) for m in _default_list()}
+    earlier = [m for m in _default_list() if key(m) not in new]
+    removed = {"provider": "opencode_go", "model": "hy3"}
+    custom = {"provider": "opencode_go", "model": "my-own-go-model"}
+    saved = [m for m in earlier if m != removed] + [custom]
+    db.add(Setting(key="llm_models_list", value=json.dumps(saved)))
+    db.add(Setting(key="llm_seeded_models", value=json.dumps(sorted(key(m) for m in earlier))))
+    db.commit()
+
+    migrate_llm_settings(db)
+
+    result = json.loads(db.query(Setting).filter(Setting.key == "llm_models_list").first().value)
+    assert result[:len(saved)] == saved                       # the saved list is kept as it was
+    assert {key(m) for m in result[len(saved):]} == new       # only the three are appended
+    assert removed not in result                              # a removed default stays removed

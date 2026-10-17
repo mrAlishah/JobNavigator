@@ -1,4 +1,10 @@
-"""Gmail API OAuth2 client — polls for recruiter responses."""
+"""Gmail API OAuth2 client — polls for recruiter responses.
+
+MT-19: runs per account (scheduler: `gmail_account_ids()`), each with its own refresh token
+(`gmail_auth.resolve_token`) and its own processed-id state (`gmail_processed_ids`, an
+own_always setting). The three GMAIL_* names below are the install's .env values; the
+client id/secret are the OAuth app every account consents through, the refresh token is
+the owner's pre-MT-19 fallback."""
 import asyncio
 import base64
 import json
@@ -9,7 +15,8 @@ from datetime import datetime, timezone
 import httpx
 
 from backend.config import GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
-from backend.models.db import SessionLocal, Setting, Application
+from backend.models.db import SessionLocal, Application
+from backend.accounts.settings import get_setting, set_setting
 from backend.email_monitor.response_parser import classify_email
 
 logger = logging.getLogger("jobnavigator.gmail")
@@ -18,25 +25,51 @@ GMAIL_API_BASE = "https://www.googleapis.com/gmail/v1"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
+def _is_invalid_grant(resp) -> bool:
+    try:
+        body = resp.json()
+    except Exception:
+        return "invalid_grant" in (getattr(resp, "text", "") or "")
+    return isinstance(body, dict) and body.get("error") == "invalid_grant"
+
+
 async def _get_access_token() -> str:
-    """Exchange refresh token for access token."""
-    if not GMAIL_REFRESH_TOKEN:
-        logger.warning("GMAIL_REFRESH_TOKEN not set, skipping email check")
-        return ""
+    """Exchange the current account's refresh token for an access token (MT-19).
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(TOKEN_URL, data={
-            "client_id": GMAIL_CLIENT_ID,
-            "client_secret": GMAIL_CLIENT_SECRET,
-            "refresh_token": GMAIL_REFRESH_TOKEN,
-            "grant_type": "refresh_token",
-        })
-
-        if resp.status_code != 200:
-            logger.error(f"Gmail token refresh failed: {resp.text}")
+    The token is the account's own (connected in Settings); the owner falls back to
+    GMAIL_REFRESH_TOKEN from .env. No token, or a token Google already refused with
+    `invalid_grant` → "" without calling Google. A new `invalid_grant` marks the account
+    expired (Settings shows Reconnect) and returns ""."""
+    from backend.email_monitor import gmail_auth
+    db = SessionLocal()
+    try:
+        token, source = gmail_auth.resolve_token(db)
+        if not token:
+            logger.warning("No Gmail token for this account, skipping email check")
             return ""
+        if gmail_auth.is_expired(db, token):
+            logger.info("Gmail token for this account is expired (invalid_grant), reconnect in Settings")
+            return ""
+        client_id, client_secret = gmail_auth.client_config()
 
-        return resp.json().get("access_token", "")
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(TOKEN_URL, data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": token,
+                "grant_type": "refresh_token",
+            })
+
+            if resp.status_code != 200:
+                logger.error(f"Gmail token refresh failed: {resp.text}")
+                if _is_invalid_grant(resp):
+                    gmail_auth.mark_expired(db, token)
+                return ""
+
+            gmail_auth.clear_status(db, gmail_auth._target(db))
+            return resp.json().get("access_token", "")
+    finally:
+        db.close()
 
 
 
@@ -52,10 +85,10 @@ def _extract_email_domain(from_header: str) -> str:
 
 def _load_processed_ids(db) -> set:
     """Load previously processed Gmail message IDs from settings."""
-    row = db.query(Setting).filter(Setting.key == "gmail_processed_ids").first()
-    if row and row.value:
+    raw = get_setting(db, "gmail_processed_ids")
+    if raw:
         try:
-            return set(json.loads(row.value))
+            return set(json.loads(raw))
         except (json.JSONDecodeError, TypeError):
             pass
     return set()
@@ -64,12 +97,8 @@ def _load_processed_ids(db) -> set:
 def _save_processed_ids(db, processed_ids: set):
     """Save processed Gmail message IDs to settings (keep last 500)."""
     id_list = list(processed_ids)[-500:]
-    row = db.query(Setting).filter(Setting.key == "gmail_processed_ids").first()
-    if row:
-        row.value = json.dumps(id_list)
-    else:
-        db.add(Setting(key="gmail_processed_ids", value=json.dumps(id_list),
-                        description="Processed Gmail message IDs for dedup (auto-managed)"))
+    set_setting(db, "gmail_processed_ids", json.dumps(id_list),
+                description="Processed Gmail message IDs for dedup (auto-managed)")
     db.commit()
 
 
@@ -77,11 +106,11 @@ def _build_gmail_query(db) -> str:
     """Build Gmail search query from settings — sender patterns + subject keywords + exclusions."""
     import json as _json
 
-    senders_row = db.query(Setting).filter(Setting.key == "email_gmail_query_senders").first()
+    senders_raw = get_setting(db, "email_gmail_query_senders")
     sender_patterns = []
-    if senders_row and senders_row.value:
+    if senders_raw:
         try:
-            sender_patterns = _json.loads(senders_row.value)
+            sender_patterns = _json.loads(senders_raw)
         except _json.JSONDecodeError:
             pass
     sender_parts = []
@@ -91,20 +120,20 @@ def _build_gmail_query(db) -> str:
         else:
             sender_parts.append(f'from:"{s}"')
 
-    subjects_row = db.query(Setting).filter(Setting.key == "email_gmail_query_subjects").first()
+    subjects_raw = get_setting(db, "email_gmail_query_subjects")
     subject_terms = []
-    if subjects_row and subjects_row.value:
+    if subjects_raw:
         try:
-            subject_terms = _json.loads(subjects_row.value)
+            subject_terms = _json.loads(subjects_raw)
         except _json.JSONDecodeError:
             pass
     subject_parts = [f'subject:"{s}"' for s in subject_terms]
 
-    exclusions_row = db.query(Setting).filter(Setting.key == "email_gmail_query_exclusions").first()
+    exclusions_raw = get_setting(db, "email_gmail_query_exclusions")
     exclusion_terms = []
-    if exclusions_row and exclusions_row.value:
+    if exclusions_raw:
         try:
-            exclusion_terms = _json.loads(exclusions_row.value)
+            exclusion_terms = _json.loads(exclusions_raw)
         except _json.JSONDecodeError:
             pass
     exclusion_parts = [f'-subject:"{e}"' for e in exclusion_terms]
@@ -279,8 +308,7 @@ async def check_emails():
                 await asyncio.sleep(2)  # Rate limit between LLM calls
 
                 if llm_result:
-                    threshold_row = db.query(Setting).filter(Setting.key == "email_llm_confidence_threshold").first()
-                    threshold = int(threshold_row.value) if threshold_row and threshold_row.value else 70
+                    threshold = int(get_setting(db, "email_llm_confidence_threshold") or 70)
 
                     if llm_result["confidence"] >= threshold and llm_result["status"] != "no_change":
                         match_idx = llm_result.get("match_index")
@@ -289,7 +317,10 @@ async def check_emails():
                         if match_idx and 1 <= match_idx <= len(active_apps):
                             app_info = active_apps[match_idx - 1]
                             matched_company = app_info.get("company", "")
-                            matched_app = db.query(Application).get(app_info["id"])
+                            # A filtered query, not Query.get(): an identity-map hit skips
+                            # the account criteria (MT-6).
+                            matched_app = db.query(Application).filter(
+                                Application.id == app_info["id"]).first()
 
                         # Guards against the LLM force-matching an email onto the wrong company's
                         # application (e.g. an Amazon email onto a Kpler application).

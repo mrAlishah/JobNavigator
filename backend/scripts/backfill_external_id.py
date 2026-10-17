@@ -34,7 +34,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 
 from backend.models.db import SessionLocal, Job
 from backend.scraper._shared.dedup import make_external_id
@@ -43,13 +43,24 @@ BATCH_SIZE = 1000
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COLLISIONS_REPORT = REPO_ROOT / "tests" / "round4" / "backfill-collisions.md"
 
+# Sources whose external_id is deliberately NOT the hash of Job.url, so recomputing it from
+# the url would break their dedup:
+# - trulyremote stores the employer's apply link as `url` (the feed opens the employer's page)
+#   but hashes the board's job URL, the only id known before its `.md` page is read
+#   (scraper/sources/trulyremote.py). Rehashed from the apply link, every row would miss the
+#   next run's dedup and the whole corpus would be read and added again.
+SKIP_SOURCES = ("trulyremote",)
+
 
 def fetch_all_rows(db):
-    """SELECT id, company, title, url, external_id for every job, in batches of 1000."""
+    """SELECT id, company, title, url, external_id for every job, in batches of 1000, leaving
+    out the SKIP_SOURCES rows."""
     rows = []
     last_id = None
     while True:
-        q = db.query(Job.id, Job.company, Job.title, Job.url, Job.external_id).order_by(Job.id)
+        q = (db.query(Job.id, Job.company, Job.title, Job.url, Job.external_id)
+             .filter(or_(Job.source.is_(None), Job.source.notin_(SKIP_SOURCES)))
+             .order_by(Job.id))
         if last_id is not None:
             q = q.filter(Job.id > last_id)
         batch = q.limit(BATCH_SIZE).all()
@@ -160,29 +171,38 @@ def main():
         parser.error("pass --dry-run or --apply")
     dry_run = args.dry_run
 
-    db = SessionLocal()
-    try:
-        rows = fetch_all_rows(db)
-        computed = compute_new_ids(rows)
-        updates, skipped, unchanged = resolve_updates(computed)
+    # QA F4 / R1-10: every account's jobs, one account at a time (external_id is unique
+    # per account, so collisions are grouped per account too).
+    from backend.accounts.background import acting_as, all_account_ids
+    all_skipped, all_computed = [], {}
+    for account in all_account_ids():
+        db = SessionLocal()
+        try:
+            with acting_as(account):
+                rows = fetch_all_rows(db)
+                computed = compute_new_ids(rows)
+                updates, skipped, unchanged = resolve_updates(computed)
 
-        update_label = "would update" if dry_run else "updated"
-        print(f"total jobs:          {len(rows)}")
-        print(f"unchanged:           {unchanged}")
-        print(f"{update_label}:{' ' * (21 - len(update_label))}{len(updates)}")
-        print(f"skipped-collisions:  {len(skipped)}")
+                update_label = "would update" if dry_run else "updated"
+                print(f"account {account or 'owner'}")
+                print(f"total jobs:          {len(rows)}")
+                print(f"unchanged:           {unchanged}")
+                print(f"{update_label}:{' ' * (21 - len(update_label))}{len(updates)}")
+                print(f"skipped-collisions:  {len(skipped)}")
+                all_skipped.extend(skipped)
+                all_computed.update({r[0]: r for r in computed})
 
-        write_collisions_report(skipped, {r[0]: r for r in computed}, dry_run)
-        print(f"collision list written to {COLLISIONS_REPORT}")
+                if not dry_run:
+                    apply_updates(db, updates)
+                    print(f"--apply: committed {len(updates)} updates in "
+                          f"{(len(updates) + BATCH_SIZE - 1) // BATCH_SIZE or 0} batch(es).")
+        finally:
+            db.close()
 
-        if dry_run:
-            print("\n--dry-run: no writes made.")
-        else:
-            apply_updates(db, updates)
-            print(f"\n--apply: committed {len(updates)} updates in "
-                  f"{(len(updates) + BATCH_SIZE - 1) // BATCH_SIZE or 0} batch(es).")
-    finally:
-        db.close()
+    write_collisions_report(all_skipped, all_computed, dry_run)
+    print(f"collision list written to {COLLISIONS_REPORT}")
+    if dry_run:
+        print("\n--dry-run: no writes made.")
 
 
 if __name__ == "__main__":

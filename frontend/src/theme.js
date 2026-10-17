@@ -94,8 +94,8 @@ let state = { mode: bootMode, theme: readTheme(), resolved: resolveMode(bootMode
 const listeners = new Set()
 const emit = () => { listeners.forEach((l) => l()) }
 
-// <html> is the boot copy of the two attributes plus the classic shell's `.dark`
-// class, so v1 agrees with v2 the moment either one changes.
+// <html> is the boot copy of the two attributes plus a `.dark` class that base.css's
+// dark-mode form rules key on, so all three move together.
 function apply() {
   const d = typeof document !== 'undefined' && document.documentElement
   if (!d) return

@@ -16,16 +16,6 @@ const ROUTES = [
   ['/stats', 'Stats'],
   ['/settings', 'Settings'],
   ['/toasts', 'Toast lab'],
-  // the previous interface, one level down
-  ['/classic', 'Jobs'],
-  ['/classic/applications', 'Applications'],
-  ['/classic/companies', 'Companies'],
-  ['/classic/searches', 'Searches'],
-  ['/classic/resumes', 'Résumés'],
-  ['/classic/cover-letters', 'Cover Letters'],
-  ['/classic/persona', 'Persona'],
-  ['/classic/settings', 'Settings'],
-  ['/classic/stats', 'Stats'],
   ['/', 'Jobs'],
 ]
 

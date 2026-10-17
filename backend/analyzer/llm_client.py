@@ -3,7 +3,12 @@ import asyncio
 import logging
 import os
 import re
-from backend.models.db import SessionLocal, Setting
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Optional
+from backend.models.db import SessionLocal
+from backend.accounts.settings import get_setting
 
 logger = logging.getLogger("jobnavigator.llm")
 
@@ -11,14 +16,29 @@ logger = logging.getLogger("jobnavigator.llm")
 DEFAULT_PROVIDER = "claude_api"
 DEFAULT_MODEL = "claude-sonnet-5"
 
+# Reasoning-effort values each provider accepts; "" sends none, so the model uses its own default.
+# The values a model takes vary inside one provider, so an unsupported pick fails with the provider's
+# own error. antigravity_cli carries the effort in the model slug; ollama and lmstudio take none.
+REASONING_EFFORTS = {
+    "claude_api": ("low", "medium", "high", "xhigh", "max"),
+    "claude_code": ("low", "medium", "high", "xhigh", "max"),
+    "codex_cli": ("none", "low", "medium", "high", "xhigh", "max"),
+    "openai": ("none", "low", "medium", "high", "xhigh", "max"),
+    "openrouter": ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+}
+# The API providers count reasoning tokens against the output cap, and several current models reason
+# by default (Sonnet 5, Opus 5.5, GPT-6 Sol). A cap sized for the answer alone can then go entirely to
+# reasoning and return no text, so these calls get this much more room. Tokens are billed as used.
+REASONING_HEADROOM = 16000
+_CAPPED_PROVIDERS = ("claude_api", "openai", "openrouter", "opencode_go")
+
 
 def _get_setting(db, key, default=""):
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return row.value if row and row.value else default
+    return get_setting(db, key) or default
 
 
 def resolve_llm_config(feature: str = "", db=None) -> dict:
-    """Resolve the provider/model/api_key a feature dispatches with: `<feature>_llm_*` setting -> primary `llm_*` setting -> shipped default. Single source of truth for both dispatch and logging."""
+    """Resolve the provider/model/api_key/effort a feature dispatches with: `<feature>_llm_*` setting -> primary `llm_*` setting -> shipped default. Single source of truth for both dispatch and logging."""
     own_db = db is None
     if own_db:
         db = SessionLocal()
@@ -26,15 +46,27 @@ def resolve_llm_config(feature: str = "", db=None) -> dict:
         prefix = f"{feature}_" if feature else ""
         provider = _get_setting(db, f"{prefix}llm_provider", "")
         model = _get_setting(db, f"{prefix}llm_model", "")
-        api_key = _get_setting(db, f"{prefix}llm_api_key", "")
+        # L-01: a slot's own key belongs to the slot's own provider. With no provider of its own
+        # the slot follows the Primary, so a key left in it (an override switched off) is stale
+        # and must not reach the Primary's provider.
+        api_key = _get_setting(db, f"{prefix}llm_api_key", "") if (provider or not feature) else ""
+        effort = _get_setting(db, f"{prefix}llm_effort", "")
+        provider = provider or _get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER
         if feature:
-            provider = provider or _get_setting(db, "llm_provider", "")
             model = model or _get_setting(db, "llm_model", "")
-            api_key = api_key or _get_setting(db, "llm_api_key", "")
+            # Keys and effort values are per provider, so the Primary's carry over only to a slot
+            # on the same provider: a slot on another provider with no key of its own gets "" and
+            # dispatch then applies that provider's env fallback (B1: never another provider's key).
+            same_provider = provider == (_get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER)
+            if not api_key and same_provider:
+                api_key = _get_setting(db, "llm_api_key", "")
+            if not effort and same_provider:
+                effort = _get_setting(db, "llm_effort", "")
         return {
-            "provider": provider or DEFAULT_PROVIDER,
+            "provider": provider,
             "model": model or DEFAULT_MODEL,
             "api_key": api_key,
+            "effort": effort,
         }
     finally:
         if own_db:
@@ -44,8 +76,8 @@ def resolve_llm_config(feature: str = "", db=None) -> dict:
 async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
                    cached_prefix: str | None = None,
                    provider: str | None = None, model: str | None = None,
-                   api_key: str | None = None) -> dict:
-    """Route to the configured LLM provider with retry + automatic fallback; provider/model/api_key override the Primary for this call when given, else fall back to the llm_* settings."""
+                   api_key: str | None = None, effort: str | None = None) -> dict:
+    """Route to the configured LLM provider with retry + automatic fallback; provider/model/api_key/effort override the Primary for this call when given, else fall back to the llm_* settings."""
     MAX_ATTEMPTS = 4
     BACKOFF_BASE = 2  # seconds: 2, 4, 8
 
@@ -58,9 +90,15 @@ async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
             model = primary["model"]
         if api_key is None:
             api_key = primary["api_key"]
+        if effort is None:
+            effort = primary["effort"] if provider == primary["provider"] else ""
         fallback_provider = _get_setting(db, "llm_fallback_provider", "")
         fallback_model = _get_setting(db, "llm_fallback_model", "")
         fb_api_key = _get_setting(db, "llm_fallback_api_key", "")
+        # B2: like a feature slot, the fallback reuses the Primary's key only on the same provider.
+        if not fb_api_key and fallback_provider == primary["provider"]:
+            fb_api_key = primary["api_key"]
+        fb_effort = _get_setting(db, "llm_fallback_effort", "")
     finally:
         db.close()
 
@@ -73,7 +111,8 @@ async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             logger.info(f"LLM call: provider={provider}, model={model}, attempt={attempt}/{MAX_ATTEMPTS}, caching={'on' if caching else 'off'}")
-            res = await _dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=cached_prefix)
+            res = await _dispatch(provider, model, api_key, prompt, system, max_tokens,
+                                  cached_prefix=cached_prefix, effort=effort)
             return {**res, "provider": provider, "model": model}
         except Exception as e:
             last_primary_err = e
@@ -94,7 +133,8 @@ async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 logger.info(f"LLM fallback: provider={fallback_provider}, model={fallback_model}, attempt={attempt}/{MAX_ATTEMPTS}, caching={'on' if fb_caching else 'off'}")
-                res = await _dispatch(fallback_provider, fallback_model, fb_api_key, prompt, system, max_tokens, cached_prefix=cached_prefix)
+                res = await _dispatch(fallback_provider, fallback_model, fb_api_key, prompt, system, max_tokens,
+                                      cached_prefix=cached_prefix, effort=fb_effort)
                 # Report the pair that actually answered so the caller logs the
                 # fallback, not the primary it never reached.
                 return {**res, "provider": fallback_provider, "model": fallback_model}
@@ -125,7 +165,8 @@ async def call_email_llm(prompt: str, system: str, max_tokens: int = 150) -> dic
     provider, model = cfg["provider"], cfg["model"]
 
     logger.info(f"Email LLM call: provider={provider}, model={model}, max_tokens={max_tokens}")
-    res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens)
+    with llm_feature("email"):
+        res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens, effort=cfg["effort"])
     return {**res, "provider": provider, "model": model}
 
 
@@ -135,7 +176,8 @@ async def call_cv_tailor_llm(prompt: str, system: str, max_tokens: int = 3000) -
     provider, model = cfg["provider"], cfg["model"]
 
     logger.info(f"CV tailor LLM call: provider={provider}, model={model}, max_tokens={max_tokens}")
-    res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens)
+    with llm_feature("cv_tailor"):
+        res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens, effort=cfg["effort"])
     return {**res, "provider": provider, "model": model}
 
 
@@ -147,8 +189,9 @@ async def call_cover_letter_llm(prompt: str, system: str, max_tokens: int = 1500
 
     logger.info(f"Cover-letter LLM call: provider={provider}, model={model}, max_tokens={max_tokens}, "
                 f"caching={'on' if cached_prefix and provider == 'claude_api' else 'off'}")
-    res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens,
-                          cached_prefix=cached_prefix)
+    with llm_feature("cover_letter"):
+        res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens,
+                              cached_prefix=cached_prefix, effort=cfg["effort"])
     return {**res, "provider": provider, "model": model}
 
 
@@ -160,41 +203,54 @@ async def call_autofill_llm(prompt: str, system: str, max_tokens: int = 400,
 
     logger.info(f"Autofill LLM call: provider={provider}, model={model}, max_tokens={max_tokens}, "
                 f"caching={'on' if cached_prefix and provider == 'claude_api' else 'off'}")
-    res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens,
-                          cached_prefix=cached_prefix)
+    with llm_feature("autofill"):
+        res = await _dispatch(provider, model, cfg["api_key"], prompt, system, max_tokens,
+                              cached_prefix=cached_prefix, effort=cfg["effort"])
     return {**res, "provider": provider, "model": model}
 
 
 async def call_autofill_llm_stream(prompt: str, system: str, max_tokens: int = 400,
                                    cached_prefix: str | None = None):
-    """Streaming version of call_autofill_llm; claude_api and openai/openrouter stream natively, other providers fall back to a single full-answer chunk."""
+    """Streaming version of call_autofill_llm; claude_api, openai, openrouter and opencode_go stream natively, other providers fall back to a single full-answer chunk."""
     cfg = resolve_llm_config("autofill")
     provider, model, api_key = cfg["provider"], cfg["model"], cfg["api_key"]
+    effort = _supported_effort(provider, cfg["effort"])
+    cap = _output_cap(provider, max_tokens, effort)
 
+    if provider in _KEYED_PROVIDERS:
+        _require_own_key(provider, api_key)
+    if provider == "opencode_go":
+        api_key = _opencode_go_key(api_key)
+    elif provider == "openai":
+        api_key = _openai_key(api_key)
+    elif provider == "openrouter":
+        api_key = _openrouter_key(api_key)
+    elif provider == "claude_api":
+        api_key = _anthropic_key(api_key)
     if provider == "claude_api":
-        async for c in _stream_claude(prompt, system, model, api_key, max_tokens, cached_prefix):
+        async for c in _stream_claude(prompt, system, model, api_key, cap, cached_prefix, effort):
             yield c
         return
     combined = f"{cached_prefix}\n\n{prompt}" if cached_prefix else prompt
-    if provider in ("openai", "openrouter"):
-        base = OPENROUTER_BASE_URL if provider == "openrouter" else None
-        async for c in _stream_openai(combined, system, model, api_key, max_tokens, base):
+    if provider in ("openai", "openrouter", "opencode_go"):
+        base = {"openrouter": OPENROUTER_BASE_URL, "opencode_go": OPENCODE_GO_BASE_URL}.get(provider)
+        async for c in _stream_openai(combined, system, model, api_key, cap, base, effort, feature="autofill"):
             yield c
         return
     # Non-streaming providers can't emit tokens as they generate, so simulate it:
     # fetch the full answer, then yield word-sized chunks so the draft still animates.
     import asyncio, re
-    res = await _dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=cached_prefix)
+    res = await _dispatch(provider, model, api_key, prompt, system, max_tokens,
+                          cached_prefix=cached_prefix, effort=effort)
     text = res.get("text", "") or ""
     for tok in re.findall(r"\S+\s*", text):
         yield tok
         await asyncio.sleep(0.012)
 
 
-async def _stream_claude(prompt, system, model, api_key, max_tokens, cached_prefix):
-    import anthropic, os
-    key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
-    client = anthropic.AsyncAnthropic(api_key=key)
+async def _stream_claude(prompt, system, model, api_key, max_tokens, cached_prefix, effort=""):
+    import anthropic
+    client = anthropic.AsyncAnthropic(api_key=_anthropic_key(api_key))
     if cached_prefix:
         content = [
             {"type": "text", "text": cached_prefix, "cache_control": {"type": "ephemeral"}},
@@ -203,7 +259,8 @@ async def _stream_claude(prompt, system, model, api_key, max_tokens, cached_pref
     else:
         content = prompt
     async with client.messages.stream(model=model, max_tokens=max_tokens, system=system,
-                                      messages=[{"role": "user", "content": content}]) as stream:
+                                      messages=[{"role": "user", "content": content}],
+                                      **_claude_effort_kwargs(effort)) as stream:
         async for text in stream.text_stream:
             yield text
 
@@ -212,18 +269,106 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # OpenRouter app attribution (lists the app on openrouter.ai/apps); ignored by other endpoints.
 OPENROUTER_HEADERS = {"HTTP-Referer": "https://github.com/vesaias/JobNavigator", "X-Title": "JobNavigator"}
 
+# OpenCode Go is a subscription whose models are served over an HTTP API
+# (https://opencode.ai/zen/go/v1) with a Go API key. Go asks each client to identify itself with
+# its own user agent and to send a stable session id per conversation (`x-opencode-session`) for
+# routing and prompt caching; a missing session id is a 400 MissingSessionID, and a generic SDK
+# user agent is what the docs warn against.
+# The current Go docs list https://opencode.ai/inference/go/openai/v1 (chat) and /inference/go/v1/models.
+OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_USER_AGENT = "JobNavigator/1.0 (+https://github.com/vesaias/JobNavigator)"
+# One session id per (account, feature): stable while the backend runs, so a feature's repeated
+# prompts (the same résumé prefix) route and cache together, and never shared between accounts.
+# The namespace is random per process, so the ids say nothing about the install.
+_OPENCODE_SESSION_NS = uuid.uuid4()
+# The feature an LLM call is made for ("" = the Primary slot); set by the per-feature wrappers.
+_llm_feature: ContextVar[str] = ContextVar("jn_llm_feature", default="")
 
-def _openai_client(api_key: str, base_url: str | None):
+
+@contextmanager
+def llm_feature(name: str):
+    """Mark the calls in this block as made for `name` (scoring, cv_tailor, ...)."""
+    token = _llm_feature.set(name)
+    try:
+        yield
+    finally:
+        _llm_feature.reset(token)
+
+
+def _opencode_session(feature: str | None = None) -> str:
+    """The x-opencode-session id for the current account and `feature` (default: the context's)."""
+    from backend.accounts.context import current_account, owner_account_id
+    account = current_account.get()
+    if account is None:
+        try:
+            account = owner_account_id()
+        except Exception:
+            account = None
+    feature = _llm_feature.get() if feature is None else feature
+    return str(uuid.uuid5(_OPENCODE_SESSION_NS, f"{account or 'install'}|{feature or 'primary'}"))
+
+
+def _openai_client(api_key: str, base_url: str | None, feature: str | None = None):
     from openai import AsyncOpenAI
-    headers = OPENROUTER_HEADERS if base_url == OPENROUTER_BASE_URL else None
-    return AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+    if base_url == OPENROUTER_BASE_URL:
+        headers = OPENROUTER_HEADERS
+    elif base_url == OPENCODE_GO_BASE_URL:
+        # Identify as JobNavigator, not the SDK, and send the session id Go routes on.
+        headers = {"User-Agent": OPENCODE_USER_AGENT, "x-opencode-session": _opencode_session(feature)}
+    else:
+        headers = None
+    # Never None: the SDK would then read OPENAI_API_KEY, which must not reach OpenRouter,
+    # OpenCode Go or LM Studio; OpenAI's own env key is resolved by `_openai_key` first (B3).
+    return AsyncOpenAI(api_key=api_key or "", base_url=base_url, default_headers=headers)
 
 
-async def _stream_openai(prompt, system, model, api_key, max_tokens, base_url=None):
-    client = _openai_client(api_key, base_url)
+def _claude_effort_kwargs(effort: str) -> dict:
+    """Request kwargs for a Claude effort. The pinned SDK predates `output_config`, so it goes in the body."""
+    return {"extra_body": {"output_config": {"effort": effort}}} if effort else {}
+
+
+def _openai_kwargs(max_tokens: int, effort: str, base_url: str | None) -> dict:
+    """The output cap and effort for an OpenAI-compatible request. OpenAI's reasoning models reject
+    `max_tokens`, and `max_completion_tokens` is the cap every OpenAI chat model takes; compatible
+    endpoints (OpenRouter, LM Studio) still read `max_tokens`. OpenRouter takes effort as `reasoning`."""
+    kwargs = {"max_completion_tokens" if base_url is None else "max_tokens": max_tokens}
+    if effort and base_url == OPENROUTER_BASE_URL:
+        kwargs["extra_body"] = {"reasoning": {"effort": effort}}
+    elif effort:
+        kwargs["reasoning_effort"] = effort
+    return kwargs
+
+
+def _supported_effort(provider: str, effort: str) -> str:
+    """The effort to send, or "" when the provider has no such value (a pick left from another provider)."""
+    if effort and effort not in REASONING_EFFORTS.get(provider, ()):
+        logger.warning(f"Reasoning effort {effort!r} is not a {provider} value; the model default applies")
+        return ""
+    return effort or ""
+
+
+def _output_cap(provider: str, max_tokens: int, effort: str) -> int:
+    """The cap to send. Claude API models reason by default, so they always get
+    REASONING_HEADROOM. OpenAI and OpenRouter get it only when an effort is set: with the
+    empty default a non-reasoning model such as gpt-4o (16,384 output ceiling) would be
+    sent max_completion_tokens=16,600 and refuse every call. "none" never reasons.
+    opencode_go follows the OpenAI rule: a Go model whose output ceiling is below the headroom
+    would refuse every call, and Go has no effort values yet, so today it gets none."""
+    if effort == "none":
+        return max_tokens
+    if provider not in _CAPPED_PROVIDERS:
+        return max_tokens
+    if provider != "claude_api" and not effort:
+        return max_tokens
+    return max_tokens + REASONING_HEADROOM
+
+
+async def _stream_openai(prompt, system, model, api_key, max_tokens, base_url=None, effort="", feature=""):
+    client = _openai_client(api_key, base_url, feature)
     stream = await client.chat.completions.create(
-        model=model, max_tokens=max_tokens, stream=True,
+        model=model, stream=True,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        **_openai_kwargs(max_tokens, effort, base_url),
     )
     async for chunk in stream:
         delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -231,28 +376,104 @@ async def _stream_openai(prompt, system, model, api_key, max_tokens, base_url=No
             yield delta
 
 
+_KEYED_PROVIDERS = {"claude_api": "Claude API", "openai": "OpenAI", "openrouter": "OpenRouter",
+                    "opencode_go": "OpenCode Go"}
+OPENCODE_GO_KEY_ENV = "OPENCODE_API_KEY"
+OPENAI_KEY_ENV = "OPENAI_API_KEY"
+ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+
+
+def _env_key(env_name: str) -> str:
+    """The provider's `.env` key for the owner and members on 'inherit'; "" for a member on its
+    own Models, since the env key is the owner's (QA F5)."""
+    if _own_login_account() is not None:
+        return ""
+    return os.getenv(env_name, "")
+
+
+def _opencode_go_key(api_key: str) -> str:
+    """The Go key to send: the resolved setting, else OPENCODE_API_KEY for the owner and members
+    on 'inherit'. A member on its own Models never reaches the env key, which is the owner's
+    (QA F5); `_require_own_key` has already refused it an empty key."""
+    return api_key or _env_key(OPENCODE_GO_KEY_ENV)
+
+
+def _openai_key(api_key: str) -> str:
+    """The OpenAI key to send: the resolved setting, else OPENAI_API_KEY for the owner and
+    members on 'inherit' (as the model catalog does). The SDK reads the env var only for
+    api_key=None, so an empty setting used to send an empty bearer and retry 401s (B3). No key
+    at all is a config error, not a retry."""
+    key = api_key or _env_key(OPENAI_KEY_ENV)
+    if not key:
+        raise NonRetryableLLMError(
+            "No API key for OpenAI — set it in Settings › Models (or OPENAI_API_KEY in .env)")
+    return key
+
+
+def _anthropic_key(api_key: str) -> str:
+    """The Claude API key to send: the resolved setting, else ANTHROPIC_API_KEY for the owner and
+    members on 'inherit'. With neither the SDK raised "Could not resolve authentication method"
+    at request time and the call was retried 4 times (L-02); no key at all is a config error."""
+    key = api_key or _env_key(ANTHROPIC_KEY_ENV)
+    if not key:
+        raise NonRetryableLLMError(
+            "No API key for Claude API — set it in Settings › Models (or ANTHROPIC_API_KEY in .env)")
+    return key
+
+
+def _openrouter_key(api_key: str) -> str:
+    """The OpenRouter key to send. OpenRouter has no env fallback, so an empty key used to send
+    an empty bearer and retry the 401 (L-02); it is a config error instead."""
+    if not api_key:
+        raise NonRetryableLLMError("No API key for OpenRouter — set it in Settings › Models")
+    return api_key
+
+
+def _require_own_key(provider: str, api_key: str) -> None:
+    """QA F5 (R3-02): a member on its own Models section uses only its own API keys. An
+    empty key for a keyed provider fails clearly instead of reaching the `.env` key (the
+    owner's) or sending an empty bearer. The owner and members on 'inherit' keep today's
+    behaviour (the install key, then the env var)."""
+    if api_key or provider not in _KEYED_PROVIDERS:
+        return
+    if _own_login_account() is None:
+        return
+    raise NonRetryableLLMError(
+        f"No API key for {_KEYED_PROVIDERS[provider]} — set it in Settings › Models")
+
+
 async def _dispatch(provider: str, model: str, api_key: str,
                     prompt: str, system: str, max_tokens: int,
-                    cached_prefix: str | None = None) -> dict:
-    """Route to the correct provider; only `claude_api` supports prompt caching, others get cached_prefix concatenated into the prompt (no cache discount)."""
+                    cached_prefix: str | None = None, effort: str = "") -> dict:
+    """Route to the correct provider; only `claude_api` supports prompt caching, others get cached_prefix concatenated into the prompt (no cache discount). `effort` reaches only the providers in REASONING_EFFORTS."""
+    _require_own_key(provider, api_key)
+    effort = _supported_effort(provider, effort)
+    max_tokens = _output_cap(provider, max_tokens, effort)
     if provider == "claude_api":
-        return await _call_claude_api(prompt, system, model, api_key, max_tokens, cached_prefix=cached_prefix)
+        return await _call_claude_api(prompt, system, model, api_key, max_tokens,
+                                      cached_prefix=cached_prefix, effort=effort)
     combined = f"{cached_prefix}\n\n{prompt}" if cached_prefix else prompt
     if provider == "claude_code":
-        return await _call_claude_code(combined, system, model, max_tokens)
+        return await _call_claude_code(combined, system, model, max_tokens, effort=effort)
     elif provider == "codex_cli":
-        return await _call_codex_cli(combined, system, model, max_tokens)
+        return await _call_codex_cli(combined, system, model, max_tokens, effort=effort)
+    elif provider == "antigravity_cli":
+        return await _call_antigravity_cli(combined, system, model, max_tokens)
     elif provider == "openai":
-        return await _call_openai(combined, system, model, api_key, max_tokens)
+        return await _call_openai(combined, system, model, _openai_key(api_key), max_tokens, effort=effort)
     elif provider == "openrouter":
         # OpenRouter is OpenAI-API-compatible — same client, different base URL.
         # One key reaches every vendor's models (model slug is vendor-prefixed).
-        return await _call_openai(combined, system, model, api_key, max_tokens,
-                                  base_url=OPENROUTER_BASE_URL)
+        return await _call_openrouter(combined, system, model, api_key, max_tokens, effort=effort)
+    elif provider == "opencode_go":
+        # OpenCode Go (subscription) over its OpenAI-compatible endpoint; the model id is bare
+        # (the CLI's `opencode-go/` prefix is a CLI alias, not part of the HTTP API).
+        return await _call_opencode_go(combined, system, model, api_key, max_tokens, effort=effort)
     elif provider == "lmstudio":
         # LM Studio serves an OpenAI-compatible API on :1234; no key (client wants a non-empty string).
-        # Override with LMSTUDIO_BASE_URL when the backend is containerized (e.g. http://host.docker.internal:1234/v1).
-        base = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+        # The address is the owner's `lmstudio_base_url` setting, else LMSTUDIO_BASE_URL, else the
+        # default; a containerised backend reaches the host at http://host.docker.internal:1234/v1.
+        base = local_base_url("lmstudio")
         # Thinking models (e.g. Qwen3) burn the whole max_tokens budget on reasoning and
         # return empty content; disable thinking for these structured-output calls.
         # LM Studio's OpenAI-compatible endpoint takes reasoning_effort="none" to turn it off.
@@ -266,11 +487,10 @@ async def _dispatch(provider: str, model: str, api_key: str,
 
 
 async def _call_claude_api(prompt: str, system: str, model: str, api_key: str,
-                           max_tokens: int, cached_prefix: str | None = None) -> dict:
+                           max_tokens: int, cached_prefix: str | None = None, effort: str = "") -> dict:
     """Call Claude via the Anthropic SDK; cached_prefix is sent as a separate cache_control block for ~10x cheaper reuse, but is ignored below the 1024-token (Sonnet/Opus) minimum."""
     import anthropic
-    key = api_key or __import__('os').getenv("ANTHROPIC_API_KEY", "")
-    client = anthropic.AsyncAnthropic(api_key=key)
+    client = anthropic.AsyncAnthropic(api_key=_anthropic_key(api_key))
 
     if cached_prefix:
         content = [
@@ -285,12 +505,20 @@ async def _call_claude_api(prompt: str, system: str, model: str, api_key: str,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": content}],
+        **_claude_effort_kwargs(effort),
     )
+
+    # A model that thinks puts a thinking block first; the pinned SDK reads it as a TextBlock
+    # with text=None, so only blocks typed "text" are the answer.
+    text = "".join(b.text or "" for b in response.content if getattr(b, "type", "") == "text").strip()
+    if not text and response.stop_reason == "max_tokens":
+        raise NonRetryableLLMError(
+            f"{model} used the whole output cap on reasoning and returned no text; lower the reasoning effort")
 
     # Extract usage — cache_* attributes may be absent on older SDK versions or non-cached calls
     usage = response.usage
     return {
-        "text": response.content[0].text.strip(),
+        "text": text,
         "usage": {
             "input_tokens": getattr(usage, "input_tokens", 0),
             "output_tokens": getattr(usage, "output_tokens", 0),
@@ -300,7 +528,7 @@ async def _call_claude_api(prompt: str, system: str, model: str, api_key: str,
     }
 
 
-async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: int) -> dict:
+async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: int, effort: str = "") -> dict:
     """Call Claude via claude CLI subprocess. Returns {text, usage}. Caching not supported."""
     import os
     import json as _json
@@ -308,10 +536,27 @@ async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: in
     cmd = ["claude", "-p", "--output-format", "json"]
     if model:
         cmd.extend(["--model", model])
+    if effort:
+        # A level the model lacks steps down to the highest one it has, so no error comes back.
+        cmd.extend(["--effort", effort])
 
     # Build env: pass CLAUDE_CODE_OAUTH_TOKEN, explicitly EXCLUDE ANTHROPIC_API_KEY
     # so it uses subscription billing, not API credits
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # MT-15: the account's token (a member's own, else the owner's install setting); none set
+    # keeps the process env, i.e. the owner's token from .env exactly as before.
+    token = _claude_code_token()
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    # QA F8 / R5-08: a member on its own models section keeps its transcripts in a HOME and
+    # config dir of its own (like CODEX_HOME / agy HOME); owner and 'inherit' unchanged.
+    account = _own_login_account()
+    if account is not None:
+        from backend.accounts.credentials import claude_config_dir, claude_home
+        config_dir = claude_config_dir(account)
+        os.makedirs(config_dir, exist_ok=True)
+        env["HOME"] = claude_home(account)
+        env["CLAUDE_CONFIG_DIR"] = config_dir
 
     rc, stdout, stderr = await _run_cli(cmd, full_prompt.encode(), env=env)
 
@@ -324,12 +569,34 @@ async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: in
         data = _json.loads(raw)
         text = data.get("result", raw)
     except _json.JSONDecodeError:
-        text = raw
+        data, text = None, raw
+
+    # `claude -p --output-format json` reports a refusal, an overload or a hit
+    # quota as a rc=0 envelope with is_error set. Returning its text as if it
+    # were the answer buried the reason in whatever the caller did next.
+    if isinstance(data, dict) and (data.get("is_error") or data.get("subtype") not in (None, "success")):
+        reason = (str(text or "").strip() or str(data.get("error") or "").strip()
+                  or str(data.get("subtype") or "").strip() or "no reason given")
+        if _QUOTA_RE.search(reason):
+            raise NonRetryableLLMError(f"Claude Code usage limit reached: {reason[:300]}")
+        raise RuntimeError(f"Claude Code reported an error: {reason[:300]}")
+    if not str(text or "").strip():
+        # Retryable on purpose: an empty completion is a bad minute, not a bad setup.
+        raise RuntimeError("Claude Code returned an empty reply")
 
     return {
         "text": text.strip(),
         "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
     }
+
+
+class CLITimeoutError(RuntimeError):
+    """A CLI that outran its wall clock, carrying whatever it printed before the kill."""
+
+    def __init__(self, message: str, stdout: bytes = b"", stderr: bytes = b""):
+        super().__init__(message)
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class NonRetryableLLMError(RuntimeError):
@@ -339,27 +606,106 @@ class NonRetryableLLMError(RuntimeError):
 CLI_TIMEOUT = 300   # seconds one subscription-CLI completion may take before it is killed
 # codex exec processes share one auth.json and rewrite it on token refresh; OpenAI's docs say not
 # to run many against the same file, so at most two at a time whatever the scoring limiter allows.
+# QA F8 / R5-12 (decision, no change): the gates stay process-wide although members on own
+# models have homes of their own. Within one account the login is shared, so the limit is
+# still needed there, and across accounts it doubles as a CPU cap for the CLI processes; one
+# account's backlog delaying another's CLI calls is accepted for a household install.
 _codex_gate = asyncio.Semaphore(2)
 _CODEX_LOGIN_HINT = "run `docker compose exec backend codex login --device-auth`"
 _QUOTA_RE = re.compile(r"usage limit|rate limit|quota|too many requests|\b429\b", re.I)
+# agy refreshes one shared OAuth token file (per account home), so hold the same limit codex
+# gets; process-wide on purpose, see R5-12 above.
+_agy_gate = asyncio.Semaphore(2)
+_AGY_LOGIN_HINT = "run `docker compose exec -it backend agy` and sign in"
+_AGY_AUTH_RE = re.compile(r"authentication (required|failed)|not logged in|sign in", re.I)
+_AGY_STATE = "~/.gemini/antigravity-cli"
+# The deny list the image ships. It lives outside the state directory because agy rewrites
+# settings.json on every start, and a read-only copy there only makes that write fail.
+_AGY_SETTINGS_SOURCE = "/opt/antigravity-settings.json"
+# MT-15: the state dir of the agy call in flight when it is not the default (a member with its
+# own logins runs agy with HOME=~/.gemini/accounts/<id>). The helpers below read it, so the
+# deny list goes into, and the transcript is cleared from, the directory that agy uses.
+_agy_state_override: ContextVar[Optional[str]] = ContextVar("jn_agy_state", default=None)
 
 
-async def _run_cli(cmd: list[str], stdin: bytes, env: dict | None = None, timeout: float = CLI_TIMEOUT):
+def _own_login_account():
+    """The member whose own CLI logins apply (models section 'own'), else None = defaults."""
+    from backend.accounts.credentials import own_login_account
+    db = SessionLocal()
+    try:
+        return own_login_account(db)
+    finally:
+        db.close()
+
+
+# Local model servers: (owner-only setting, env var, default). The address is the setting when it
+# is non-empty, else the env var, else the default. It describes the host, so it is one value per
+# install (section 'llm_local', owner-only); members read the owner's.
+LOCAL_LLM_URLS = {
+    "lmstudio": ("lmstudio_base_url", "LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
+    "ollama": ("ollama_base_url", "OLLAMA_BASE_URL", "http://localhost:11434"),
+}
+
+
+def local_base_url(provider: str, db=None) -> str:
+    """The LM Studio / Ollama base URL (no trailing slash): setting, else env, else default."""
+    key, env_name, default = LOCAL_LLM_URLS[provider]
+    own_db = db is None
+    if own_db:
+        db = SessionLocal()
+    try:
+        value = (get_setting(db, key) or "").strip()
+    finally:
+        if own_db:
+            db.close()
+    return value.rstrip("/") or local_base_url_fallback(provider)
+
+
+def local_base_url_fallback(provider: str) -> str:
+    """The address an empty LM Studio / Ollama setting uses: the env var, else the default."""
+    _key, env_name, default = LOCAL_LLM_URLS[provider]
+    return (os.getenv(env_name, "").strip() or default).rstrip("/")
+
+
+def _claude_code_token() -> str:
+    from backend.accounts.credentials import claude_code_token
+    db = SessionLocal()
+    try:
+        return claude_code_token(db)
+    finally:
+        db.close()
+
+
+def _agy_state() -> str:
+    return _agy_state_override.get() or os.path.expanduser(_AGY_STATE)
+
+
+async def _run_cli(cmd: list[str], stdin: bytes, env: dict | None = None, timeout: float = CLI_TIMEOUT,
+                   cwd: str | None = None):
     """Run a CLI to completion with a hard timeout; returns (rc, stdout, stderr)."""
     process = await asyncio.create_subprocess_exec(
         *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env=env,
+        stderr=asyncio.subprocess.PIPE, env=env, cwd=cwd,
     )
+    reader = asyncio.ensure_future(process.communicate(input=stdin))
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(input=stdin), timeout)
+        # shield, so a timeout does not cancel the read: after the kill the same task
+        # hands back what the process managed to print, which is how a caller can still
+        # clean up after a call that hung.
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(reader), timeout)
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
-        raise RuntimeError(f"{cmd[0]} timed out after {int(timeout)}s")
+        partial = (b"", b"")
+        try:
+            partial = await asyncio.wait_for(reader, 5) or partial
+        except (asyncio.TimeoutError, OSError, ValueError, TypeError):
+            pass
+        raise CLITimeoutError(f"{cmd[0]} timed out after {int(timeout)}s", *partial)
     return process.returncode, stdout, stderr
 
 
-async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int) -> dict:
+async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int, effort: str = "") -> dict:
     """Call Codex CLI using its existing ChatGPT login; run in an empty read-only workspace."""
     import json as _json
     import os
@@ -367,12 +713,22 @@ async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int)
 
     # like ANTHROPIC_API_KEY for claude_code: the plan pays, never an API key that happens to be set
     env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_API_KEY")}
+    login_hint = _CODEX_LOGIN_HINT
+    # MT-15: a member with its own models section logs in under its own CODEX_HOME; owner and
+    # 'inherit' keep the default home (~/.codex), exactly as before.
+    account = _own_login_account()
+    if account is not None:
+        from backend.accounts.credentials import codex_home
+        home = codex_home(account)
+        os.makedirs(home, exist_ok=True)
+        env["CODEX_HOME"] = home
+        login_hint = f"run `docker compose exec -it -e CODEX_HOME={home} backend codex login --device-auth`"
     async with _codex_gate:
         # `codex exec` without a login retries for ~15 s and then prints a 401 storm; the status
         # check answers in milliseconds and names the fix
         rc, _, _ = await _run_cli(["codex", "login", "status"], b"", env=env, timeout=30)
         if rc != 0:
-            raise NonRetryableLLMError(f"Codex CLI is not logged in — {_CODEX_LOGIN_HINT}")
+            raise NonRetryableLLMError(f"Codex CLI is not logged in — {login_hint}")
 
         full_prompt = f"{system}\n\n{prompt}"
         with tempfile.TemporaryDirectory(prefix="jobnavigator-codex-") as workdir:
@@ -385,6 +741,9 @@ async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int)
             ]
             if model:
                 cmd.extend(["--model", model])
+            if effort:
+                # -c parses its value as TOML, so the string is quoted.
+                cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
             cmd.append("-")
             rc, stdout, stderr = await _run_cli(cmd, full_prompt.encode(), env=env)
 
@@ -420,7 +779,7 @@ async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int)
         err_lines = stderr.decode(errors="replace").strip().splitlines()
         reason = failed or last_error or (err_lines[-1] if err_lines else "no output")
         if "401" in reason or "Unauthorized" in reason:
-            raise NonRetryableLLMError(f"Codex CLI is not logged in — {_CODEX_LOGIN_HINT} ({reason})")
+            raise NonRetryableLLMError(f"Codex CLI is not logged in — {login_hint} ({reason})")
         if _QUOTA_RE.search(reason):
             raise NonRetryableLLMError(f"Codex usage limit reached: {reason}")
         raise RuntimeError(f"codex exec failed (rc={rc}): {reason}")
@@ -429,23 +788,208 @@ async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int)
     return {"text": text.strip(), "usage": usage}
 
 
+def _agy_events(stdout: bytes):
+    """Every NDJSON event agy printed, skipping any line that is not one."""
+    import json as _json
+    for line in stdout.decode(errors="replace").splitlines():
+        try:
+            yield _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+
+
+def _agy_conversation_id(stdout: bytes) -> str:
+    """The id agy gave this call. The init event carries it before any answer, which is all
+    a timed-out call leaves behind."""
+    for event in _agy_events(stdout):
+        cid = event.get("conversation_id") or (event.get("result") or {}).get("conversation_id")
+        if cid:
+            return str(cid)
+    return ""
+
+
+def _agy_install_settings() -> list[str]:
+    """Put the shipped deny list where agy reads it, and answer with the rules it must honour.
+    agy rewrites settings.json as it starts, so the file has to be writable: pinning a
+    read-only copy there makes the write fail and drops the CLI onto its defaults."""
+    import json as _json
+    import shutil
+    import os
+    target = os.path.join(_agy_state(), "settings.json")
+    try:
+        with open(_AGY_SETTINGS_SOURCE, encoding="utf-8") as fh:
+            source = fh.read()
+    except OSError as e:
+        raise NonRetryableLLMError(
+            f"Antigravity deny list is missing at {_AGY_SETTINGS_SOURCE} ({e}); "
+            "the agent would run unconstrained, so the call is refused")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    try:
+        current = open(target, encoding="utf-8").read()
+    except OSError:
+        current = ""
+    if current != source:
+        tmp = f"{target}.jobnavigator.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        shutil.move(tmp, target)
+    return list(_json.loads(source).get("permissions", {}).get("deny", []))
+
+
+def _agy_assert_denied(log_path: str, rules: list[str]) -> None:
+    """Fail the call unless agy's own log says it loaded every deny rule.
+    Without this the CLI can silently fall back to defaults and hand the agent
+    `run_command` and `write_file` back, and nothing in the answer would show it."""
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            loaded = [ln for ln in fh if "CLI settings initialized" in ln]
+    except OSError:
+        loaded = []
+    if not loaded:
+        raise NonRetryableLLMError(
+            "Antigravity CLI never reported its permissions, so the deny list cannot be "
+            "confirmed; the call is refused rather than run unconstrained")
+    line = loaded[-1]
+    missing = [r for r in rules if r not in line]
+    if missing:
+        raise NonRetryableLLMError(
+            f"Antigravity CLI started without the deny rules {missing}; "
+            "it would be free to read files and run commands, so the call is refused")
+
+
+def _agy_discard(conversation_id: str) -> None:
+    """Delete the per-call transcript agy writes. It holds the whole prompt — the resume text —
+    and nothing reads it back, so it is disk growth and a copy of user data we do not want."""
+    import glob
+    import os
+    import shutil
+    home = _agy_state()
+    for path in (*glob.glob(f"{home}/conversations/{conversation_id}.db*"),
+                 f"{home}/presence/{conversation_id}.lock",
+                 f"{home}/annotations/{conversation_id}.pbtxt",
+                 f"{home}/brain/{conversation_id}"):
+        try:
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+        except OSError:
+            pass   # a leftover file is untidy, never a reason to fail a scored job
+
+
+async def _call_antigravity_cli(prompt: str, system: str, model: str, max_tokens: int) -> dict:
+    """Call Antigravity CLI on its Google subscription. The prompt rides on stdin as one NDJSON
+    line because `-p` reads argv and argv caps near 128 KB. `max_tokens` is ignored: the CLI
+    exposes no output cap. Tool use is blocked by a deny list installed before each call and
+    confirmed from agy's own log afterwards — `--sandbox` restricts the terminal only, never
+    the file tools."""
+    # like ANTHROPIC_API_KEY for claude_code: the plan pays, never a key that happens to be set
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY",
+                        "GOOGLE_APPLICATION_CREDENTIALS", "AGY_ADC_AUTH")}
+    login_hint = _AGY_LOGIN_HINT
+    # MT-15: a member with its own models section runs agy with its own HOME, so the login and
+    # the state dir (deny list, transcripts) are its own; owner and 'inherit' keep HOME.
+    account = _own_login_account()
+    state_token = None
+    if account is not None:
+        from backend.accounts.credentials import agy_home, agy_state_dir
+        home = agy_home(account)
+        os.makedirs(home, exist_ok=True)
+        env["HOME"] = home
+        state_token = _agy_state_override.set(agy_state_dir(account))
+        login_hint = f"run `docker compose exec -it -e HOME={home} backend agy` and sign in"
+    try:
+        return await _agy_run(prompt, system, model, env, login_hint)
+    finally:
+        if state_token is not None:
+            _agy_state_override.reset(state_token)
+
+
+async def _agy_run(prompt: str, system: str, model: str, env: dict, login_hint: str) -> dict:
+    """One agy call with `env` (see _call_antigravity_cli); the state dir is `_agy_state()`."""
+    import json as _json
+    import tempfile
+
+    message = _json.dumps({"event": "user",
+                           "message": {"role": "user", "content": f"{system}\n\n{prompt}"}})
+
+    denied = _agy_install_settings()
+    stdout = b""
+    try:
+        async with _agy_gate:
+            with tempfile.TemporaryDirectory(prefix="jobnavigator-agy-") as workdir:
+                # The log goes in the temp directory: it holds the permissions line this
+                # call is checked against, and ~16 KB per call has no business surviving.
+                log_path = os.path.join(workdir, "cli.log")
+                # `-p` always swallows the next token, so it goes last with an attached empty value.
+                cmd = ["agy", "--input-format", "stream-json", "--output-format", "stream-json",
+                       "--print-timeout", f"{int(CLI_TIMEOUT)}s", "--log-file", log_path]
+                if model:
+                    cmd.extend(["--model", model])
+                cmd.append("-p=")
+                rc, stdout, stderr = await _run_cli(cmd, (message + "\n").encode(),
+                                                    env=env, cwd=workdir)
+                _agy_assert_denied(log_path, denied)
+    except CLITimeoutError as e:
+        stdout = e.stdout
+        raise
+    finally:
+        # A timeout kills agy before the result event, so the id comes from the init event.
+        # The transcript has to go exactly in that case too — it holds the whole prompt.
+        conversation_id = _agy_conversation_id(stdout)
+        if conversation_id:
+            _agy_discard(conversation_id)
+
+    result = {}
+    for event in _agy_events(stdout):
+        if event.get("event") == "result":
+            result = event.get("result") or {}
+
+    if result.get("status") != "SUCCESS" or rc != 0:
+        err_lines = stderr.decode(errors="replace").strip().splitlines()
+        reason = str(result.get("error") or "") or (err_lines[-1] if err_lines else "no output")
+        if _AGY_AUTH_RE.search(reason):
+            raise NonRetryableLLMError(f"Antigravity CLI is not logged in — {login_hint} ({reason})")
+        if _QUOTA_RE.search(reason):
+            raise NonRetryableLLMError(f"Antigravity usage limit reached: {reason}")
+        raise RuntimeError(f"agy failed (rc={rc}): {reason}")
+
+    text = str(result.get("response") or "").strip()
+    if not text:
+        raise RuntimeError("agy completed without a response")
+    usage = result.get("usage") or {}
+    return {
+        "text": text,
+        "usage": {
+            "input_tokens": usage.get("input_tokens", 0) or 0,
+            "output_tokens": usage.get("output_tokens", 0) or 0,
+            "cache_read_tokens": usage.get("cache_read_tokens", 0) or 0,
+            "cache_write_tokens": 0,
+        },
+    }
+
+
 async def _call_openai(prompt: str, system: str, model: str, api_key: str, max_tokens: int,
-                       base_url: str | None = None, extra_body: dict | None = None) -> dict:
+                       base_url: str | None = None, extra_body: dict | None = None, effort: str = "") -> dict:
     """Call the OpenAI API, or any OpenAI-compatible endpoint via base_url."""
     client = _openai_client(api_key, base_url)  # base_url=None → OpenAI default
-    kwargs = {"extra_body": extra_body} if extra_body else {}
+    kwargs = _openai_kwargs(max_tokens, effort, base_url)
+    if extra_body:
+        kwargs["extra_body"] = {**kwargs.get("extra_body", {}), **extra_body}
     response = await client.chat.completions.create(
         model=model,
-        max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
         **kwargs,
     )
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
+    if not text and choice.finish_reason == "length":
+        raise NonRetryableLLMError(
+            f"{model} used the whole output cap on reasoning and returned no text; lower the reasoning effort")
     usage = response.usage
     return {
-        "text": response.choices[0].message.content.strip(),
+        "text": text,
         "usage": {
             "input_tokens": getattr(usage, "prompt_tokens", 0),
             "output_tokens": getattr(usage, "completion_tokens", 0),
@@ -455,12 +999,97 @@ async def _call_openai(prompt: str, system: str, model: str, api_key: str, max_t
     }
 
 
+# OpenCode Go's own error payloads (probed by @mreid-tt, #25). A model Go serves on another
+# protocol (Responses or Anthropic Messages) answers chat/completions with
+#   {"type":"error","error":{"type":"ModelProtocolUnsupported","message":"Model does not support this protocol."}}
+# and that type is the signal. An unknown model and a contributor model are both plain
+# `server_error`s, told apart only by the message:
+#   "Upstream request failed: Model is unavailable."
+#   "This Go model trains on request data. Allow paid endpoints that train..."
+# These three cannot succeed on a retry; every other error takes the normal retry -> fallback path.
+_GO_PROTOCOL_TYPE = "ModelProtocolUnsupported"
+_GO_UNKNOWN_MODEL_MSG = "model is unavailable."
+_GO_CONTRIBUTOR_MSG = "trains on request data"
+
+
+def _go_error_fields(e: Exception) -> tuple[str, str]:
+    """(error.type, error.message) of a Go error. The SDK keeps the inner `error` object as
+    `e.body` and its type as `e.type`; the message falls back to the exception text."""
+    body = getattr(e, "body", None)
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        body = body["error"]
+    if not isinstance(body, dict):
+        body = {}
+    etype = body.get("type") or getattr(e, "type", None) or ""
+    message = body.get("message") or str(e)
+    return str(etype), str(message)
+
+
+def _opencode_go_error(e: Exception, model: str):
+    """The NonRetryableLLMError a Go failure maps to, or None for the normal retry path."""
+    etype, message = _go_error_fields(e)
+    if etype == _GO_PROTOCOL_TYPE:
+        return NonRetryableLLMError(
+            f"OpenCode Go serves {model} on another protocol, not chat completions — pick another model")
+    # Unknown and contributor models share the type `server_error`, so here the message decides.
+    if etype in ("", "server_error"):
+        lowered = message.lower()
+        if _GO_UNKNOWN_MODEL_MSG in lowered:
+            return NonRetryableLLMError(
+                f"OpenCode Go does not know the model {model} (\"Model is unavailable.\") — "
+                "check the name against the Model catalog")
+        if _GO_CONTRIBUTOR_MSG in lowered:
+            return NonRetryableLLMError(
+                f"{model} is an OpenCode Go contributor model that trains on request data; Go refuses "
+                "it until paid endpoints that train are allowed in your OpenCode account — allow "
+                "that there or pick another model")
+    return None
+
+
+async def _call_opencode_go(prompt: str, system: str, model: str, api_key: str, max_tokens: int,
+                            effort: str = "") -> dict:
+    """OpenCode Go over its OpenAI-compatible HTTP API. A Go API key is required, so a missing
+    key is a config error, not a retry."""
+    api_key = _opencode_go_key(api_key)
+    try:
+        return await _call_openai(prompt, system, model, api_key, max_tokens,
+                                  base_url=OPENCODE_GO_BASE_URL, effort=effort)
+    except NonRetryableLLMError:
+        raise
+    except Exception as e:
+        status = getattr(e, "status_code", None)
+        if status == 401 or "Missing API key" in str(e):
+            raise NonRetryableLLMError(
+                "OpenCode Go needs an API key — paste it under Settings › Models") from e
+        mapped = _opencode_go_error(e, model)
+        if mapped is not None:
+            raise mapped from e
+        raise
+
+
+async def _call_openrouter(prompt: str, system: str, model: str, api_key: str, max_tokens: int,
+                           effort: str = "") -> dict:
+    """OpenRouter over its OpenAI-compatible API. No key, or a key it rejects (401), cannot
+    succeed on a retry, so both are NonRetryable and the fallback runs at once (L-02)."""
+    api_key = _openrouter_key(api_key)
+    try:
+        return await _call_openai(prompt, system, model, api_key, max_tokens,
+                                  base_url=OPENROUTER_BASE_URL, effort=effort)
+    except NonRetryableLLMError:
+        raise
+    except Exception as e:
+        if getattr(e, "status_code", None) == 401:
+            raise NonRetryableLLMError(
+                "OpenRouter rejected the API key — check it in Settings › Models") from e
+        raise
+
+
 async def _call_ollama(prompt: str, system: str, model: str, max_tokens: int) -> dict:
     """Call local Ollama instance. Returns {text, usage}."""
     import httpx
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
-            "http://localhost:11434/api/generate",
+            f"{local_base_url('ollama')}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,

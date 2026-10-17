@@ -211,6 +211,52 @@ def test_html_description_is_stripped():
     assert extract_arrangement(description=text)["arrangement"] == REMOTE
 
 
+_TAG_CASES = [
+    "", "plain text", "<", ">", "<>", "<<>>", "<a>", "a<b>c", "<a <b>", "<<<a>",
+    "<a>>", "<>a>", "x<>y<z>w", "<\n>", "<b>remote</b> & <i>", "<<<<", "a<b",
+    "<p>one</p><p>two", "><><", "<<>", "< >", "text <br/> more <",
+]
+
+
+@pytest.mark.parametrize("text", _TAG_CASES)
+def test_strip_tags_matches_the_old_regex(text):
+    """The linear scanner replaced `re.sub(r"<[^>]+>", " ", text)`; it must
+    produce the same string for every input."""
+    import re
+
+    from backend.analyzer.work_arrangement import _strip_tags
+    assert _strip_tags(text) == re.sub(r"<[^>]+>", " ", text)
+
+
+def test_strip_tags_matches_the_old_regex_on_random_input():
+    import random
+    import re
+
+    from backend.analyzer.work_arrangement import _strip_tags
+    rng = random.Random(1234)
+    for _ in range(3000):
+        text = "".join(rng.choice("<>ab \n") for _ in range(rng.randint(0, 40)))
+        assert _strip_tags(text) == re.sub(r"<[^>]+>", " ", text), repr(text)
+
+
+_PATHOLOGICAL = {                       # built in the test: a long id breaks PYTEST_CURRENT_TEST
+    "many_lt_one_gt": lambda: "<" * 200_000 + ">",
+    "many_lt_no_gt": lambda: "<" * 200_000,             # CodeQL's case: ~15 s before
+    "open_tags_one_gt": lambda: "<a" * 100_000 + ">",
+    "empty_tags_then_lt": lambda: "<>" * 100_000 + "<" * 100_000 + ">",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_PATHOLOGICAL))
+def test_pathological_description_is_fast(case):
+    """The old regex was quadratic on these (tens of seconds at this size)."""
+    import time
+    text = _PATHOLOGICAL[case]()
+    started = time.perf_counter()
+    extract_arrangement(description=text)
+    assert time.perf_counter() - started < 1.0
+
+
 def test_unknown_description_stays_none():
     text = "We are looking for a senior engineer to join the platform team."
     result = extract_arrangement(description=text)

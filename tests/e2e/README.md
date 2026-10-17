@@ -34,6 +34,13 @@ E2E: 13 cases · 11 passed · 0 failed · 2 skipped · 118s
 | `persona-import` | the Persona import path with `POST /api/persona/import` **and** the modal's résumé list route-mocked: the parsed result renders, the success toast names the counts, the real POST never leaves the browser, and the persona row is re-read afterwards to prove it | route-mocked |
 | `feed-collapse` | the Feed's analysis fold (`jn_feed_analysis_collapsed`) survives a reload and toggles back | localStorage only |
 | `modals` | six overlays — Feed keyboard shortcuts, Feed Source menu, Companies Add-company modal, Searches row ⋯ menu, Résumés New-résumé modal, Settings Model-catalog modal — each opens, closes on Escape, and closes on an outside/scrim click | opens only, submits nothing |
+| `mt-switch` | MT-12 accounts: picker on `account_required` (not the sign-in), member PIN pad (wrong PIN → tries left), switch + reload + "Switched to …" toast, rail switcher menu, Ctrl+Shift+1 back with the owner PIN, win98 square avatars; QA F7: no error behind the picker, picker named + focus trap, a second tab gets the "switched in another tab" notice and a stale write is 409 account_changed. QA F7: no error behind the picker, picker named + focus trap, a second tab gets the "switched in another tab" notice and a stale write is 409 account_changed. SKIPs unless the install has exactly one account and an owner without a PIN | sets an owner PIN and creates a `ZZE Member` account, then deletes it (the API takes a pre-removal pg_dump) and removes the PIN; back up first |
+| `modes-apify` | Apify searches: `GET /searches/apify-boards` (prefix, price, Test cap, 200 cap); JobSpy boards or no board → 400; a new search starts paused; `results_wanted` clamped to 200 on create and `PATCH`; the APIFY badge in its own colours, the Paused pill, the editor's cap label and paused note; Test raises a confirm naming the estimated cost and spend cap, Cancel sends no `POST …/test` (also aborted by a route guard) and starts nothing on `/monitor/active` | creates + deletes its own row; never runs |
+| `modes-caribbeanjobs` | CaribbeanJobs searches: inactive create, the CARIBBEANJOBS.COM badge in its own colours, the editor's mode note, Cloudflare block and terms notice; Test is not clicked | creates + deletes its own row |
+| `modes-settings-apify` | Settings › Apify: the section is a policy section, own by default; key row (empty when no key is set) and Check key; its scope control matches Jobright.ai and LinkedIn | read-only |
+| `modes-caribbeanjobs-live` | **JN_E2E_LIVE only** — a real CaribbeanJobs Test from the UI: the modal shows the readable Cloudflare error or results | creates + deletes its own row |
+| `modes-trulyremote` | TrulyRemoteWork searches: inactive create with no term or URL, the TRULYREMOTEWORK.COM badge in olive (not Jobright's teal), the row summary, the editor's mode note and "New jobs per run" label, no terms notice; Test is not clicked | creates + deletes its own row |
+| `modes-trulyremote-live` | **JN_E2E_LIVE only** — a real TrulyRemoteWork Test (title include "engineer") from the UI: kept rows and the "worldwide remote" params | creates + deletes its own row |
 | `flows-search-crud` | `POST` → read the JSON shape back → `PATCH` → `DELETE` on a `ZZE` search | creates + deletes its own row |
 | `flows-monitor` | the `/monitor/active`, `/monitor/history` and `/monitor/in-flight` shapes the spinners poll on | read-only |
 | `flows-pause-pill` | the status pill's Pause/Resume contract, with the `PATCH` route-mocked so nothing is written; afterwards every other search's `active` flag is re-read to prove none moved | creates + deletes its own row |
@@ -66,15 +73,19 @@ E2E: 13 cases · 11 passed · 0 failed · 2 skipped · 118s
 ## `JN_E2E_LIVE=1`
 
 Off by default; those cases report `SKIP (needs JN_E2E_LIVE=1)`. Setting it to
-`1` unlocks exactly two cases:
+`1` unlocks exactly three cases:
 
 - **`flows-company-crud`** — `POST /api/companies` ignores any `active` value and
   stores `active=True`, then fires a background MyVisaJobs H-1B lookup: a real
   outbound request, and a row the scheduler would consider live.
 - **`flows-live-run`** — runs a real JobSpy test preview and a real search run
   against live job boards, and waits for them on `/monitor/active`.
+- **`modes-caribbeanjobs-live`** — a real CaribbeanJobs Test (caribbeanjobs.com,
+  up to 20 detail pages). No case ever runs a paid Apify Test or run.
+- **`modes-trulyremote-live`** — a real TrulyRemoteWork Test (the corpus, cached
+  in the backend for up to an hour, and up to 20 `.md` job pages).
 
-Both still create only `ZZE` rows and delete them again.
+All four still create only `ZZE` rows and delete them again.
 
 ## Environment
 

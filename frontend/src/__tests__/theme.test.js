@@ -5,7 +5,7 @@
 // module (vi.resetModules() + dynamic import()). The module also stamps <html> on
 // load via apply(), which is how the resulting state is observed here without
 // reaching into a private variable: data-appearance is the resolved light|dark,
-// data-theme is the palette, and .dark mirrors the classic shell.
+// data-theme is the palette, and .dark mirrors it for base.css.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const APPEARANCE_KEY = 'jobnavigator_appearance'

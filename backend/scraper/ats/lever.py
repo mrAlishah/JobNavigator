@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, quote, urlparse
 import httpx
 
 from backend.scraper._shared.filters import _validate_job
+from backend.scraper._shared.errors import raise_if_board_gone
 
 logger = logging.getLogger("jobnavigator.scraper.ats.lever")
 
@@ -43,6 +44,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
         resp = await client.get(api_url)
         if resp.status_code != 200:
             logger.warning(f"Lever API returned {resp.status_code} for {company_slug}")
+            if not debug:
+                raise_if_board_gone(resp.status_code, "Lever", company_slug)
             if debug:
                 return [], [{"title": "(none)", "url": api_url, "selector": "lever_api", "reason": f"HTTP {resp.status_code}"}]
             return []

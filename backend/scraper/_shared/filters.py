@@ -7,13 +7,14 @@ from urllib.parse import urlparse
 
 def build_search_exclude_sets(db, search) -> tuple[set, set]:
     """Return (global_exclude_set, search_exclude_set) of lowercased company names; the search set adds every active Company's name+aliases when exclude_active_companies is true."""
-    from backend.models.db import Setting, Company
+    from backend.models.db import Company
+    from backend.accounts.settings import get_setting
 
-    global_row = db.query(Setting).filter(Setting.key == "company_exclude_global").first()
+    global_raw = get_setting(db, "company_exclude_global")
     global_list = []
-    if global_row:
+    if global_raw is not None:
         try:
-            global_list = json.loads(global_row.value or "[]")
+            global_list = json.loads(global_raw or "[]")
         except (ValueError, TypeError):
             global_list = []
     global_set = {e.lower() for e in global_list if e}
@@ -157,6 +158,38 @@ def match_title_expr(expr: str, title: str) -> bool:
         return True
     tree, _ = _parse_expr(tokens, 0)
     return _eval_expr(tree, title.lower())
+
+
+# ── Search title filters ──────────────────────────────────────────────────────
+
+def search_title_filters(search, db) -> tuple[list, list]:
+    """(include, exclude) title keywords of one search; exclude merges the global list."""
+    from backend.models.db import get_global_title_exclude
+    include_kw = search.title_include_keywords or []
+    exclude_kw = list(set((search.title_exclude_keywords or []) + get_global_title_exclude(db)))
+    return include_kw, exclude_kw
+
+
+def title_kept(title: str, include_kw: list, exclude_kw: list) -> tuple[bool, str | None]:
+    """(kept, reason): include is a substring match on any keyword, exclude a whole-word match."""
+    tl = title.lower()
+    if include_kw and not any(kw.lower() in tl for kw in include_kw):
+        return False, f"No match for: {', '.join(include_kw)}"
+    if exclude_kw:
+        matched = [kw for kw in exclude_kw if re.search(r'\b' + re.escape(kw) + r'\b', tl)]
+        if matched:
+            return False, f"Excluded by: {', '.join(matched)}"
+    return True, None
+
+
+def company_included(company: str, company_filter: list) -> tuple[bool, str | None]:
+    """(kept, reason) for a search's "Company include · exact" list: an exact,
+    case-insensitive name match (as JobSpy's `apply_company_filter`); an empty list keeps
+    every company. The reason reads as the keyword preview's."""
+    names = {(c or "").strip().lower() for c in (company_filter or []) if (c or "").strip()}
+    if not names or (company or "").strip().lower() in names:
+        return True, None
+    return False, f"Company filter: {', '.join(c for c in company_filter if c)}"
 
 
 # ── Job validation ────────────────────────────────────────────────────────────

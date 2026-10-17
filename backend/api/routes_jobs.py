@@ -1,13 +1,17 @@
 """Job listing and management endpoints."""
 import logging
+import uuid
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc, text, func
-from backend.models.db import get_db, Job, find_company_by_name
+from sqlalchemy import desc, asc, text, func, or_
+from sqlalchemy.exc import IntegrityError
+from backend.models.db import (
+    get_db, Job, Resume, CoverLetter, Application, TracerLink, LlmCallLog, JobRun, find_company_by_name,
+)
 from backend.api._input import str_field, uuid_filter
-from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.dedup import make_external_id, make_content_hash, mark_ignored
 from backend.analyzer.salary_extractor import apply_salary_to_job
 from backend.analyzer.work_arrangement import apply_arrangement_to_job
 from backend.analyzer.location import apply_location_to_job
@@ -21,7 +25,6 @@ from backend.scraper.sources.linkedin_extension import (
 logger = logging.getLogger("jobnavigator.jobs")
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-
 
 def _score_resume_names(db, job) -> list[str]:
     """Résumé names an auto-score launch will cover; never fatal to the save itself."""
@@ -63,8 +66,6 @@ async def linkedin_import(request: Request, db: Session = Depends(get_db)):
     }
     new_count = sum(1 for lid in linkedin_ids if lid not in existing_li_ids)
 
-    _linkedin_import_progress.clear()
-
     async def _do():
         await _scrape_linkedin_ids(linkedin_ids)
 
@@ -76,6 +77,9 @@ async def linkedin_import(request: Request, db: Session = Depends(get_db)):
             status_code=409,
             detail=f"{e.job_type} is already running",
         )
+    # Progress is per account (R5-02) and reset only once this import is accepted: a 409
+    # duplicate leaves the running import's counters alone. The task has not run yet.
+    _linkedin_import_progress.clear()
 
     return {
         "accepted": len(linkedin_ids),
@@ -88,10 +92,11 @@ async def linkedin_import(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/linkedin-import/progress")
 def linkedin_import_progress():
-    """Poll LinkedIn import progress."""
-    if not _linkedin_import_progress:
+    """Poll the caller's own LinkedIn import progress (idle when it has none running)."""
+    progress = dict(_linkedin_import_progress)
+    if not progress:
         return {"status": "idle"}
-    return _linkedin_import_progress
+    return progress
 
 
 @router.get("")
@@ -188,7 +193,7 @@ def list_jobs(
     import backend.job_monitor as _mon
     in_flight_map: dict[str, list[str]] = {}
     in_flight_detail_map: dict[str, list[dict]] = {}
-    for r in _mon._running.values():
+    for r in _mon.visible_running():
         if r.target_job_id is None:
             continue
         key = str(r.target_job_id)
@@ -337,29 +342,28 @@ def _apply_common_filters(q, status=None, company=None, source=None, h1b_verdict
     return q
 
 
+def _unscored_filter():
+    """New/saved jobs with no scores yet. ORM (not text()) so the account scoping applies
+    (MT-4); cv_scorer's predicate is the old `cv_scores::text = '{}'` as a portable CAST."""
+    from backend.analyzer.cv_scorer import unscored_filter
+    return (Job.status.in_(("new", "saved")), unscored_filter())
+
+
 @router.get("/feed-stats")
 def feed_stats(db: Session = Depends(get_db)):
     """Global counts for the v2 feed header — arrived today + not-yet-scored — since the paged /jobs response only sees the current page."""
     from datetime import datetime, timezone
-    from sqlalchemy import func, text
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     arrived_today = db.query(func.count(Job.id)).filter(Job.discovered_at >= start).scalar() or 0
-    unscored = db.execute(text(
-        "select count(*) from jobs where status in ('new','saved') "
-        "and (cv_scores is null or cv_scores::text = '{}')"
-    )).scalar() or 0
+    unscored = db.query(func.count(Job.id)).filter(*_unscored_filter()).scalar() or 0
     return {"arrived_today": int(arrived_today), "unscored": int(unscored)}
 
 
 @router.get("/unscored-ids")
 def unscored_ids(limit: Annotated[int, Query(ge=0, le=10000)] = 500, db: Session = Depends(get_db)):
     """IDs of not-yet-scored new/saved jobs; the header's "Score N unscored" action scores exactly these, since they sort to the bottom by score and won't be on the feed page."""
-    from sqlalchemy import text
-    rows = db.execute(text(
-        "select id from jobs where status in ('new','saved') "
-        "and (cv_scores is null or cv_scores::text = '{}') "
-        "order by discovered_at desc limit :lim"
-    ), {"lim": limit}).fetchall()
+    rows = (db.query(Job.id).filter(*_unscored_filter())
+            .order_by(Job.discovered_at.desc()).limit(limit).all())
     return {"ids": [str(r[0]) for r in rows]}
 
 
@@ -680,6 +684,21 @@ def job_facets(
     }
 
 
+def _known_posting(db, external_id: str, content_hash: str):
+    """The stored row a saved posting already is. Two-layer dedup: the same URL
+    (external_id), or the same company + title reached by another URL (content_hash).
+
+    An `ignored` row matches on its URL only (R30 S-10). It is a scraper's dedup memory of a
+    job one search's filters dropped, and it must not refuse the user's own save of the same
+    role from another site. New ignored rows carry no content_hash (`mark_ignored`); the
+    status test covers the ones stored with a hash before that."""
+    return db.query(Job).filter(
+        (Job.external_id == external_id)
+        | ((Job.content_hash == content_hash)
+           & ((Job.status.is_(None)) | (Job.status != "ignored")))
+    ).first()
+
+
 @router.post("/save-from-extension")
 async def save_from_extension(body: dict, db: Session = Depends(get_db)):
     """Save a job from the Chrome Extension to the Job Feed (no application created), running the same enrichment as LinkedIn passive capture: Extension search title/company filters, salary extraction, H-1B/body-exclusion scan, and auto-score when configured."""
@@ -705,9 +724,7 @@ async def save_from_extension(body: dict, db: Session = Depends(get_db)):
 
     # Two-layer dedup: external_id (URL-based) first, falling back to content_hash
     # (company+title) for cross-source catches where the same job was saved via a different URL.
-    existing = db.query(Job).filter(
-        (Job.external_id == external_id) | (Job.content_hash == content_hash)
-    ).first()
+    existing = _known_posting(db, external_id, content_hash)
     if existing:
         if existing.status == "skip":
             existing.status = "new"
@@ -785,11 +802,11 @@ async def save_from_extension(body: dict, db: Session = Depends(get_db)):
     # Skip flagged jobs OR jobs that hit the search-filter set.
     if filter_reject_reason:
         logger.info(f"save-from-extension: filtered — '{title}' @ '{company}' — {filter_reject_reason}")
-        job.status = "ignored"
+        mark_ignored(job)
     elif job.h1b_jd_flag:
         _phrase = getattr(job, "_h1b_matched_phrase", None) or "?"
         logger.info(f"save-from-extension: skipping (body exclusion) — '{title}' @ '{company}' — phrase: {_phrase!r}")
-        job.status = "ignored"
+        mark_ignored(job)
         reject_message = f"description matched the excluded phrase '{_phrase}'"
 
     db.add(job)
@@ -860,9 +877,7 @@ def create_manual_job(body: dict, background_tasks: BackgroundTasks, db: Session
     # content_hash (company+title) for the same posting reached by another URL.
     external_id = make_external_id(company, title, url)
     content_hash = make_content_hash(company, title)
-    existing = db.query(Job).filter(
-        (Job.external_id == external_id) | (Job.content_hash == content_hash)
-    ).first()
+    existing = _known_posting(db, external_id, content_hash)
     if existing:
         # Report the row, change nothing: an `applied` or `ignored` posting must
         # not fall back to `new` because the user pasted its URL a second time.
@@ -958,6 +973,66 @@ def bulk_update_jobs(body: dict, db: Session = Depends(get_db)):
     return {"updated": count, "not_found": not_found}
 
 
+def _delete_job_cascade(db: Session, job: Job) -> None:
+    """Delete a job plus what was created for it: tailored résumés (and their copies), cover letters, applications (interviews cascade) and the tracer links only they used. Base résumés, LLM cost logs and job runs outlive the job, unlinked. Callers commit."""
+    resumes = {r.id: r for r in db.query(Resume).filter(Resume.job_id == job.id, Resume.is_base == False)}  # noqa: E712
+    resumes.update({c.id: c for c in db.query(Resume).filter(Resume.parent_id.in_(list(resumes)))})
+    letters = {c.id: c for c in db.query(CoverLetter).filter(CoverLetter.job_id == job.id).all()}
+
+    # A link shared with a document that survives keeps its row; only our side is released.
+    for link in db.query(TracerLink).filter(
+        or_(TracerLink.resume_id.in_(list(resumes)), TracerLink.cover_letter_id.in_(list(letters)))
+    ).all():
+        resume_gone = link.resume_id is None or link.resume_id in resumes
+        letter_gone = link.cover_letter_id is None or link.cover_letter_id in letters
+        if resume_gone and letter_gone:
+            db.delete(link)
+        elif link.resume_id in resumes:
+            link.resume_id = None
+        else:
+            link.cover_letter_id = None
+
+    for doc in [*letters.values(), *resumes.values()]:
+        db.delete(doc)
+    for app in db.query(Application).filter(Application.job_id == job.id).all():
+        db.delete(app)
+    # SQLite does not enforce ON DELETE SET NULL, so unlink survivors explicitly.
+    db.query(Resume).filter(Resume.job_id == job.id).update({"job_id": None}, synchronize_session=False)
+    db.query(LlmCallLog).filter(LlmCallLog.job_id == job.id).update({"job_id": None}, synchronize_session=False)
+    db.query(JobRun).filter(JobRun.target_job_id == job.id).update({"target_job_id": None}, synchronize_session=False)
+    db.flush()   # applications must be gone before the job, or Job.applications tries to NULL a NOT NULL FK
+    db.delete(job)
+
+
+@router.post("/bulk-delete")
+def bulk_delete_jobs(body: dict, db: Session = Depends(get_db)):
+    """Delete jobs and everything created for them; returns {"deleted": count, "not_found": [<ids>]}."""
+    job_ids = body.get("job_ids") or []
+    if not isinstance(job_ids, (list, tuple)):
+        raise HTTPException(status_code=422, detail="job_ids must be a list")
+    deleted = 0
+    not_found: list[str] = []
+    for raw in job_ids:
+        try:
+            parsed = uuid.UUID(str(raw))
+        except (ValueError, AttributeError, TypeError):
+            not_found.append(str(raw))
+            continue
+        job = db.query(Job).filter(Job.id == parsed).first()
+        if job is None:
+            not_found.append(str(raw))
+            continue
+        _delete_job_cascade(db, job)
+        deleted += 1
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"bulk_delete_jobs blocked by a foreign key: {e}")
+        raise HTTPException(status_code=409, detail="Could not delete these jobs — another record still references one") from e
+    return {"deleted": deleted, "not_found": not_found}
+
+
 @router.get("/{job_id}")
 def get_job(job_id: str, db: Session = Depends(get_db)):
     from backend.models.db import Resume
@@ -968,7 +1043,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
         Resume.job_id == job.id, Resume.is_base == False
     ).order_by(Resume.updated_at.desc()).first()
     import backend.job_monitor as _mon
-    running = [r for r in _mon._running.values() if r.target_job_id == job.id]
+    running = [r for r in _mon.visible_running() if r.target_job_id == job.id]
     return _job_to_dict(
         job,
         tailored_resume_id=tailored[0] if tailored else None,
@@ -995,9 +1070,8 @@ async def update_job(job_id: str, updates: dict, background_tasks: BackgroundTas
     # Trigger CV scoring when job is saved (respects on_save_action); launched as a tracked
     # op so it shows in /monitor/in-flight + /monitor/finished, driving the dashboard's scoring toasts.
     if updates.get("saved") is True and not job.cv_scores:
-        from backend.models.db import Setting
-        on_save_row = db.query(Setting).filter(Setting.key == "on_save_action").first()
-        on_save = on_save_row.value if on_save_row and on_save_row.value else "off"
+        from backend.accounts.settings import get_setting
+        on_save = get_setting(db, "on_save_action") or "off"
         if on_save != "off":
             try:
                 from backend.analyzer.cv_scorer import score_single_job
@@ -1036,15 +1110,14 @@ async def update_job(job_id: str, updates: dict, background_tasks: BackgroundTas
             created_application_id = str(app.id)
 
         if job.company and job.company.strip():
-            from backend.models.db import Company, Setting
+            from backend.models.db import Company
+            from backend.accounts.settings import default_resume_ids
             from backend.models.db import find_company_by_name
             existing_co = find_company_by_name(db, job.company.strip())
             if not existing_co:
-                default_resume_row = db.query(Setting).filter(Setting.key == "default_resume_id").first()
-                default_resume_ids = [default_resume_row.value] if default_resume_row and default_resume_row.value else []
                 new_co = Company(
                     name=job.company.strip(), tier=None, active=False, playwright_enabled=False,
-                    selected_resume_ids=default_resume_ids,
+                    selected_resume_ids=default_resume_ids(db),
                 )
                 db.add(new_co)
                 db.commit()

@@ -20,7 +20,7 @@ async def test_call_llm_uses_primary_override(monkeypatch):
     monkeypatch.setattr(L, "_get_setting", lambda db, k, d="": d)  # no fallback configured
     calls = []
 
-    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None):
+    async def fake_dispatch(provider, model, api_key, prompt, system, max_tokens, cached_prefix=None, effort=""):
         calls.append((provider, model, api_key))
         return {"text": "ok", "usage": {}}
 
@@ -169,11 +169,22 @@ async def test_scorer_uses_scoring_override_when_set(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_scorer_override_provider_falls_back_to_primary_key(monkeypatch):
-    """Override provider set but its key blank → falls back to the Primary api key."""
+async def test_scorer_override_on_another_provider_never_borrows_the_primary_key(monkeypatch):
+    """Override provider differs from the Primary's and its key is blank → no key (B1): the
+    Primary's Anthropic key must never be sent to OpenRouter."""
     Session = _scorer_session({"scoring_llm_provider": "openrouter",
                                "scoring_llm_model": "x-ai/grok-4.6",
                                "scoring_llm_api_key": ""})
     cap = await _run_scorer_capture(monkeypatch, Session)
     assert cap["provider"] == "openrouter"
-    assert cap["api_key"] == "primkey"
+    assert cap["api_key"] == ""
+
+
+@pytest.mark.asyncio
+async def test_scorer_override_on_the_primary_provider_reuses_the_primary_key(monkeypatch):
+    """Same provider as the Primary with a blank key → the Primary's key."""
+    Session = _scorer_session({"scoring_llm_provider": "claude_api",
+                               "scoring_llm_model": "claude-haiku-4-5",
+                               "scoring_llm_api_key": ""})
+    cap = await _run_scorer_capture(monkeypatch, Session)
+    assert (cap["provider"], cap["model"], cap["api_key"]) == ("claude_api", "claude-haiku-4-5", "primkey")

@@ -8,6 +8,7 @@ import httpx
 
 from backend.scraper._shared.urls import host_matches
 from backend.scraper._shared.filters import _validate_job
+from backend.scraper._shared.errors import raise_if_board_gone
 from backend.analyzer.location import COUNT_ONLY, canonical, group_pieces
 
 logger = logging.getLogger("jobnavigator.scraper.ats.workday")
@@ -163,6 +164,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
             resp = await client.post(api_url, json=payload, headers=headers)
             if resp.status_code != 200:
                 logger.warning(f"Workday API returned {resp.status_code} for {company_slug}/{site}")
+                if not debug and offset == 0:
+                    raise_if_board_gone(resp.status_code, "Workday", f"{company_slug}/{site}")
                 if debug:
                     rejected.append({"title": "(none)", "url": api_url, "selector": "workday_api", "reason": f"HTTP {resp.status_code}"})
                 break

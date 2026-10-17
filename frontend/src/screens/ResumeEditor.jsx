@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api'
+import { useFlushBeforeSwitch } from '../accounts'
 import '../theme.css'
 import { useToasts, ToastStack } from '../Toast'
-import ConfirmDialog from '../ConfirmDialog'
+import ConfirmDialog, { PromptDialog } from '../ConfirmDialog'
+import { downloadName } from '../download'
 import { useEscape, useSingleOpen, setFlashToast, fetchRunOutcome, runFailed, runFailureReason, useSettled, NBSP } from '../hooks'
 import { useTitle } from '../useTitle'
 // The résumé-content editors are shared with /persona (a Persona's
 // resume_content is the same shape as a Resume's json_data).
 import {
-  EMPTY, SECTION_ORDER, sectionCounts, makeMutators,
-  SectionShell, SectionEditor, BandRule,
+  EMPTY, resumeSectionNames, sectionCounts, makeMutators,
+  SectionShell, SectionEditor, BandRule, StyleSettings, STYLE_AREAS, styleAreaLabel,
 } from './ResumeSections'
-import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
+import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, CopyGlyph, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
 
 // contiguous prefix/suffix word diff → { before, removed, added, after }
 function wordDiff(a = '', b = '') {
@@ -85,10 +87,15 @@ export default function ResumeEditor() {
   const [tplOpen, setTplOpen] = useState(false)
   const [fmtOpen, setFmtOpen] = useState(false)
   const [tailorOpen, setTailorOpen] = useState(false)
+  const [renameOpen, setRenameOpen] = useState(false)
   const [reviewOpen, setReviewOpen] = useState(false)
   const [reviewed, setReviewed] = useState(false)   // tailoring changes acknowledged for this copy
   const [pdfErr, setPdfErr] = useState(false)      // last preview render failed
   const [pdfNonce, setPdfNonce] = useState(0)      // Retry re-arms the preview effect
+  const [selectMode, setSelectMode] = useState(false) // click-to-select HTML preview instead of the PDF
+  const [selected, setSelected] = useState(null)      // the area picked in that preview: page, image, a section or a part key
+  const [selectHtml, setSelectHtml] = useState(null)
+  const selectFrame = useRef(null)
   const [baseData, setBaseData] = useState(null)   // parent json_data (for diff + inline marks)
   const [jobData, setJobData] = useState(null)     // the copy's job (cv_scores, status)
   const [tracers, setTracers] = useState([])
@@ -367,6 +374,29 @@ export default function ResumeEditor() {
     })
   }, [doc, id, navigate, pushToast])
 
+  // Base-only: a fresh, independent base with the same content — no job_id/parent_id,
+  // so nothing job-specific (_tailor_context/_score) needs stripping from json_data.
+  const duplicateResume = useCallback(async () => {
+    setHeadMenu(false)
+    try {
+      const { data: copy } = await api.post('/resumes', {
+        name: `${doc.name} (copy)`, is_base: true,
+        template: doc.template, page_format: doc.page_format, json_data: data,
+      })
+      pushToast({ kind: 'success', msg: `“${copy.name}” created.`, action: 'Open ↗', onAction: () => navigate(`/resumes/${copy.id}`) })
+    } catch (e) { pushToast({ kind: 'error', msg: e.response?.data?.detail || 'Duplicate failed.' }) }
+  }, [doc, data, pushToast, navigate])
+
+  const renameResume = useCallback(async (name) => {
+    if (!name.trim()) return
+    try {
+      const { data: updated } = await api.patch(`/resumes/${id}`, { name: name.trim() })
+      setDoc((d) => ({ ...d, name: updated.name }))
+      setRenameOpen(false)
+      pushToast({ kind: 'success', msg: `Renamed to “${updated.name}”.` })
+    } catch (e) { pushToast({ kind: 'error', msg: e.response?.data?.detail || 'Rename failed.' }) }
+  }, [id, pushToast])
+
   const goCover = () => { setHeadMenu(false); navigate(`/cover-letters?resume=${id}${doc.job_id ? `&job=${doc.job_id}` : ''}`) }
 
   // the "one next step" stage for a tailored copy: Score is offered only when there's
@@ -383,15 +413,25 @@ export default function ResumeEditor() {
   }, [isCopy, doc, freeformJd, changes.length, reviewed, scores.tailored, scoring, coverExists, jobData, runScore, markApplied]) // eslint-disable-line
 
   // debounced persist
+  // QA F7 / R6-01: the patch the timer still owes, so a switch can send it first
+  const pendingSave = useRef(null)
+  const sendSave = useCallback(async (patch) => {
+    try { await api.patch(`/resumes/${id}`, patch); setSavedAt(new Date().toISOString()) }
+    catch (e) { console.error(e); setSavedAt(null); pushToast({ kind: 'error', msg: `Save failed — your last edit is not stored. ${e.response?.data?.detail || e.message || ''}`.trim() }) }
+    setSaving(false)
+  }, [id])  // eslint-disable-line react-hooks/exhaustive-deps
   const persist = useCallback((patch) => {
     setSaving(true)
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
-      try { await api.patch(`/resumes/${id}`, patch); setSavedAt(new Date().toISOString()) }
-      catch (e) { console.error(e); setSavedAt(null); pushToast({ kind: 'error', msg: `Save failed — your last edit is not stored. ${e.response?.data?.detail || e.message || ''}`.trim() }) }
-      setSaving(false)
-    }, 500)
-  }, [id])
+    pendingSave.current = patch
+    saveTimer.current = setTimeout(() => { pendingSave.current = null; sendSave(patch) }, 500)
+  }, [sendSave])
+  useFlushBeforeSwitch(() => {
+    const patch = pendingSave.current
+    if (!patch) return undefined
+    clearTimeout(saveTimer.current); pendingSave.current = null
+    return sendSave(patch)
+  })
   const onData = useCallback((next) => { setData(next); persist({ json_data: next }) }, [persist])
   const pickTemplate = (t) => { setTemplate(t); setTplOpen(false); persist({ template: t }) }
   const pickFormat = (f) => { setFormat(f); setFmtOpen(false); persist({ page_format: f }) }
@@ -422,6 +462,39 @@ export default function ResumeEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, template, format, doc, id, pdfNonce])
   useEffect(() => () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }, [pdfUrl])
+
+  // "Select & style": the same template and style CSS as the PDF, as HTML whose areas can be clicked
+  // (a PDF viewer swallows clicks). Re-rendered on the PDF's debounce so it follows the autosave.
+  const tpl = templates.find((item) => item.id === template)
+  const supportsStyle = !!tpl?.docx?.style_overrides
+  const selectOn = selectMode && supportsStyle
+  useEffect(() => {
+    if (!doc || !selectOn) return undefined
+    const ac = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api.get(`/resumes/${id}/preview`, { params: { template, format, select: true }, responseType: 'text', signal: ac.signal })
+        setSelectHtml(r.data)
+      } catch (e) {
+        if (e.code === 'ERR_CANCELED' || e.name === 'CanceledError') return
+        console.error('preview', e)
+        setSelectHtml(null)
+      }
+    }, 800)
+    return () => { clearTimeout(timer); ac.abort() }
+  }, [data, template, format, doc, id, selectOn])
+  useEffect(() => {
+    if (!selectOn) return undefined
+    const onMessage = (e) => {
+      if (e.source !== selectFrame.current?.contentWindow || e.data?.type !== 'resume-select') return
+      if (STYLE_AREAS.includes(e.data.area)) setSelected(e.data.area)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [selectOn])
+  // the iframe reloads on every re-render, so the highlight is pushed again on load
+  const pushSelection = () => selectFrame.current?.contentWindow?.postMessage({ type: 'resume-select-set', area: selected }, '*')
+  useEffect(() => { pushSelection() }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // apply the decline-based review: declined modified/added → revert to base; kept
   // suggested bullets → append; then clear all suggested_bullets. One save.
@@ -456,11 +529,6 @@ export default function ResumeEditor() {
     return n
   })
 
-  const pdfDownloadUrl = useMemo(() => {
-    const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
-    return `${base}/api/resumes/${id}/pdf?template=${encodeURIComponent(template)}&format=${encodeURIComponent(format)}`
-  }, [id, template, format])
-
   // Reserves the chrome's shape while the document loads, instead of a bare "Loading…"
   // that collapses the screen then jumps to the real layout once the doc lands.
   if (!doc || !data) {
@@ -478,6 +546,7 @@ export default function ResumeEditor() {
   }
 
   const counts = sectionCounts(data)
+  const sectionNames = resumeSectionNames(doc)
   const tplLabel = templates.find((t) => t.id === template)?.name || template || 'Template'
 
   return (
@@ -553,6 +622,8 @@ export default function ResumeEditor() {
                   <MenuItem icon="◎" hint="score only" onClick={() => runScore('light')}>Score again · light</MenuItem>
                   <MenuItem icon="◎" hint="with report" onClick={() => runScore('full')}>Score again · full</MenuItem>
                   {changes.length > 0 && <MenuItem icon="≋" hint={`${changes.length} to review`} onClick={() => { setHeadMenu(false); setReviewOpen(true) }}>Review changes</MenuItem>}
+                  <MenuItem icon={<CopyGlyph />} onClick={duplicateResume}>Duplicate</MenuItem>
+                  <MenuItem icon="✎" onClick={() => { setHeadMenu(false); setRenameOpen(true) }}>Rename</MenuItem>
                   <Rule style={{ margin: '4px 8px' }} />
                   <MenuHead>Job</MenuHead>
                   {/* `hint` slots deliberately empty: they read as single-letter
@@ -587,6 +658,8 @@ export default function ResumeEditor() {
                 <Menu ariaLabel="Résumé actions" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 244 }}>
                   <MenuHead>This base</MenuHead>
                   <MenuItem icon="✦" hint="adds a copy" onClick={() => { setHeadMenu(false); setTailorOpen(true) }}>Tailor for a job…</MenuItem>
+                  <MenuItem icon={<CopyGlyph />} onClick={duplicateResume}>Duplicate</MenuItem>
+                  <MenuItem icon="✎" onClick={() => { setHeadMenu(false); setRenameOpen(true) }}>Rename</MenuItem>
                   <MenuItem danger icon="✕" onClick={deleteResume}>Delete résumé</MenuItem>
                 </Menu>
               </>
@@ -599,10 +672,10 @@ export default function ResumeEditor() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* left: sections */}
         <section className="v2-scroll" style={{ flex: '0 0 47%', borderRight: '1px solid var(--line)', overflow: 'auto', padding: '14px 20px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {SECTION_ORDER.map((name) => (
+          {sectionNames.map((name) => (
             <SectionShell key={name} name={name} count={counts[name]} open={open.has(name)} onToggle={() => toggle(name)}
               meta={changedSections.has(name) ? <span title="Contains unreviewed tailoring changes" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--warn)' }}>● changed by tailoring</span> : null}>
-              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} onError={(msg) => pushToast({ kind: 'error', msg })}
+              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={tpl?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
                 onRemoved={(msg, undo) => pushToast({ kind: 'undo', msg, action: 'Undo', onAction: undo })} />
             </SectionShell>
           ))}
@@ -635,15 +708,29 @@ export default function ResumeEditor() {
                   </Menu>
               )}
             </div>}
-            {/* round 9: `Button href` renders the real download anchor, on the
-                primary paint this toolbar drew by hand (--accent / --accent-ink /
-                500). Overrides restore the toolbar's own 29px height and 12px label. */}
-            <Button size="sm" href={pdfDownloadUrl} target="_blank"
-              style={{ marginLeft: 'auto', minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download PDF</Button>
+            {supportsStyle && <Button size="sm" title="Click a section in the preview to style it" onClick={() => { setSelectMode((v) => !v); setSelected(null) }}>
+              {selectOn ? 'Back to PDF' : 'Select & style'}
+            </Button>}
+            <DownloadMenu id={id} template={template} format={format} onError={(msg) => pushToast({ kind: 'error', msg })} />
           </HeaderRow>
           <Surface radius="none" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            {pdfUrl && <iframe title="pdf" src={`${pdfUrl}#view=FitH`} style={{ width: '100%', height: '100%', border: 'none' }} />}
-            {pdfErr && !pdfUrl && (
+            {selectOn
+              ? <>
+                {selectHtml && <iframe ref={selectFrame} title="Select preview" srcDoc={selectHtml} sandbox="allow-scripts" onLoad={pushSelection}
+                  style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />}
+                {selected && (
+                  <Surface key={selected} style={{ position: 'absolute', top: 12, right: 12, width: 330, maxHeight: 'calc(100% - 24px)', overflow: 'auto', padding: 12, zIndex: 5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <Label>{styleAreaLabel(selected)}</Label>
+                      <Button size="sm" onClick={() => setSelected(null)}>Close</Button>
+                    </div>
+                    {selected.includes('.') && <div style={{ paddingTop: 6 }}><Button size="sm" onClick={() => setSelected(selected.split('.')[0])}>Select whole section</Button></div>}
+                    <StyleSettings data={data} mutate={mutate} hasProfileImage={tpl?.has_profile_image} only={selected} />
+                  </Surface>
+                )}
+              </>
+              : pdfUrl && <iframe title="pdf" src={`${pdfUrl}#view=FitH`} style={{ width: '100%', height: '100%', border: 'none' }} />}
+            {pdfErr && !pdfUrl && !selectOn && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 9, color: 'var(--muted)', fontSize: 12.5 }}>
                 <span>Preview failed — the PDF could not be rendered.</span>
                 <Pill size="sm" onClick={() => setPdfNonce((n) => n + 1)}>Retry</Pill>
@@ -656,10 +743,51 @@ export default function ResumeEditor() {
       {tailorOpen && (isCopy
         ? <RetailorModal doc={doc} job={jobData} chain={tailorChain} onClose={() => setTailorOpen(false)} onRun={runRetailor} pushToast={pushToast} />
         : <TailorModal doc={doc} chain={tailorChain} onClose={() => setTailorOpen(false)} onRun={runTailor} pushToast={pushToast} />)}
+      {renameOpen && <PromptDialog title="Rename résumé" value={doc.name} label="Save" onSubmit={renameResume} onCancel={() => setRenameOpen(false)} />}
       {reviewOpen && <ReviewModal changes={changes} onClose={() => setReviewOpen(false)} onApply={applyReview} />}
       {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
 
       <ToastStack toasts={toasts} onClose={dismissToast} />
+    </div>
+  )
+}
+
+// ── Download (PDF / Word) ────────────────────────────────────────────────────
+// The preview toolbar's Download button and its menu; the Word export is based on work by
+// @mrAlishah. Each choice goes through axios and saves the blob, like the cover-letter
+// download, so the X-API-Key header travels and a failed export is an error toast rather
+// than a JSON page in a new tab. The current template and paper ride along, so a fresh
+// pick that the debounced save hasn't stored yet is still what downloads.
+export function DownloadMenu({ id, template, format, onError }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  useEscape(() => setOpen(false), open)
+  const download = async (kind) => {
+    setOpen(false); setBusy(true)
+    try {
+      const r = await api.get(`/resumes/${id}/${kind}`, { responseType: 'blob', params: { template, format } })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url; a.download = downloadName(r.headers?.['content-disposition'], `Resume.${kind}`)
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (e) {
+      console.error(e)
+      onError?.(kind === 'docx' ? 'Could not download the Word document.' : 'Could not download the PDF.')
+    } finally { setBusy(false) }
+  }
+  // Overrides keep the toolbar's own 29px height and 12px label.
+  return (
+    <div style={{ position: 'relative', flex: '0 0 auto', marginLeft: 'auto' }}>
+      <Button size="sm" busy={busy} ariaHaspopup="menu" ariaExpanded={open} onClick={() => setOpen((v) => !v)}
+        style={{ minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download</Button>
+      {open && (
+        <Menu ariaLabel="Download résumé" onDismiss={() => setOpen(false)}
+          style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 168 }}>
+          <MenuItem hint=".pdf" hintMono onClick={() => download('pdf')}>PDF</MenuItem>
+          <MenuItem hint=".docx" hintMono onClick={() => download('docx')}>Word</MenuItem>
+        </Menu>
+      )}
     </div>
   )
 }
@@ -729,6 +857,7 @@ function RetailorModal({ doc, job, chain, onClose, onRun, pushToast }) {
 
 // The tailor endpoint chains a score of the copy it just made — a second LLM call the
 // modals should mention. Reads the setting that controls it; the control itself stays in Settings › AI.
+// Toolbar Download button + its PDF / Word menu — same open/backdrop/Escape shape as the ⋯ actions menu.
 const chainNote = (chain) => (chain
   ? `Also scores the copy afterwards at ${chain} depth · 1 more LLM call · change under Settings › AI`
   : 'Scoring after tailoring is off')

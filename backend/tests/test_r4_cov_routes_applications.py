@@ -27,9 +27,10 @@ from backend.tests.r4_support import (  # noqa: F401
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 class _Resp:
-    def __init__(self, text="", raise_exc=None):
+    def __init__(self, text="", raise_exc=None, status_code=200):
         self.text = text
         self._raise = raise_exc
+        self.status_code = status_code
 
     def raise_for_status(self):
         if self._raise:
@@ -307,6 +308,30 @@ async def test_cache_job_page_falls_back_on_thin_html_too(test_db, monkeypatch):
     assert "Responsibilities" in job.cached_page_text
 
 
+_CHALLENGE_HTML = ("<html><head><title>Just a moment...</title></head><body>"
+                   + "Verifying you are human. This may take a few seconds. " * 5 + "</body></html>")
+
+
+@pytest.mark.asyncio
+async def test_cache_job_page_never_stores_a_bot_wall(test_db, monkeypatch):
+    """The cached text is tailoring's last-resort JD, so a challenge page must not land there."""
+    import backend.api.routes_applications as ra
+    _patch_url_safety(monkeypatch, gate=True, safe_get=_Resp(text=_CHALLENGE_HTML))
+    tried = []
+
+    async def _pw(url):
+        tried.append(url)
+        return _CHALLENGE_HTML
+
+    monkeypatch.setattr(ra, "_fetch_with_playwright", _pw)
+    job = make_job(test_db)
+    await real_cache_job_page(str(job.id), "https://e.com/j")
+    test_db.refresh(job)
+    assert tried, "a walled httpx answer still earns the browser attempt"
+    assert job.cached_page_text is None and job.cached_page_html is None
+    assert job.cache_error == "playwright: blocked by bot protection"
+
+
 @pytest.mark.asyncio
 async def test_cache_job_page_records_a_playwright_failure(test_db, monkeypatch):
     import backend.api.routes_applications as ra
@@ -546,7 +571,7 @@ def test_extract_reads_json_ld_job_posting(client, monkeypatch):
         </script></head><body></body></html>"""))
     body = assert_clean(client.post("/api/applications/extract",
                                     json={"url": "https://e.com/j"}), 200).json()
-    assert body == {"title": "Staff PM & Lead", "company": "Acme Corp"}
+    assert body == {"title": "Staff PM & Lead", "company": "Acme Corp", "blocked": False}
 
 
 def test_extract_accepts_a_string_hiring_organization(client, monkeypatch):
@@ -571,7 +596,7 @@ def test_extract_skips_unparseable_and_non_object_json_ld(client, monkeypatch):
         </head><body></body></html>"""))
     body = assert_clean(client.post("/api/applications/extract",
                                     json={"url": "https://e.com/j"}), 200).json()
-    assert body == {"title": "Fallback Title", "company": "Acme Corp"}
+    assert body == {"title": "Fallback Title", "company": "Acme Corp", "blocked": False}
 
 
 def test_extract_drops_a_board_brand_from_og_site_name(client, monkeypatch):
@@ -615,7 +640,30 @@ def test_extract_still_answers_200_when_the_fetch_fails(client, monkeypatch):
     _patch_url_safety(monkeypatch, gate=True, safe_get=RuntimeError("timed out"))
     body = assert_clean(client.post("/api/applications/extract", json={
         "url": "https://jobs.lever.co/anthropic/1"}), 200).json()
-    assert body == {"title": None, "company": "Anthropic"}
+    assert body == {"title": None, "company": "Anthropic", "blocked": False}
+
+
+def test_extract_answers_from_a_stored_job_without_fetching(client, test_db, monkeypatch):
+    """Indeed walls off the page; the scraper already stored the posting under the same identity."""
+    _patch_url_safety(monkeypatch, gate=True,
+                      safe_get=AssertionError("a stored posting must not be fetched"))
+    make_job(test_db, title="Senior Software Engineer", company="Prevue HR Systems Inc.",
+             url="https://ca.indeed.com/viewjob?jk=766d6014290cd498")
+    body = assert_clean(client.post("/api/applications/extract", json={
+        "url": "https://ca.indeed.com/viewjob?jk=766d6014290cd498&from=serp&vjs=3"}), 200).json()
+    assert body == {"title": "Senior Software Engineer", "company": "Prevue HR Systems Inc.",
+                    "blocked": False}
+
+
+@pytest.mark.parametrize("resp", [
+    _Resp(text="<html><head><title>Authenticating...</title></head></html>", status_code=401),
+    _Resp(text=_CHALLENGE_HTML),  # a challenge served as a 200
+], ids=["401", "challenge-200"])
+def test_extract_reports_a_refused_read(client, monkeypatch, resp):
+    _patch_url_safety(monkeypatch, gate=True, safe_get=resp)
+    body = assert_clean(client.post("/api/applications/extract", json={
+        "url": "https://ca.indeed.com/viewjob?jk=abc"}), 200).json()
+    assert body == {"title": None, "company": None, "blocked": True}
 
 
 def test_extract_reraises_an_httpexception_from_the_fetch(client, monkeypatch):

@@ -11,10 +11,15 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from backend.scraper._shared.bot_wall import is_bot_wall
 from backend.scraper._shared.browser import _USER_AGENT
 from backend.scraper._shared.urls import host_matches as _host_matches
 
 logger = logging.getLogger("jobnavigator.scraper.ats.descriptions")
+
+# The public job page wraps the posting in this block; everything around it is
+# sign-in forms and "similar jobs" chrome.
+_LINKEDIN_DESCRIPTION_SELECTOR = "div.show-more-less-html__markup"
 
 
 # Greenhouse slugs are constrained to alphanumerics + hyphens, rejecting anything
@@ -30,10 +35,15 @@ def _resolve_branded_greenhouse_slug(host: str) -> str | None:
     host = host.lower()
     # Lazy import to avoid circular imports during module init.
     from backend.models.db import SessionLocal, Company
+    from backend.accounts.context import unscoped
     db = SessionLocal()
     try:
-        # Build {host: slug} from companies that have a Greenhouse scrape_url.
-        for c in db.query(Company).all():
+        # Build {host: slug} from companies that have a Greenhouse scrape_url. Host → slug is
+        # public board knowledge and the cache is process-wide, so it reads every account's
+        # companies (MT-8): the answer must not depend on which account asked first.
+        with unscoped():
+            companies = db.query(Company).all()
+        for c in companies:
             slug = None
             for u in (c.scrape_urls or []):
                 u_host = (urlparse(u).hostname or "").lower()
@@ -100,7 +110,18 @@ async def _fetch_job_description(url: str, job: dict = None) -> str | None:
     try:
         resp = await safe_get(url, timeout=15, headers={"User-Agent": _USER_AGENT})
         resp.raise_for_status()
+        if is_bot_wall(resp.text):
+            logger.info(f"Bot protection answered instead of the posting at {url}")
+            return None
         soup = BeautifulSoup(resp.text, "html.parser")
+        # A LinkedIn job page repeats its sign-in form several times before the
+        # posting, which pushes the requirements past the prompt's JD cap; only
+        # the description block is the JD.
+        if _host_matches(url, "linkedin.com"):
+            soup = soup.select_one(_LINKEDIN_DESCRIPTION_SELECTOR)
+            if soup is None:
+                logger.info(f"No description block on LinkedIn page {url}")
+                return None
         for tag in soup.find_all(["script", "style", "nav", "footer", "header", "noscript", "svg", "img"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)[:30_000]

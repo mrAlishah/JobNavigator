@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from backend.scraper._shared.filters import _validate_job
+from backend.scraper._shared.errors import raise_if_board_gone
 from backend.scraper._shared.urls import host_matches
 
 logger = logging.getLogger("jobnavigator.scraper.ats.smartrecruiters")
@@ -99,6 +100,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
                     f"SmartRecruiters API returned {resp.status_code} for {company_slug} "
                     f"(offset={offset})"
                 )
+                if not debug and offset == 0:
+                    raise_if_board_gone(resp.status_code, "SmartRecruiters", company_slug)
                 # Always surface the failure in debug mode — even mid-pagination, so
                 # callers can tell a partial-success result was actually truncated.
                 if debug:

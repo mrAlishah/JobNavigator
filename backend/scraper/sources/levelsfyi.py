@@ -40,6 +40,10 @@ def _parse_levelsfyi_salary(location_text: str) -> tuple[str, str | None, int | 
         if part_lower in ("remote", "on-site", "hybrid"):
             work_arrangement = part.strip()
         elif "$" in part:
+            # "$45/hr" is not a yearly figure (the rule below would read $45 as $45K).
+            from backend.analyzer.salary_extractor import is_non_annual
+            if is_non_annual(part):
+                continue
             amounts = re.findall(r'\$(\d+(?:\.\d+)?)\s*[Kk]?', part)
             for i, amt in enumerate(amounts):
                 val = int(float(amt))
@@ -375,8 +379,9 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
     return jobs
 
 
-async def run(search: Search) -> dict:
-    """Levels.fyi search mode: scrape filtered job listings and save to DB."""
+async def run(search: Search, shared=None) -> dict:
+    """Levels.fyi search mode: scrape filtered job listings and save to DB. `shared`
+    (MT-8 SharedFetch): searches with the same URL + max_pages share one browser scrape."""
     start_time = time.time()
 
     if not search.direct_url or not _is_levelsfyi(search.direct_url):
@@ -384,19 +389,25 @@ async def run(search: Search) -> dict:
 
     pw = None
     browser = None
-    try:
+
+    async def _fetch():
+        nonlocal pw, browser
         pw, browser = await _get_browser()
         search_max_pages = search.max_pages or 50
-        raw_jobs = await _scrape_levelsfyi(search.direct_url, browser=browser, max_pages=search_max_pages)
+        raw = await _scrape_levelsfyi(search.direct_url, browser=browser, max_pages=search_max_pages)
 
         # Retry up to 3 times if 0 results (levels.fyi rate-limiting / slow render)
         retry_delays = [10, 20, 30]
         for attempt, delay in enumerate(retry_delays, 1):
-            if raw_jobs:
+            if raw:
                 break
             logger.info(f"levels.fyi: 0 results, retry {attempt}/3 in {delay}s")
             await asyncio.sleep(delay)
-            raw_jobs = await _scrape_levelsfyi(search.direct_url, browser=browser, max_pages=search_max_pages)
+            raw = await _scrape_levelsfyi(search.direct_url, browser=browser, max_pages=search_max_pages)
+        return raw
+
+    try:
+        raw_jobs = await (_fetch() if shared is None else shared.get(_fetch))
 
         # Apply search-level + global title filters
         from backend.models.db import get_global_title_exclude as _gte
@@ -498,6 +509,12 @@ async def run(search: Search) -> dict:
         new_jobs = 0
         try:
             existing_ids = get_existing_external_ids(db)
+            # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
+            from backend.scraper._shared.analysis import prefetch_h1b
+            await prefetch_h1b([
+                j["company"] for j in kept_jobs
+                if make_external_id(j["company"], j["title"], j.get("application_url") or j["url"]) not in existing_ids
+            ])
             for j in kept_jobs:
                 # Use application_url as primary URL if available, fallback to levels.fyi URL
                 apply_url = j.get("application_url") or ""
@@ -556,7 +573,7 @@ async def run(search: Search) -> dict:
 
                 if job.h1b_jd_flag:
                     _phrase = getattr(job, "_h1b_matched_phrase", None) or "?"
-                    logger.info(f"Skipping job (body exclusion): {j['title']} @ {j.get('company', '?')} — matched phrase: {_phrase!r}")
+                    logger.info(f"Skipping job (body exclusion): {j['title']} @ {job.company or j.get('company') or '?'} — matched phrase: {_phrase!r}")
                     continue
 
                 try:

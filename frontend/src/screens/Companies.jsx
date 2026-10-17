@@ -4,6 +4,7 @@ import api from '../api'
 import { useToasts, ToastStack } from '../Toast'
 // shared dialog also serves résumé and cover-letter deletes, so it lives in its own file.
 import ConfirmDialog from '../ConfirmDialog'
+import CopyFrom from '../CopyFrom'
 import { useSettled, useWarm, NBSP, DASH } from '../hooks'
 import { Button, DashedAdd, Dot, Drawer as UiDrawer, FlaskGlyph, FooterRow, HeaderRow, Heading, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, Mono, Notice, PageTitle, Pill, Row, Rule, SearchInput, Segmented, ShowMore, Spinner, TableHead, TableRow, Tag } from '../ui'
 import '../theme.css'
@@ -26,11 +27,16 @@ const warnTextOf = (c, downReason) => c.last_error || downReason
   || (c.last_run_warning ? `last run found nothing · ${ago(c.last_scraped_at)}` : null)
 const warnMuted = (c) => !c.active || !!c.warning_acknowledged
 const isAlarming = (c, downReason) => !!warnTextOf(c, downReason) && !warnMuted(c)
-// FastAPI's `detail` is a plain string for HTTPException; append it when present.
-const errSuffix = (e) => (typeof e?.response?.data?.detail === 'string' ? ' — ' + e.response.data.detail : '')
+// FastAPI's `detail` is a plain string for HTTPException; append it when present. Coded
+// errors ({detail: 'name_taken', message}) carry their sentence in `message`.
+const errSuffix = (e) => {
+  const d = e?.response?.data
+  if (typeof d?.message === 'string' && d.message) return ' — ' + d.message
+  return typeof d?.detail === 'string' ? ' — ' + d.detail : ''
+}
 
 // ATS + tier chip colors live in theme.css (.cc-*) so they flip with dark mode.
-const ATS_SLUGS = new Set(['greenhouse', 'workday', 'lever', 'ashby', 'phenom', 'oraclehcm', 'smartrecruiters', 'rippling', 'eightfold', 'talentbrew', 'meta', 'google'])
+const ATS_SLUGS = new Set(['greenhouse', 'workday', 'lever', 'ashby', 'phenom', 'oraclehcm', 'smartrecruiters', 'rippling', 'amazon', 'eightfold', 'talentbrew', 'meta', 'google'])
 const atsShort = (detected) => (detected || 'Generic')
   .replace(' API', '').replace(' AJAX', '').replace(' (Playwright)', '').replace(' Careers', '')
 const atsSlug = (short) => { const s = (short || 'generic').toLowerCase().replace(/[^a-z0-9]/g, ''); return 'cc-' + (ATS_SLUGS.has(s) ? s : 'generic') }
@@ -69,6 +75,8 @@ const detectAts = (url) => {
   if (hostMatches(url, 'greenhouse.io')) return 'Greenhouse'
   if (hostMatches(url, 'ats.rippling.com') || (hostMatches(url, 'rippling.com') && pathHas(url, '/careers'))) return 'Rippling'
   if (hostMatches(url, 'jobs.smartrecruiters.com', 'careers.smartrecruiters.com', 'api.smartrecruiters.com')) return 'SmartRecruiters'
+  // amazon.is_amazon: an amazon.jobs host with /search in the path
+  if (hostMatches(url, 'amazon.jobs') && pathHas(url, '/search')) return 'Amazon'
   if (hostMatches(url, 'metacareers.com')) return 'Meta'
   if (url.toLowerCase().includes('google.com/about/careers')) return 'Google'
   return 'Generic'
@@ -299,6 +307,12 @@ export default function Companies() {
     setScraping((m) => ({ ...m, [id]: true }))
     try { await api.post(`/scrape/company/${id}`) }
     catch (e) {
+      // The scheduled scrape is running: nothing was started, so drop the spinner.
+      if (e.response?.data?.detail === 'scheduled_scrape_running') {
+        pushToast({ kind: 'error', msg: 'The scheduled scrape is running — try again when it finishes' })
+        setScraping((m) => { const n = { ...m }; delete n[id]; return n })
+        return
+      }
       // 409 means the run is genuinely in flight — keep the spinner, the
       // /monitor/active poll clears it when the run finishes.
       if (e.response?.status === 409) { pushToast({ kind: 'progress', msg: 'That company is already being scraped' }); return }
@@ -396,6 +410,11 @@ export default function Companies() {
           <span style={{ fontSize: 13, lineHeight: '20px', color: 'var(--muted)', ...warmStyle }}>{countLine}</span>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <CopyFrom kind="companies" pushToast={pushToast} onCloned={async (row) => {
+            await fetchCompanies()
+            window.dispatchEvent(new CustomEvent('jn:counts-changed'))
+            openDrawer(row)
+          }} />
           <Button onClick={() => setAddOpen(true)}>+ Add company</Button>
         </div>
       </HeaderRow>
@@ -805,7 +824,7 @@ function AddModal({ onClose, resumes, personaPopulated, onCreated, pushToast }) 
       })
       onCreated(); onClose()
     } catch (e) {
-      pushToast({ kind: 'error', msg: 'Could not add company' + (typeof e?.response?.data?.detail === 'string' ? ' — ' + e.response.data.detail : '') })
+      pushToast({ kind: 'error', msg: 'Could not add company' + errSuffix(e) })
       setSaving(false)
     }
   }
