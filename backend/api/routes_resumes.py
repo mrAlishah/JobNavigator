@@ -293,7 +293,9 @@ _STYLE_FONTS = {
     "Times New Roman": "'Times New Roman','Tinos','Liberation Serif',serif",
     "Garamond": "'Garamond','EB Garamond',serif",
     "Verdana": "'Verdana','DejaVu Sans',sans-serif",
+    "Manrope": "'Manrope','Arial',sans-serif",      # ships in the templates' fonts/ folders, embedded when used
 }
+_FONT_WEIGHTS = {"Thin": 100, "ExtraLight": 200, "Light": 300, "Regular": 400, "Medium": 500, "SemiBold": 600, "Bold": 700, "ExtraBold": 800, "Black": 900}
 # section -> (root selector, main-text selectors, secondary-text selectors, printed one point smaller)
 _STYLE_SECTIONS = {
     "header": (".header-content", [".header .header-content h1"], []),
@@ -309,6 +311,9 @@ _STYLE_SECTIONS = {
 }
 
 
+# section -> the element that wraps the whole block (heading included), for margin and padding
+_SECTION_BOX = {"header": ".header", **{k: f".sec-{k}" for k in _STYLE_SECTIONS if k != "header"}}
+
 # part key -> (box selector, extra text selectors). A part is one class of element in the Professional
 # templates; the same table drives the PDF CSS, the preview's click targets and (by key) the DOCX builder.
 _STYLE_PARTS = {
@@ -316,6 +321,10 @@ _STYLE_PARTS = {
     "header.title": (".header .title-line", []),
     "header.contact": (".header .contact", [".header .contact a"]),
     "summary.text": (".sec-summary .summary-text", []),
+    "experience.entry": (".sec-experience .entry", []),        # a card: one job / school / project / publication
+    "education.entry": (".sec-education .edu-entry", []),
+    "projects.entry": (".sec-projects .entry", []),
+    "publications.entry": (".sec-publications .entry", []),
     "experience.title": (".sec-experience .entry > div:first-child", [".sec-experience .entry-title"]),
     "experience.meta": (".sec-experience .entry-meta", []),
     "experience.description": (".sec-experience .entry-description", []),
@@ -337,8 +346,8 @@ for _sec in ("summary", "experience", "skills", "education", "projects", "public
     _STYLE_PARTS[f"{_sec}.heading"] = (f".sec-{_sec} .section-title", [])
 _INLINE_PARTS = {"skills.label"}        # <span>s: vertical margin / padding only work as inline-block
 _SIDES = ("top", "right", "bottom", "left")
-_PART_NUMS = {"size": (5, 36), "line_height": (0.9, 2.5), "letter_spacing": (-1, 5),
-              **{f"{k}_{s}": (0, 60) for k in ("margin", "padding") for s in _SIDES}}
+_BOX_NUMS = {f"{k}_{s}": (0, 60) for k in ("margin", "padding") for s in _SIDES}
+_PART_NUMS = {"size": (5, 36), "line_height": (0.9, 2.5), "letter_spacing": (-1, 5), **_BOX_NUMS}
 _BULLETS = {"•": "• ", "–": "– ", "▪": "▪ ", "◦": "◦ ", "none": ""}
 
 
@@ -391,7 +400,7 @@ def _style_overrides(json_data: Optional[dict]) -> dict:
     sections = {}
     for key in _STYLE_SECTIONS:
         src = (raw.get("sections") or {}).get(key) if isinstance(raw.get("sections"), dict) else None
-        s = pick(src, {"size": (6, 36), "line_height": (0.9, 2.5)})
+        s = pick(src, {"size": (6, 36), "line_height": (0.9, 2.5), **_BOX_NUMS})
         if isinstance(src, dict) and isinstance(src.get("font"), str) and src["font"] in _STYLE_FONTS:
             s["font"] = src["font"]
         if s:
@@ -409,9 +418,22 @@ def _style_overrides(json_data: Optional[dict]) -> dict:
     return {k: v for k, v in out.items() if v}
 
 
-def _style_css(ov: dict, footer_reserved_in: float = 0, margin_in=(0.41, 0.53)) -> str:
+def _font_faces(ov: dict, fonts: dict) -> list:
+    """@font-face rules for the template-shipped fonts (`Family-Weight.ttf` in its fonts/ folder, as data URIs)
+    that the style actually uses, so a résumé that never picks one does not carry them."""
+    used = {x["font"] for x in (*ov.get("sections", {}).values(), *ov.get("parts", {}).values()) if "font" in x}
+    faces = []
+    for family in sorted(used):
+        for name, uri in sorted(fonts.items()):
+            weight = _FONT_WEIGHTS.get(name[len(family) + 1:-4]) if name.startswith(f"{family}-") else None
+            if weight:
+                faces.append(f"@font-face {{ font-family: '{family}'; src: url({uri}) format('truetype'); font-weight: {weight}; font-style: normal; }}")
+    return faces
+
+
+def _style_css(ov: dict, footer_reserved_in: float = 0, margin_in=(0.41, 0.53), fonts: Optional[dict] = None) -> str:
     """CSS appended to a Professional template's own stylesheet for the `_style_overrides` values."""
-    css, page = [], ov.get("page", {})
+    css, page = _font_faces(ov, fonts or {}), ov.get("page", {})
     if "top" in page or "bottom" in page:
         top = page.get("top", margin_in[0])
         css.append(f"@page {{ margin: {top:g}in 0 {max(page.get('bottom', 0), footer_reserved_in):g}in 0; }}")
@@ -431,6 +453,10 @@ def _style_css(ov: dict, footer_reserved_in: float = 0, margin_in=(0.41, 0.53)) 
             css.append(f"{', '.join(main)} {{ font-size: {s['size']:g}pt; }}")
             if small:
                 css.append(f"{', '.join(small)} {{ font-size: {max(s['size'] - 1, 5):g}pt; }}")
+    for key, s in ov.get("sections", {}).items():
+        box = [f"{k}-{side}: {s[f'{k}_{side}']:g}pt" for k in ("margin", "padding") for side in _SIDES if f"{k}_{side}" in s]
+        if box:
+            css.append(f"{_SECTION_BOX[key]} {{ {'; '.join(box)}; }}")
     for key, p in ov.get("parts", {}).items():
         css.extend(_part_css(key, p))
     return "\n".join(css)
@@ -570,7 +596,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     defaults = {k.lower(): v for k, v in ((meta.get("docx") or {}).get("titles") or {}).items()}
     section_titles = {k: escape(v) for k, v in {**defaults, **_section_titles(json_data)}.items()}
     docx_meta = meta.get("docx") or {}
-    style_css = _style_css(_style_overrides(json_data), footer_reserved_in, docx_meta.get("margin_in", (0.41, 0.53))) if docx_meta.get("style_overrides") else ""
+    style_css = _style_css(_style_overrides(json_data), footer_reserved_in, docx_meta.get("margin_in", (0.41, 0.53)), fonts) if docx_meta.get("style_overrides") else ""
     # dict(content, ...) so the explicit values win over a same-named key stored in json_data
     # (the editor saves profile_image_enabled there); `**content, k=v` raises on the duplicate.
     html = template.render(**dict(
@@ -597,8 +623,7 @@ _PPR_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "
               "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
 
 
-def _sort_ppr(p) -> None:
-    ppr = p._p.pPr
+def _sort_ppr(ppr) -> None:
     for child in sorted(ppr, key=lambda c: _PPR_ORDER.index(c.tag.split("}")[1])):
         ppr.remove(child)
         ppr.append(child)
@@ -658,8 +683,46 @@ def _build_docx(
         cur.update(secs.get(key, {}))
 
     def props(par, part=None):
-        # the paragraph's own part, then a run-level part (a skills label inside a skills line)
-        return {**parts.get(getattr(par, "_part", None), {}), **parts.get(part, {})}
+        # the card the paragraph sits in, its own part, then a run-level part (a skills label inside a skills line)
+        return {**parts.get(getattr(par, "_entry", None), {}), **parts.get(getattr(par, "_part", None), {}), **parts.get(part, {})}
+
+    sec_state, card_state = {"key": None, "paras": []}, {"key": None, "paras": []}
+
+    def group_box(paras, pp):
+        # A section or card is a container in the PDF; Word has none. Its margin + padding become extra
+        # space before the first paragraph / after the last one and an indent on every paragraph in it.
+        if not (pp and paras):
+            return
+        v = {s: pp.get(f"margin_{s}", 0) + pp.get(f"padding_{s}", 0) for s in _SIDES}
+
+        def plus(length, extra):
+            return Pt((length.pt if length is not None else 0) + extra)
+        if v["top"]:
+            paras[0].paragraph_format.space_before = plus(paras[0].paragraph_format.space_before, v["top"])
+        if v["bottom"]:
+            paras[-1].paragraph_format.space_after = plus(paras[-1].paragraph_format.space_after, v["bottom"])
+        for p in paras:
+            if v["left"]:
+                p.paragraph_format.left_indent = plus(p.paragraph_format.left_indent, v["left"])
+            if v["right"]:
+                p.paragraph_format.right_indent = plus(p.paragraph_format.right_indent, v["right"])
+
+    def end_card():
+        group_box(card_state["paras"], parts.get(card_state["key"]))
+        card_state["key"], card_state["paras"] = None, []
+
+    def begin_card(key):
+        end_card()
+        card_state["key"] = key
+
+    def end_section():
+        end_card()
+        group_box(sec_state["paras"], secs.get(sec_state["key"]))
+        sec_state["key"], sec_state["paras"] = None, []
+
+    def begin_section(key):
+        end_section()
+        sec_state["key"] = key
 
     def fmt(r, pp):
         if "font" in pp:
@@ -708,6 +771,10 @@ def _build_docx(
     def para(part=None, into=None, **kw):
         p = (into or doc).add_paragraph(**kw)
         p._part = part
+        sec_state["paras"].append(p)
+        if card_state["key"]:
+            card_state["paras"].append(p)
+            p._entry = card_state["key"]
         if cur.get("line_height"):
             p.paragraph_format.line_spacing = cur["line_height"]
         box(p, part)
@@ -766,6 +833,7 @@ def _build_docx(
 
     def section(title):
         custom = custom_titles.get(title.lower())
+        begin_section(title.lower())
         use(title.lower())
         if not st:
             doc.add_heading(custom or title, level=2)
@@ -784,7 +852,6 @@ def _build_docx(
         p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(4.2), Pt(2.3)
         p.paragraph_format.keep_with_next = True
         box(p, part)
-        _sort_ppr(p)
         runs(p, custom or st["titles"].get(title, title), bold=True, pt=st.get("section_pt"), color=accent)
 
     def row(left, right="", bold=True, color=None, pt=None, part=None, rpart=None):
@@ -818,6 +885,7 @@ def _build_docx(
                 runs(para(style="List Bullet"), b)
 
     header = d.get("header") or {}
+    begin_section("header")
     use("header")
     name_pt = cur.pop("size", None)     # a header size sets the name; title and contact keep theirs
     target = None       # the header cell that holds the name block when there is a picture
@@ -864,6 +932,7 @@ def _build_docx(
             runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
 
     if d.get("summary"):
+        begin_section("summary")
         use("summary")
         if "Summary" in st.get("titles", {}) or "summary" in custom_titles:
             section("Summary")
@@ -881,6 +950,7 @@ def _build_docx(
     if d.get("experience"):
         section("Experience")
         for job in d["experience"]:
+            begin_card("experience.entry")
             date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
             if st:
                 p = para("experience.title")
@@ -900,6 +970,7 @@ def _build_docx(
     if d.get("education"):
         section("Education")
         for edu in d["education"]:
+            begin_card("education.entry")
             row(edu.get("school") or "", edu.get("location") or "", color=ink, part="education.school", rpart="education.location")
             if edu.get("degree"):
                 runs(para("education.degree"), edu["degree"], pt=meta_pt, kind="small")
@@ -908,11 +979,15 @@ def _build_docx(
         if d.get(key):
             section(title)
             for item in d[key]:
+                begin_card(f"{key}.entry")
                 row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt, part=f"{key}.name")
                 if item.get("url"):
                     link(para(f"{key}.url"), item["url"], item["url"])
                 details(item, key)
 
+    end_section()
+    for ppr in doc.element.body.iter(qn("w:pPr")):
+        _sort_ppr(ppr)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

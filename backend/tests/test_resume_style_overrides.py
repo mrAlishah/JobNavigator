@@ -313,3 +313,111 @@ def _assert_schema_order(d):
 ])
 def test_docx_xml_children_are_in_schema_order(style):
     _assert_schema_order(_docx(style))
+
+
+# ── section containers and cards: margin and padding ────────────────────────────────────────────────
+CARDS = ("experience.entry", "education.entry", "projects.entry", "publications.entry")
+
+
+def test_section_margin_and_padding_are_validated():
+    ov = _style_overrides({"style": {"sections": {"experience": {"size": 10, "margin_top": 99, "padding_left": 4, "margin_right": -2,
+                                                                  "margin_bottom": "x", "bogus": 1}}}})
+    assert ov["sections"]["experience"] == {"size": 10, "margin_top": 60, "padding_left": 4, "margin_right": 0}
+
+
+def test_section_box_css_targets_the_container():
+    css = _style_css(_style_overrides({"style": {"sections": {"experience": {"margin_top": 5, "padding_left": 3}, "header": {"padding_bottom": 2}}}}))
+    assert ".sec-experience { margin-top: 5pt; padding-left: 3pt; }" in css
+    assert ".header { padding-bottom: 2pt; }" in css
+
+
+@pytest.mark.parametrize("card", CARDS)
+def test_cards_are_parts_with_the_full_property_set(card):
+    box = _STYLE_PARTS[card][0]
+    css = _style_css(_style_overrides({"style": {"parts": {card: {"margin_bottom": 4, "padding_top": 2, "color": "#112233"}}}}))
+    assert f"{box} {{ margin-bottom: 4pt; padding-top: 2pt; }}" in css and f"{box} {{ color: #112233; }}" in css
+
+
+TWO_JOBS = {**FULL, "experience": [dict(FULL["experience"][0], title="PM1", bullets=["a1"]), dict(FULL["experience"][0], title="PM2", bullets=["a2"])]}
+
+
+def _style_docx(style, data=FULL):
+    return docx.Document(io.BytesIO(_build_docx({**data, "style": style}, "letter", _docx_style())))
+
+
+def test_docx_section_box_spaces_and_indents_the_whole_section():
+    d = _style_docx({"sections": {"experience": {"margin_top": 10, "padding_top": 2, "margin_bottom": 7, "margin_left": 8, "padding_left": 1}}})
+    heading, title, bullet = _para(d, "PROFESSIONAL EXPERIENCE"), _para(d, "PM - Acme"), _para(d, "• b1")
+    assert heading.paragraph_format.space_before.pt == pytest.approx(4.2 + 12)
+    assert bullet.paragraph_format.space_after.pt == pytest.approx(0.45 + 7)
+    assert title.paragraph_format.left_indent.pt == pytest.approx(9) and bullet.paragraph_format.left_indent.pt == pytest.approx(9.7 + 9)
+    assert _para(d, "Languages").paragraph_format.left_indent is None              # other sections untouched
+
+
+def test_docx_header_box_wraps_the_name_block():
+    d = _style_docx({"sections": {"header": {"margin_left": 6}}})
+    assert _para(d, "Dana").paragraph_format.left_indent.pt == pytest.approx(6)
+    assert _para(d, "PM").paragraph_format.left_indent.pt == pytest.approx(6)
+    assert _para(d, "PROFESSIONAL SUMMARY").paragraph_format.left_indent is None
+
+
+def test_docx_cards_space_each_entry_on_its_own():
+    d = _parts_docx({"experience.entry": {"margin_top": 6, "margin_bottom": 5, "margin_left": 4, "color": "#112233"}}, data=TWO_JOBS)
+    t1, b1, t2, b2 = _para(d, "PM1"), _para(d, "• a1"), _para(d, "PM2"), _para(d, "• a2")
+    assert t1.paragraph_format.space_before.pt == pytest.approx(3 + 6) and t2.paragraph_format.space_before.pt == pytest.approx(3 + 6)
+    assert b1.paragraph_format.space_after.pt == pytest.approx(0.45 + 5) and b2.paragraph_format.space_after.pt == pytest.approx(0.45 + 5)
+    assert t1.paragraph_format.left_indent.pt == pytest.approx(4) and b2.paragraph_format.left_indent.pt == pytest.approx(9.7 + 4)
+    assert str(t1.runs[0].font.color.rgb) == "112233"                                 # a card's text properties reach its runs
+    assert _para(d, "Languages").paragraph_format.left_indent is None
+
+
+def test_docx_education_card_indents_school_and_degree():
+    d = _parts_docx({"education.entry": {"margin_left": 4}})
+    assert _para(d, "TU").paragraph_format.left_indent.pt == pytest.approx(4) and _para(d, "BSc").paragraph_format.left_indent.pt == pytest.approx(4)
+
+
+@pytest.mark.parametrize("style", [
+    {"sections": {"experience": {"margin_top": 4, "padding_bottom": 3, "margin_left": 2, "line_height": 1.3}, "header": {"margin_left": 5, "margin_top": 2}}},
+    {"parts": {c: {"margin_top": 3, "margin_left": 2, "padding_bottom": 1, "align": "center"} for c in CARDS}},
+])
+def test_docx_section_and_card_xml_stay_in_schema_order(style):
+    _assert_schema_order(docx.Document(io.BytesIO(_build_docx({**TWO_JOBS, "style": style}, "letter", _docx_style()))))
+
+
+# ── Manrope: a font that ships with the templates (fonts/ folder), embedded only when chosen ─────────
+from backend.api.routes_resumes import _STYLE_FONTS
+
+FONT_FILES = sorted((ROOT / "professional-top-left-image" / "fonts").glob("Manrope-*.ttf"))
+
+
+def test_manrope_is_a_choosable_font():
+    assert _STYLE_FONTS["Manrope"].startswith("'Manrope'")
+    ov = _style_overrides({"style": {"sections": {"summary": {"font": "Manrope"}}, "parts": {"summary.text": {"font": "Manrope"}}}})
+    assert ov["sections"]["summary"] == {"font": "Manrope"} and ov["parts"]["summary.text"] == {"font": "Manrope"}
+
+
+def test_font_face_rules_cover_only_the_fonts_in_use_and_known_weights():
+    fonts = {"Manrope-Bold.ttf": "data:font/truetype;base64,AAA", "Manrope-Light.ttf": "data:font/truetype;base64,BBB",
+             "Manrope-Weird.ttf": "data:x", "Other-Regular.ttf": "data:y"}
+    css = _style_css(_style_overrides({"style": {"parts": {"summary.text": {"font": "Manrope"}}}}), fonts=fonts)
+    assert css.count("@font-face") == 2
+    assert "font-weight: 700" in css and "font-weight: 300" in css and "AAA" in css and "BBB" in css
+    assert "Weird" not in css and "data:x" not in css and "data:y" not in css
+    assert "@font-face" not in _style_css(_style_overrides({"style": {"parts": {"summary.text": {"font": "Georgia"}}}}), fonts=fonts)
+    assert "@font-face" not in _style_css(_style_overrides({"style": {"parts": {"summary.text": {"size": 9}}}}), fonts=fonts)
+
+
+@pytest.mark.skipif(not FONT_FILES, reason="the Manrope .ttf files are not checked out (they are git-ignored)")
+@pytest.mark.parametrize("tpl", PRO)
+def test_manrope_is_embedded_in_the_pdf_html_only_when_used(tpl):
+    assert "@font-face" not in _html(tpl)
+    used = _html(tpl, {"sections": {"experience": {"font": "Manrope"}}})
+    assert used.count("@font-face") == len(FONT_FILES) == 7 and "data:font/truetype;base64," in used
+    assert all(f"font-weight: {w}" in used for w in (200, 300, 400, 500, 600, 700, 800))
+    assert "font-family: 'Manrope','Arial',sans-serif" in used
+    assert "@font-face" not in _html(tpl, {"sections": {"experience": {"font": "Georgia"}}})
+
+
+def test_docx_names_manrope_in_the_runs():
+    d = _parts_docx({"summary.text": {"font": "Manrope"}})
+    assert _para(d, "sum").runs[0].font.name == "Manrope"
