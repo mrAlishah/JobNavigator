@@ -9,7 +9,8 @@ import './theme.css'
 // that has never used JobNavigator (`jobnavigator_welcomed` absent). This one is
 // for the person who already has a working install and just had the interface
 // replaced under them: nothing to set up, four lines on what moved. App.jsx owns
-// the mutual exclusion — the tour wins, and this modal waits for the next visit.
+// the mutual exclusion — the tour wins, and closing a first-run tour marks this
+// one seen too (onboarding.js, V-01).
 //
 // Announcement copy is versioned, not evergreen: the seen-mark carries the
 // release it was written for, so the next release can raise a new one by
@@ -23,7 +24,6 @@ const POINTS = [
   'The extension, redesigned: AI-assisted answers to application questions and structured autofill of ATS forms from your Persona.',
   'Pick a look in Settings › Display: Paper, Green Paper, Stone, V1 Style or Windows 98, light or dark.',
   'OpenRouter and live model search, the freehire.me source, Persona import from a résumé or PDF, a cron helper for schedules.',
-  'The classic dashboard is still at /classic (Settings › Display) for one more release.',
 ]
 
 export default function NewUiModal({ onClose }) {

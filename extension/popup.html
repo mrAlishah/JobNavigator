@@ -128,6 +128,16 @@
   .conn-tx { font-size: 11px; color: var(--muted); }
   .show-btn { padding: 0 12px; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 7px; font-size: 12px; color: var(--ink2); cursor: pointer; }
   .show-btn:hover { background: var(--hover); }
+  /* the right-hand buttons of stacked fields (API key › Show, Saves to › Change) share one width so they line up */
+  .side-btn { flex: 0 0 68px; width: 68px; box-sizing: border-box; justify-content: center; }
+
+  /* account selector (MT-18) */
+  .adot { width: 10px; height: 10px; border-radius: 999px; background: var(--border-h); flex: 0 0 10px; }
+  .aopt { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--ink); background: var(--paper); }
+  .aopt:hover { background: var(--hover); }
+  .aopt.cur { border-color: var(--accent); background: var(--accent-tint); }
+  .aopt .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .aopt .tag { font-family: var(--mono); font-size: 10px; color: var(--muted); }
 
   /* url sheet */
   .scrim { position: absolute; inset: 0; background: var(--scrim); display: flex; align-items: flex-end; }
@@ -330,11 +340,36 @@
         <div class="lbl">API key</div>
         <div style="display:flex; gap:8px">
           <input id="apiKey" type="password" class="in mono" style="flex:1; min-width:0" spellcheck="false">
-          <div class="show-btn" id="showKey">Show</div>
+          <div class="show-btn side-btn" id="showKey">Show</div>
         </div>
         <div class="conn">
           <div class="conn-dot" id="connDot"></div>
           <div class="conn-tx mono" id="connTx">Checking…</div>
+        </div>
+      </div>
+      <!-- MT-18: only shown when the server has two or more accounts -->
+      <div class="field hide" id="acctField">
+        <!-- Change spans the label and the name, so the row stays as tall as its text -->
+        <div style="display:flex; align-items:stretch; gap:8px">
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:5px">
+            <div class="lbl">Saves to</div>
+            <div style="display:flex; align-items:center; gap:8px">
+              <span class="adot" id="acctDot"></span>
+              <div id="acctName" style="flex:1; min-width:0; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"></div>
+            </div>
+          </div>
+          <div class="show-btn side-btn" id="acctChange">Change</div>
+        </div>
+        <div class="conn-tx hide" id="acctNote"></div>
+        <div id="acctList" class="hide" style="display:flex; flex-direction:column; gap:4px"></div>
+        <div id="acctPin" class="hide" style="display:flex; flex-direction:column; gap:6px">
+          <div class="conn-tx" id="acctPinFor"></div>
+          <div style="display:flex; gap:8px">
+            <input id="acctPinIn" type="password" inputmode="numeric" maxlength="4" autocomplete="off" class="in mono" style="flex:1; min-width:0" placeholder="4-digit PIN" spellcheck="false">
+            <div class="show-btn" id="acctPinOk">Use</div>
+            <div class="show-btn" id="acctPinCancel">Cancel</div>
+          </div>
+          <div class="conn-tx hide" id="acctPinErr" style="color:var(--red-otx)"></div>
         </div>
       </div>
       <button class="btn btn-blue" id="saveSettings" style="margin-top:2px">Save settings</button>

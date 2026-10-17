@@ -35,10 +35,15 @@ def _resolve_branded_greenhouse_slug(host: str) -> str | None:
     host = host.lower()
     # Lazy import to avoid circular imports during module init.
     from backend.models.db import SessionLocal, Company
+    from backend.accounts.context import unscoped
     db = SessionLocal()
     try:
-        # Build {host: slug} from companies that have a Greenhouse scrape_url.
-        for c in db.query(Company).all():
+        # Build {host: slug} from companies that have a Greenhouse scrape_url. Host → slug is
+        # public board knowledge and the cache is process-wide, so it reads every account's
+        # companies (MT-8): the answer must not depend on which account asked first.
+        with unscoped():
+            companies = db.query(Company).all()
+        for c in companies:
             slug = None
             for u in (c.scrape_urls or []):
                 u_host = (urlparse(u).hostname or "").lower()

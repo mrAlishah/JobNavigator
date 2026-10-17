@@ -11,7 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.countries import DEFAULT_COUNTRY, compose_location
-from backend.models.db import SessionLocal, Search, Job, Setting, get_existing_external_ids
+from backend.models.db import SessionLocal, Search, Job, get_existing_external_ids
+from backend.accounts.settings import get_setting
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
 
 logger = logging.getLogger("jobnavigator.scraper.sources.jobspy")
@@ -27,6 +28,19 @@ def _clean(v):
         pass  # non-scalar (list/array) — fall through and stringify
     s = str(v).strip()
     return s or None
+
+
+def _jobspy_yearly(interval, *amounts) -> bool:
+    """True when a JobSpy row's pay may be stored as a yearly salary: its interval is yearly or
+    unstated, and each amount given is at least 1000 (JobSpy runs without enforce_annual_salary,
+    so an hourly row carries the hourly figure). Not annualised, as no source does that."""
+    unit = (_clean(interval) or "yearly").lower()
+    if unit not in ("yearly", "annual", "year"):
+        return False
+    try:
+        return all(float(a) >= 1000 for a in amounts if _clean(a) is not None)
+    except (TypeError, ValueError):
+        return False
 
 
 def _apply_h1b_inline(job, db=None, company_lookup=None, phrases=None, loop=None) -> None:
@@ -101,24 +115,28 @@ def _condense_error(msg: str) -> str:
 # change helps. Each signature maps to a stable text. Every other failure keeps
 # its condensed text, so a failure nobody diagnosed stays visible as it is.
 # The frontend flags the same two boards in frontend/src/sourceBlocks.js.
+ZIP_RECRUITER_REDIRECTED = "the US site redirects this location to a regional ZipRecruiter site, which this scraper does not read: HTTP 307"
 ZIP_RECRUITER_BLOCKED = "the server refuses the requests that this scraper sends: HTTP 403"
 # The capture sees the log line, not the page. A real page with zero jobs logs the
-# same warning, so the Google text names the likely cause, not a certain one.
+# same error, so the Google text names the likely cause, not a certain one.
 GOOGLE_BLOCKED = "the server returned no job data, which is usually a JavaScript check page that this scraper cannot read"
 _KNOWN_BLOCKS = {
-    # jobspy/ziprecruiter/__init__.py logs the 403 body at ERROR. "forbidden aa"
-    # comes from the server, "forbidden cf-waf" from Cloudflare in front of it.
-    "zip_recruiter": (re.compile(r"forbidden (aa|cf-waf)", re.I), ZIP_RECRUITER_BLOCKED),
-    # jobspy/google/__init__.py logs this at WARNING when page 1 has no cursor.
-    "google": (re.compile(r"initial cursor not found", re.I), GOOGLE_BLOCKED),
+    # jobspy/ziprecruiter/__init__.py logs only "response status code <n>" at ERROR,
+    # without the body. From an EU address the US site answers 307 to its .de site.
+    "zip_recruiter": [
+        (re.compile(r"response status code 307\b", re.I), ZIP_RECRUITER_REDIRECTED),
+        (re.compile(r"response status code 403\b", re.I), ZIP_RECRUITER_BLOCKED),
+    ],
+    # jobspy/google/__init__.py logs this at ERROR when page 1 has neither jobs nor a cursor.
+    "google": [(re.compile(r"returned no job data", re.I), GOOGLE_BLOCKED)],
 }
 
 
 def _describe_error(key: str, msg: str) -> str:
     """The stable text for a known block signature of this board, else _condense_error(msg)."""
-    signature, text = _KNOWN_BLOCKS.get(key, (None, None))
-    if signature and signature.search(str(msg)):
-        return text
+    for signature, text in _KNOWN_BLOCKS.get(key, ()):
+        if signature.search(str(msg)):
+            return text
     return _condense_error(msg)
 
 
@@ -129,10 +147,9 @@ def _board_errors(errors: dict, jobs_df, sources) -> dict:
     overlaps another run also receives that run's records. Only the boards this
     run asked for are kept. Cross-talk on a board that both runs use stays.
 
-    jobspy logs the Google cursor warning also when page 1 held up to 10 jobs
-    (jobspy/google/__init__.py). A Google board that returned rows was not
-    blocked, so it gets no error. A different Google failure, for example on
-    page 2, keeps its text.
+    A Google board that returned rows was not blocked, so a "no job data" error
+    on it is dropped (cross-talk from another run, or a later page). A different
+    Google failure keeps its text.
     """
     returned = set()
     if jobs_df is not None and not jobs_df.empty and "site" in jobs_df.columns:
@@ -141,20 +158,17 @@ def _board_errors(errors: dict, jobs_df, sources) -> dict:
             if k in sources and not (k == "google" and v == GOOGLE_BLOCKED and k in returned)}
 
 
-# The Indeed scraper reports an HTTP failure through log.info, not log.warning
-# (jobspy/indeed/__init__.py: "responded with status code: <code>"), so a
-# WARNING threshold never saw an Indeed failure. The threshold is INFO now, and
-# this pattern — not the level — decides what an INFO record has to say to count
-# as a failure, so ordinary progress lines ("finished scraping") stay out of
-# source_breakdown.
-_INFO_FAILURE_RE = re.compile(r"responded with status code:\s*\d+", re.IGNORECASE)
-
-
 class _SourceLogCapture(logging.Handler):
-    """Keeps the first failure record each JobSpy board logger emits."""
+    """Keeps the first ERROR record each JobSpy board logger emits.
+
+    Since python-jobspy 1.2.0 every board-level failure (HTTP status, exception,
+    blocked page) is logged at ERROR. WARNING is per-job trouble or advice, for
+    example LinkedIn's "job_type isn't supported, ignoring it" on every run that
+    sets job_type, so a WARNING never marks a board failed.
+    """
 
     def __init__(self):
-        super().__init__(level=logging.INFO)
+        super().__init__(level=logging.ERROR)
         self.errors = {}
 
     def emit(self, record):
@@ -162,7 +176,7 @@ class _SourceLogCapture(logging.Handler):
             if not str(record.name).startswith("JobSpy"):
                 return
             message = record.getMessage()
-            if record.levelno < logging.WARNING and not _INFO_FAILURE_RE.search(message):
+            if record.levelno < logging.ERROR:
                 return
             key = _site_key(record.name)
             if not key or key in self.errors:
@@ -228,8 +242,7 @@ def _count_returned(breakdown: dict, jobs_df) -> dict:
 
 def get_setting_value(db: Session, key: str, default: str = "") -> str:
     """Read a single Setting row's value by key, returning ``default`` if not set."""
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return row.value if row else default
+    return get_setting(db, key, default)
 
 
 def apply_title_filters(jobs_df, include_keywords: list, exclude_keywords: list):
@@ -260,8 +273,40 @@ def apply_company_filter(jobs_df, company_filter: list):
     return jobs_df[jobs_df["company"].str.lower().isin(cf_set)]
 
 
-def _run_sync(search, proxy_url: str = None) -> dict:
-    """Execute a single JobSpy search and return results dict."""
+def trim_postings(jobs_df, results_wanted: int, hours_old: int,
+                  fetched_results: int, fetched_hours: int):
+    """Cut a shared fetch (MT-8, made at the largest results_wanted / hours_old among the
+    subscribers) down to one account's own values.
+
+    - hours_old: rows whose `date_posted` is older than the account's window are dropped.
+      JobSpy dates are day-granular, so the cut is too (a row posted on the cutoff day is
+      kept); a row without a date is kept, as JobSpy itself would have returned it.
+    - results_wanted: JobSpy's limit is per board, so the first N rows of each board are
+      kept, in the order the boards returned them.
+    Nothing is touched when the account's values equal the fetched ones."""
+    import pandas as pd
+    from datetime import timedelta
+    if jobs_df is None or jobs_df.empty:
+        return jobs_df
+    if hours_old and fetched_hours and hours_old < fetched_hours and "date_posted" in jobs_df.columns:
+        cutoff = pd.Timestamp((datetime.now(timezone.utc) - timedelta(hours=hours_old)).date())
+        posted = pd.to_datetime(jobs_df["date_posted"], errors="coerce")
+        jobs_df = jobs_df[posted.isna() | (posted >= cutoff)]
+    if results_wanted and fetched_results and results_wanted < fetched_results and not jobs_df.empty:
+        if "site" in jobs_df.columns:
+            jobs_df = jobs_df.groupby("site", sort=False, group_keys=False).head(results_wanted)
+        else:
+            jobs_df = jobs_df.head(results_wanted)
+    return jobs_df
+
+
+def _run_sync(search, proxy_url: str = None, shared=None) -> dict:
+    """Execute a single JobSpy search and return results dict.
+
+    `shared` (a `backend.scraper.targets.SharedFetch`, MT-8): searches of several accounts
+    with the same target key share one `scrape_jobs()` call made at the largest
+    results_wanted / hours_old; this search then trims its copy to its own values and runs
+    its own filters, dedup and checks under the current account."""
     start_time = time.time()
     # One entry per configured board so a failure is visible next to boards that worked;
     # seeded here (not after the call) so failure paths can still say what was asked for.
@@ -294,10 +339,26 @@ def _run_sync(search, proxy_url: str = None) -> dict:
         if proxy_url:
             kwargs["proxies"] = [proxy_url]
 
-        logger.info(f"Running JobSpy search: {search.name} — term='{search.search_term}', sources={sources}")
-        with _capture_source_errors(sources) as capture:
-            jobs_df = scrape_jobs(**kwargs)
-        _merge_source_errors(breakdown, _board_errors(capture.errors, jobs_df, sources))
+        if shared is None:
+            logger.info(f"Running JobSpy search: {search.name} — term='{search.search_term}', sources={sources}")
+            with _capture_source_errors(sources) as capture:
+                jobs_df = scrape_jobs(**kwargs)
+            captured = capture.errors
+        else:
+            own_results, own_hours = kwargs["results_wanted"], kwargs["hours_old"]
+            kwargs["results_wanted"] = shared.params.get("results_wanted") or own_results
+            kwargs["hours_old"] = shared.params.get("hours_old") or own_hours
+
+            def _fetch():
+                logger.info(f"Running shared JobSpy search: {search.name} — term='{search.search_term}', "
+                            f"sources={sources}, results={kwargs['results_wanted']}, hours={kwargs['hours_old']}")
+                with _capture_source_errors(sources) as cap:
+                    df = scrape_jobs(**kwargs)
+                return df, dict(cap.errors)
+            jobs_df, captured = shared.get_sync(_fetch)
+            jobs_df = trim_postings(jobs_df, own_results, own_hours,
+                                    kwargs["results_wanted"], kwargs["hours_old"])
+        _merge_source_errors(breakdown, _board_errors(captured, jobs_df, sources))
         # Rows each board returned, counted here — before the title filter, the
         # company allow-list and the company exclude. It is the only truthful
         # answer to "did this board deliver anything at all?": `seen` counts what
@@ -372,6 +433,21 @@ def _run_sync(search, proxy_url: str = None) -> dict:
             company_lookup = build_company_lookup(db)
             phrases = load_exclusion_phrases(db)
 
+            # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
+            # Non-fatal like `_apply_h1b_inline`: without it the jobs keep what the cache has.
+            from backend.scraper._shared.analysis import prefetch_h1b
+            _new_companies = [
+                _clean(r.get("company")) for _, r in jobs_df.iterrows()
+                if make_external_id(_clean(r.get("company")) or "", _clean(r.get("title")) or "",
+                                    _clean(r.get("job_url")) or "") not in existing_ids
+            ]
+            _prefetch = prefetch_h1b(_new_companies)
+            try:
+                h1b_loop.run_until_complete(_prefetch)
+            except Exception as e:
+                _prefetch.close()
+                logger.warning(f"JobSpy H-1B prefetch skipped for '{search.name}': {e}")
+
             for _, row in jobs_df.iterrows():
                 company = _clean(row.get("company")) or ""
                 title = _clean(row.get("title")) or ""
@@ -402,11 +478,11 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                     search_id=search.id,
                     description=_clean(row.get("description")),
                     location=_clean(row.get("location")),
-                    # JobSpy's own `is_remote` is a substring test over the whole
-                    # description, so "remote state" (Terraform) and "remote dev
-                    # environments" mark a job remote. It is deliberately unused.
+                    # JobSpy's own `is_remote` was a substring test over the whole
+                    # description up to 1.1.82, so "remote state" (Terraform) marked
+                    # a job remote. It stays deliberately unused.
                     # `work_from_home_type` below is no help either: in
-                    # python-jobspy 1.1.82 only the Naukri scraper sets that field.
+                    # python-jobspy 1.3.0 only the Naukri scraper sets that field.
                     # Indeed, LinkedIn, ZipRecruiter and Google rows always carry
                     # None there, so the arrangement comes from the JD cascade.
                     remote=None,
@@ -415,9 +491,13 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                     saved=False,
                 )
 
-                # Extract salary if present in JobSpy results
+                # Extract salary if present in JobSpy results. Only a yearly amount (or one
+                # with no interval) is stored; hourly/daily/weekly/monthly pay is not a yearly
+                # figure, and a "yearly" one under 1000 is not a salary.
                 min_amount = row.get("min_amount")
                 max_amount = row.get("max_amount")
+                if not _jobspy_yearly(row.get("interval"), min_amount, max_amount):
+                    min_amount = max_amount = None
                 if min_amount and str(min_amount) != "nan":
                     try:
                         job.salary_min = int(float(min_amount))
@@ -544,6 +624,9 @@ def _run_sync(search, proxy_url: str = None) -> dict:
                 "duration": duration, "source_breakdown": breakdown}
 
 
-async def run(search, proxy_url: str = None) -> dict:
-    """Async entry point — offloads the synchronous JobSpy call to a thread."""
-    return await asyncio.to_thread(_run_sync, search, proxy_url)
+async def run(search, proxy_url: str = None, shared=None) -> dict:
+    """Async entry point — offloads the synchronous JobSpy call to a thread (the account
+    context travels with it: to_thread copies the contextvars)."""
+    if shared is None:
+        return await asyncio.to_thread(_run_sync, search, proxy_url)
+    return await asyncio.to_thread(_run_sync, search, proxy_url, shared)

@@ -1,13 +1,15 @@
 """FastAPI entry point for JobNavigator."""
 import logging
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi import Depends, FastAPI, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
-from backend.models.db import create_tables, SessionLocal, Setting, JobRun
+from backend.models.db import create_tables, SessionLocal, JobRun
+from backend.accounts.settings import get_install_setting, install_row, put_setting
 from backend.seed import run_seeds
 from backend.config import INITIAL_API_KEY, TELEGRAM_BOT_TOKEN
 from backend.job_monitor import launch_background, JobAlreadyRunningError, get_all_running, is_running, _get_running_by_job_type, cleanup_stale_runs, sanitize_run_error
@@ -23,6 +25,8 @@ from backend.api.routes_cover_letters import router as cover_letters_router
 from backend.api.routes_linkedin import router as linkedin_router
 from backend.api.routes_autofill import router as autofill_router
 from backend.api.routes_llm import router as llm_router
+from backend.api.routes_accounts import router as accounts_router
+from backend.api.routes_gmail import router as gmail_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("jobnavigator")
@@ -38,27 +42,48 @@ for _noisy in ("httpx", "httpcore"):
 async def lifespan(app: FastAPI):
     """Startup: create tables, seed data, start scheduler."""
     logger.info("Starting JobNavigator backend...")
-    create_tables()
-    run_seeds()
+    # First, so the line is in the log even if the migration below fails: code
+    # pulled without pulling or rebuilding the image runs in the old image.
+    from backend.image_check import log_image_status
+    log_image_status()
+    # Before ANY migration: a release change backs the database up first, and a
+    # failed backup stops startup here (upgrade_backup.py; JN_SKIP_UPGRADE_BACKUP=1 skips).
+    from backend.upgrade_backup import prepare_upgrade, mark_booted
+    prepare_upgrade()
+    # Boot DDL waits for locks without the app's lock_timeout (S2-01): a restart during
+    # a long pg_dump must wait for it, not fail.
+    from backend.models.db import lock_timeout_exempt
+    with lock_timeout_exempt():
+        create_tables()
+        run_seeds()
 
     # Set initial API key if dashboard_api_key is empty
     db = SessionLocal()
     try:
-        setting = db.query(Setting).filter(Setting.key == "dashboard_api_key").first()
+        setting = install_row(db, "dashboard_api_key")
         if setting and not setting.value:
             setting.value = INITIAL_API_KEY
             db.commit()
     finally:
         db.close()
 
-    # Clean up stale job runs from previous process
-    cleanup_stale_runs()
+    # Clean up stale job runs from previous process (every account's: system code)
+    from backend.accounts.context import unscoped
+    with unscoped():
+        cleanup_stale_runs()
 
     # Start scheduler
-    from backend.scheduler import scheduler, configure_scheduler
-    configure_scheduler()
-    scheduler.start()
-    logger.info("Database initialized, seeded, scheduler started.")
+    from backend.scheduler import scheduler, configure_scheduler, scheduler_disabled
+    if scheduler_disabled():
+        # QA F9 / T2-01: JN_SCHEDULER_DISABLED=1 for throwaway/staging copies of real data.
+        logger.warning("JN_SCHEDULER_DISABLED is set: the scheduler is NOT started "
+                       "(no scrapes, email checks, digests or backups run).")
+    else:
+        configure_scheduler()
+        # QA F4 / R1-01: the scheduler's timers capture the context of whoever wakes it.
+        from backend.accounts.context import run_in_clean_context
+        run_in_clean_context(scheduler.start)
+        logger.info("Database initialized, seeded, scheduler started.")
 
     # Warm the OpenRouter live-pricing cache used for LLM cost logging (non-fatal).
     try:
@@ -67,9 +92,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"OpenRouter price warmup failed: {e}")
 
+    # Booted: the database is on this release now (install-level marker, see upgrade_backup.py).
+    try:
+        mark_booted()
+    except Exception as e:  # the next boot then backs up once more; not worth failing over
+        logger.warning(f"Could not record the release marker: {e}")
+
     yield
 
-    scheduler.shutdown()
+    if scheduler.running:
+        scheduler.shutdown()
     logger.info("Shutting down JobNavigator backend...")
 
 
@@ -87,7 +119,7 @@ OPENAPI_TAGS = [
     {"name": "system", "description": "Health check and system info"},
 ]
 
-APP_VERSION = "2.2.0"  # released version; shown in Settings and on /health
+from backend.version import APP_VERSION  # noqa: E402 — released version (major.minor); Settings and /health
 
 app = FastAPI(
     title="JobNavigator API",
@@ -135,61 +167,170 @@ def _pool_busy_response() -> JSONResponse:
 
 
 # ── API Key auth middleware ──────────────────────────────────────────────────
+# MT-10: install password (X-API-Key header or jn_session cookie), then the account
+# (signed X-Account-Token header, else the signed jn_account cookie, else the owner when
+# the install has one account, else 401 account_required; a bad token is 401
+# invalid_account_token). The rules, the cookie and the token format are documented in
+# backend/accounts/auth.py.
 import hmac as _hmac_mw
+from backend.accounts.context import owner_context, owner_unlocked, use_account, is_unscoped
+from backend.accounts import auth as acct_auth
 
 # Paths that NEVER require auth (exact or prefix match)
-_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/cv", "/api/telegram/webhook", "/api/auth/set-session", "/api/auth/verify", "/api/auth/logout")
+_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/cv", "/api/telegram/webhook", "/api/auth/set-session", "/api/auth/verify", "/api/auth/logout",
+                    "/api/gmail/callback")  # Google redirects the browser there (MT-19; signed state)
+# Need the install password but no account (the picker reads and calls these).
+_ACCOUNT_OPTIONAL = ("/api/auth/accounts", "/api/auth/switch", "/api/auth/verify-pin")
+
+
+def _account_required_response(detail: str, clear_cookie: bool = False) -> JSONResponse:
+    headers = {acct_auth.AUTH_HEADER: "account"} if detail == acct_auth.ACCOUNT_REQUIRED else None
+    resp = JSONResponse(status_code=401, content={"detail": detail}, headers=headers)
+    if clear_cookie:
+        # QA F3 / R2-03: a stale jn_account (removed account, changed PIN) is dropped.
+        acct_auth.clear_account_cookie(resp)
+    return resp
+
+
+def _secret_eq(given, expected) -> bool:
+    """Constant-time compare that never raises: `hmac.compare_digest(str, str)` raises
+    TypeError on non-ASCII text (a latin-1 header or cookie byte, QA F3 / R2-07), so both
+    sides are compared as UTF-8 bytes; anything that is not a string is not the secret."""
+    if not isinstance(given, str) or not isinstance(expected, str):
+        return False
+    return _hmac_mw.compare_digest(given.encode("utf-8", "surrogatepass"),
+                                   expected.encode("utf-8", "surrogatepass"))
+
 
 @app.middleware("http")
 async def api_key_auth(request: Request, call_next):
+    return await _api_key_auth(request, call_next)
+
+
+async def _as_owner(request: Request, call_next):
+    with owner_context():
+        return await call_next(request)
+
+
+async def _api_key_auth(request: Request, call_next):
     path = request.url.path
 
     # Let CORS preflight requests pass through so CORSMiddleware can respond
     if request.method == "OPTIONS":
-        return await call_next(request)
+        return await _as_owner(request, call_next)
 
-    # Public endpoints
+    # Public endpoints (they resolve their own rows: tracer tokens are looked up unscoped)
     if any(path == p or path.startswith(p + "/") or path == p.rstrip("/") for p in _PUBLIC_PREFIXES):
-        return await call_next(request)
+        return await _as_owner(request, call_next)
     # docs subpaths
     if path.startswith("/docs"):
-        return await call_next(request)
+        return await _as_owner(request, call_next)
     # Param-style tracer links (?cv=token on root) are public, same as /cv/{token}.
     if path == "/" and request.query_params.get("cv"):
-        return await call_next(request)
+        return await _as_owner(request, call_next)
 
     # Accept either X-API-Key header (API clients, extension) OR jn_session cookie (browser)
-    api_key = request.headers.get("X-API-Key", "") or request.cookies.get("jn_session", "")
+    header_key = request.headers.get("X-API-Key", "")
+    api_key = header_key or request.cookies.get("jn_session", "")
 
+    # QA F4 / R1-11: the key check, the account lookup and the last-active write are
+    # blocking DB calls; they run in the threadpool (which copies the context), so a
+    # slow DB or a pool wait stalls this request only, not the event loop.
+    early, res = await run_in_threadpool(
+        _authenticate_sync, path, api_key,
+        request.headers.get(acct_auth.TOKEN_HEADER, ""),
+        request.cookies.get(acct_auth.COOKIE_NAME, ""))
+    if early is not None:
+        return early
+
+    optional = path in _ACCOUNT_OPTIONAL
+    if res is not None and res.error and not (optional and res.error == acct_auth.ACCOUNT_REQUIRED):
+        return _account_required_response(res.error, clear_cookie=res.clear_cookie)
+    if res is None or res.account is None:
+        request.state.account_id = None
+        request.state.owner_unlocked_until = 0
+        request.state.owner_unlock_id = None
+        return await _as_owner(request, call_next)
+    request.state.account_id = res.account["id"]
+    request.state.owner_unlocked_until = res.unlocked_until
+    request.state.owner_unlock_id = res.unlock_id
+    acc_id = str(res.account["id"])
+    changed = _account_changed_response(request, path, res.account, acc_id)
+    if changed is not None:
+        return changed
+    unlocked = bool(res.unlocked_until) and res.unlocked_until > acct_auth._now()
+    with use_account(res.account["id"]), owner_unlocked(unlocked):
+        resp = await call_next(request)
+    resp.headers[acct_auth.ACCOUNT_HEADER] = acc_id
+    return resp
+
+
+# QA F7 / R6-01: writes from a tab that still shows another account. The switch itself
+# (and the PIN check before it) is how a tab changes account, so it is never refused.
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_EXPECT_EXEMPT = ("/api/auth/switch", "/api/auth/verify-pin", "/api/auth/logout")
+
+
+def _account_changed_response(request: Request, path: str, account: dict, acc_id: str):
+    """409 `account_changed` when a write names an expected account that is not the one
+    this request resolved to; None otherwise (no header, a read, or the switch)."""
+    if request.method not in _WRITE_METHODS or path in _EXPECT_EXEMPT:
+        return None
+    expected = request.headers.get(acct_auth.EXPECTED_ACCOUNT_HEADER, "").strip().lower()
+    if not expected or expected == acc_id.lower():
+        return None
+    logger.info("refused a %s %s from a tab loaded for another account", request.method, path)
+    return JSONResponse(
+        status_code=409,
+        content={"detail": acct_auth.ACCOUNT_CHANGED,
+                 "account": {"id": acc_id, "name": account.get("name") or ""}},
+        headers={acct_auth.ACCOUNT_HEADER: acc_id})
+
+
+def _authenticate_sync(path: str, api_key: str, token: str, cookie: str):
+    """(early response or None, account resolution or None). Runs in the threadpool."""
     # A middleware runs outside FastAPI's exception handlers, so a pool timeout
     # here would surface as a bare connection error, not a status code. The
     # connection is acquired lazily by the query, not by SessionLocal().
     db = SessionLocal()
     try:
         try:
-            setting = db.query(Setting).filter(Setting.key == "dashboard_api_key").first()
+            expected = get_install_setting(db, "dashboard_api_key", INITIAL_API_KEY)
         except _PoolTimeout:
-            logger.warning("DB pool exhausted while authenticating %s", request.url.path)
-            return _pool_busy_response()
-        expected = setting.value if setting else INITIAL_API_KEY
+            logger.warning("DB pool exhausted while authenticating %s", path)
+            return _pool_busy_response(), None
         # First-run: no key configured → allow everything
         if not expected:
             # WARNING-level so operators see this in logs when they shouldn't (e.g.,
             # dashboard_api_key setting cleared by a botched DB restore).
             logger.warning(
                 "api key BYPASS (first-run mode): path=%s — dashboard_api_key setting is empty",
-                request.url.path,
+                path,
             )
-            return await call_next(request)
-        # Key configured → require match (timing-safe compare)
-        if not api_key:
-            return JSONResponse(status_code=401, content={"detail": "API key required"})
-        if not _hmac_mw.compare_digest(api_key, expected):
-            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+        else:
+            # Key configured → require match (timing-safe compare)
+            if not api_key:
+                return JSONResponse(status_code=401, content={"detail": "API key required"}), None
+            if not _secret_eq(api_key, expected):
+                return JSONResponse(status_code=401, content={"detail": "Invalid API key"}), None
+
+        # Tests that drive the app on their own throwaway engine run unscoped (system
+        # context); production requests never arrive unscoped.
+        if is_unscoped():
+            return None, None
+        try:
+            # QA F1 (R2-01): the signed X-Account-Token, else the jn_account cookie,
+            # else the one-account owner. A bare X-Account header is never read.
+            res = acct_auth.resolve_request(db, token, cookie)
+        except _PoolTimeout:
+            logger.warning("DB pool exhausted while resolving the account for %s", path)
+            return _pool_busy_response(), None
+        if res is not None and res.account is not None:
+            # MT-11: at most one UPDATE per account per minute (in-memory throttle).
+            acct_auth.touch_last_active(db, res.account["id"])
+        return None, res
     finally:
         db.close()
-
-    return await call_next(request)
 
 
 # ── Auth endpoints (cookie session) ──────────────────────────────────────────
@@ -262,11 +403,10 @@ async def verify_api_key(body: dict, request: Request):
         api_key = ""
     db = SessionLocal()
     try:
-        setting = db.query(Setting).filter(Setting.key == "dashboard_api_key").first()
-        expected = setting.value if setting else INITIAL_API_KEY
+        expected = get_install_setting(db, "dashboard_api_key", INITIAL_API_KEY)
         if not expected:
             return {"ok": True, "first_run": True}
-        if not api_key or not _hmac.compare_digest(api_key, expected):
+        if not api_key or not _secret_eq(api_key, expected):
             _auth_record_failure(request)
             raise HTTPException(status_code=401, detail="Invalid API key")
         _auth_clear_failures(request)
@@ -287,9 +427,8 @@ async def set_session(body: dict, response: _Response, request: Request):
         api_key = ""
     db = SessionLocal()
     try:
-        setting = db.query(Setting).filter(Setting.key == "dashboard_api_key").first()
-        expected = setting.value if setting else INITIAL_API_KEY
-        if expected and (not api_key or not _hmac.compare_digest(api_key, expected)):
+        expected = get_install_setting(db, "dashboard_api_key", INITIAL_API_KEY)
+        if expected and (not api_key or not _secret_eq(api_key, expected)):
             _auth_record_failure(request)
             raise HTTPException(status_code=401, detail="Invalid API key")
         _auth_clear_failures(request)
@@ -309,9 +448,165 @@ async def set_session(body: dict, response: _Response, request: Request):
 
 
 @app.post("/api/auth/logout", tags=["auth"], summary="Clear session cookie")
-async def logout(response: _Response):
+async def logout(request: Request, response: _Response):
+    """Clear the install session cookie and this browser's account cookie (ending its owner unlock)."""
+    _revoke_cookie_unlock(request)
     response.delete_cookie(key="jn_session", samesite="strict", httponly=True)
+    acct_auth.clear_account_cookie(response)
     return {"ok": True}
+
+
+# ── Accounts: picker, switch, owner unlock (MT-10) ───────────────────────────
+from datetime import datetime as _dt_auth, timezone as _tz_auth
+
+
+def _switch_denied(e: "acct_auth.SwitchDenied") -> JSONResponse:
+    content = {"detail": e.detail}
+    if e.tries_left is not None:
+        content["tries_left"] = e.tries_left
+    headers = {"Retry-After": str(e.retry_after)} if e.retry_after else None
+    return JSONResponse(status_code=e.status, content=content, headers=headers)
+
+
+def _epoch_iso(ts) -> Optional[str]:
+    return _dt_auth.fromtimestamp(ts, _tz_auth.utc).isoformat() if ts else None
+
+
+def _revoke_cookie_unlock(request: Request) -> None:
+    """QA F3 / R2-06: end the owner unlock carried by this browser's jn_account cookie
+    (Lock, switching away, logout), so a copy of the old value no longer unlocks."""
+    value = request.cookies.get(acct_auth.COOKIE_NAME)
+    if not value:
+        return
+    db = SessionLocal()
+    try:
+        acct_auth.revoke_cookie_unlock(db, value)
+    finally:
+        db.close()
+
+
+@app.get("/api/auth/accounts", tags=["auth"], summary="Accounts for the picker")
+def auth_accounts():
+    """Every account as {id, name, color, role, has_pin}, owner first; nothing else. Needs the install password but no account."""
+    db = SessionLocal()
+    try:
+        return [acct_auth.public_account(a) for a in acct_auth.load_accounts(db)]
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/switch", tags=["auth"], summary="Switch this browser to an account")
+def auth_switch(body: dict, request: Request, response: _Response):
+    """Body {account_id, pin?}. Sets the signed httpOnly `jn_account` cookie for this browser only (ending any owner unlock of the previous one). The owner's PIN is required once it has one; a member's PIN is optional, and the owner's PIN also opens a PIN'd member. Errors: 404 unknown account, 401 `pin_required` / `wrong_pin` (+ `tries_left`), 429 `pin_cooldown` (+ Retry-After) after 5 wrong tries for that account from this client (30 s, doubling for repeated cooldowns up to 15 min), or while the account's global ceiling is cooling."""
+    body = body or {}
+    pin = body.get("pin")
+    if pin is not None and not isinstance(pin, str):
+        pin = str(pin)
+    db = SessionLocal()
+    try:
+        accounts = acct_auth.load_accounts(db)
+        target = acct_auth._find(accounts, body.get("account_id"))
+        if target is None:
+            raise HTTPException(status_code=404, detail="Account not found")
+        try:
+            how = acct_auth.check_switch(accounts, target, pin, client=_auth_client_ip(request))
+        except acct_auth.SwitchDenied as e:
+            logger.info("account switch denied: account=%s reason=%s", target["id"], e.detail)
+            return _switch_denied(e)
+        acct_auth.revoke_cookie_unlock(db, request.cookies.get(acct_auth.COOKIE_NAME))
+        acct_auth.touch_last_active(db, target["id"], force=True)
+        acct_auth.set_account_cookie(response, db, target)
+        return {"ok": True, "via": how, "account": acct_auth.public_account(target)}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/verify-pin", tags=["auth"], summary="Check an account PIN and issue its API token")
+def auth_verify_pin(body: dict, request: Request):
+    """Body {account_id, pin?}. Same PIN rules, cooldown counters and owner-covers-member as /api/auth/switch (an account without a PIN needs none), but sets no cookie and changes nothing. Returns {ok, via, account, token}: `token` is the account's signed API token, sent back as the `X-Account-Token` header (the extension stores it; valid 1 year, dies with a PIN change or the account). Errors: 404 unknown account, 401 `pin_required` / `wrong_pin` (+ `tries_left`), 429 `pin_cooldown`. Needs the install key; no account needed."""
+    body = body or {}
+    pin = body.get("pin")
+    if pin is not None and not isinstance(pin, str):
+        pin = str(pin)
+    db = SessionLocal()
+    try:
+        accounts = acct_auth.load_accounts(db)
+        target = acct_auth._find(accounts, body.get("account_id"))
+        if target is None:
+            raise HTTPException(status_code=404, detail="Account not found")
+        try:
+            how = acct_auth.check_switch(accounts, target, pin, client=_auth_client_ip(request))
+        except acct_auth.SwitchDenied as e:
+            logger.info("pin check denied: account=%s reason=%s", target["id"], e.detail)
+            return _switch_denied(e)
+        return {"ok": True, "via": how, "account": acct_auth.public_account(target),
+                "token": acct_auth.make_api_token(db, target)}
+    finally:
+        db.close()
+
+
+@app.get("/api/auth/me", tags=["auth"], summary="The account this browser acts as")
+def auth_me(request: Request):
+    """{account: {id, name, color, role, has_pin}, accounts_count, owner_has_pin, owner_unlocked_until (ISO or null)}. `owner_has_pin` (public: the picker lists has_pin too) tells a member's lock card whether the owner unlock needs a PIN or is a plain Unlock (QA F2 / D3). 401 `account_required` when the install has several accounts and this browser picked none."""
+    from backend.accounts.context import current_account
+    db = SessionLocal()
+    try:
+        accounts = acct_auth.load_accounts(db)
+        acc = acct_auth._find(accounts, current_account.get()) or acct_auth._owner_of(accounts)
+        if acc is None:
+            raise HTTPException(status_code=404, detail="No account")
+        until = getattr(request.state, "owner_unlocked_until", 0) or 0
+        owner = acct_auth._owner_of(accounts)
+        return {"account": acct_auth.public_account(acc), "accounts_count": len(accounts),
+                "owner_has_pin": bool(owner and owner["pin_hash"]),
+                "owner_unlocked_until": _epoch_iso(until) if until > acct_auth._now() else None}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/verify-owner-pin", tags=["auth"], summary="Unlock owner-only settings for 15 minutes")
+def auth_verify_owner_pin(body: dict, request: Request, response: _Response):
+    """Body {pin}. On the owner's PIN (or when the owner has none yet) re-issues this browser's `jn_account` cookie for the current account with `u` = now + 15 min, exposed to routes as `request.state.owner_unlocked_until`. Returns {ok, unlocked_until}. Same 401/429 contract and owner cooldown as /api/auth/switch."""
+    from backend.accounts.context import current_account
+    pin = (body or {}).get("pin")
+    if pin is not None and not isinstance(pin, str):
+        pin = str(pin)
+    db = SessionLocal()
+    try:
+        accounts = acct_auth.load_accounts(db)
+        try:
+            acct_auth.check_owner_pin(accounts, pin, client=_auth_client_ip(request))
+        except acct_auth.SwitchDenied as e:
+            return _switch_denied(e)
+        acc = acct_auth._find(accounts, current_account.get()) or acct_auth._owner_of(accounts)
+        until = int(acct_auth._now() + acct_auth.OWNER_UNLOCK_SECONDS)
+        # QA F3 / R2-06: the unlock lives in the server allowlist; a previous one of this
+        # browser is replaced.
+        acct_auth.revoke_unlock(getattr(request.state, "owner_unlock_id", None))
+        acct_auth.set_account_cookie(response, db, acc, unlocked_until=until,
+                                     unlock_id=acct_auth.grant_unlock(until))
+        return {"ok": True, "unlocked_until": _epoch_iso(until)}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/owner-lock", tags=["auth"], summary="End the owner unlock in this browser")
+def auth_owner_lock(request: Request, response: _Response):
+    """MT-14 "Lock": re-issues this browser's `jn_account` cookie for the same account with no owner unlock, and drops the unlock from the server allowlist so a copied cookie value stops unlocking too (QA F3 / R2-06). Returns {ok, locked}. A browser with no account cookie (one account, or the API path) has nothing to lock: {ok, locked: false}."""
+    from backend.accounts.context import current_account
+    if not request.cookies.get(acct_auth.COOKIE_NAME):
+        return {"ok": True, "locked": False}
+    acct_auth.revoke_unlock(getattr(request.state, "owner_unlock_id", None))
+    db = SessionLocal()
+    try:
+        accounts = acct_auth.load_accounts(db)
+        acc = acct_auth._find(accounts, current_account.get())
+        if acc is None:
+            return {"ok": True, "locked": False}
+        acct_auth.set_account_cookie(response, db, acc, unlocked_until=0)
+        return {"ok": True, "locked": True}
+    finally:
+        db.close()
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -326,6 +621,8 @@ app.include_router(cover_letters_router, prefix="/api")
 app.include_router(linkedin_router, prefix="/api")
 app.include_router(autofill_router, prefix="/api")
 app.include_router(llm_router, prefix="/api")
+app.include_router(accounts_router, prefix="/api")
+app.include_router(gmail_router, prefix="/api")
 
 
 # A malformed UUID in a path (/api/jobs/abc) makes Postgres raise DataError deep in
@@ -355,8 +652,19 @@ def health_check():
     Deliberately touches no database: it is the one endpoint that must answer
     while the pool is drained, and it is in _PUBLIC_PREFIXES so the auth
     middleware's settings read is skipped too.
+
+    `image_outdated` is true when the image's packages (or build stamp) do not
+    match the mounted code; `image_message` then says what differs and how to fix
+    it. Computed once per process (image_check.py).
     """
-    return {"status": "ok", "service": "JobNavigator", "version": APP_VERSION}
+    from backend.image_check import image_status
+    status = image_status()
+    return {
+        "status": "ok", "service": "JobNavigator", "version": APP_VERSION,
+        "image_outdated": status["image_outdated"],
+        "image_message": status["image_message"],
+        "image_details": status["image_details"],
+    }
 
 
 async def _tracer_click_and_redirect(token: str, request: Request):
@@ -365,11 +673,17 @@ async def _tracer_click_and_redirect(token: str, request: Request):
     import hashlib
     from backend.models.db import TracerLink, TracerClickEvent
 
+    from backend.accounts.context import use_account
+
     db = SessionLocal()
     try:
-        link = db.query(TracerLink).filter(TracerLink.token == token, TracerLink.is_active == True).first()
+        # Public route, no session: the token is unique install-wide, so resolve it
+        # across every account (MT-6) and record the click under the link's account.
+        link = (db.query(TracerLink).execution_options(jn_unscoped=True)
+                .filter(TracerLink.token == token, TracerLink.is_active == True).first())
         if not link:
             raise HTTPException(404, "Link not found")
+        link_account = link.account_id
 
         ua = (request.headers.get("user-agent") or "").lower()
         device_type = "mobile" if any(m in ua for m in ("mobile", "android", "iphone", "ipad")) else \
@@ -415,17 +729,18 @@ async def _tracer_click_and_redirect(token: str, request: Request):
         destination = link.destination_url
 
         try:
-            event = TracerClickEvent(
-                tracer_link_id=link.id,
-                device_type=device_type,
-                ua_family=ua_family,
-                os_family=os_family,
-                referrer_host=referrer_host,
-                ip_hash=ip_hash,
-                is_likely_bot=is_bot,
-            )
-            db.add(event)
-            db.commit()
+            with use_account(link_account):
+                event = TracerClickEvent(
+                    tracer_link_id=link.id,
+                    device_type=device_type,
+                    ua_family=ua_family,
+                    os_family=os_family,
+                    referrer_host=referrer_host,
+                    ip_hash=ip_hash,
+                    is_likely_bot=is_bot,
+                )
+                db.add(event)
+                db.commit()
         except Exception as e:
             logger.exception("Tracer click log failed for token=%s: %s", token, e)
             # Rollback so the session isn't left in an error state.
@@ -467,7 +782,10 @@ async def trigger_all_scrapes():
         from backend.scheduler import _scrape_summary
         started = _dt.now(_tz.utc)
         from backend.scraper.orchestrator import run_all as run_all_searches
-        outcome = await run_all_searches(force=True) or {}
+        from backend.accounts.context import current_account
+        # A manual run-all covers the caller's searches and companies only (MT-8); the
+        # scheduled one covers every account. None = owner fallback (caller's context).
+        outcome = await run_all_searches(force=True, account_ids=[current_account.get()]) or {}
         from backend.analyzer.cv_scorer import analyze_unscored_jobs
         await analyze_unscored_jobs()
         summary = _scrape_summary(started)
@@ -485,11 +803,10 @@ async def trigger_all_scrapes():
         run_id = launch_background("scrape_all", _do, trigger="manual")
         return {"run_id": run_id, "status": "running"}
     except JobAlreadyRunningError as e:
-        logger.info("Duplicate trigger rejected for job_type=%s", e.job_type)
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"{e.job_type} is already running"},
-        )
+        logger.info("Duplicate trigger rejected for job_type=%s: %s", e.job_type, e)
+        # QA F6 / R4-01: refused while the scheduled scrape is live (`scheduled_scrape_running`).
+        from backend.job_monitor import scheduled_scrape_conflict_response
+        return scheduled_scrape_conflict_response(e)
 
 
 @app.post("/api/email/check-now", tags=["triggers"], summary="Check Gmail now", status_code=202)
@@ -514,9 +831,10 @@ async def trigger_email_check():
         )
 
 
-@app.post("/api/h1b/refresh", tags=["triggers"], summary="Refresh H-1B data", status_code=202)
+@app.post("/api/h1b/refresh", tags=["triggers"], summary="Refresh H-1B data", status_code=202,
+          dependencies=[Depends(acct_auth.require_owner)])
 async def trigger_h1b_refresh():
-    """Scrape MyVisaJobs.com for all active companies. Returns immediately with a run_id."""
+    """Scrape MyVisaJobs.com for all active companies. Returns immediately with a run_id. Install-level: 403 for a member."""
     async def _do():
         from datetime import datetime as _dt, timezone as _tz
         from backend.models.db import VisaCache
@@ -564,6 +882,8 @@ async def trigger_analysis(job_id: str, depth: str = "full", body: dict = None):
         job_row = db.query(_Job).filter(_Job.id == target_job_uuid).first()
         if not job_row:
             raise HTTPException(status_code=404, detail="Job not found")
+        # cv_ids is a filter, not a reference: _cv_texts_for_ids loads them through the
+        # scoped session, so an id that is unknown or another account's scores nothing.
         # Names the run will write into cv_scores, resolved while the session is open.
         try:
             from backend.analyzer.cv_scorer import resolve_score_resume_names
@@ -721,42 +1041,15 @@ async def trigger_backfill_descriptions():
         )
 
 
-@app.post("/api/db/backup", tags=["triggers"], summary="Run database backup", status_code=202)
+@app.post("/api/db/backup", tags=["triggers"], summary="Run database backup", status_code=202,
+          dependencies=[Depends(acct_auth.require_owner)])
 async def trigger_db_backup():
-    """Run a database backup immediately. Returns immediately with a run_id."""
+    """Run a database backup immediately. Returns immediately with a run_id. Install-level: 403 for a member."""
     async def _do():
-        import subprocess, glob, os
-        from datetime import datetime
-        from backend.config import DATABASE_URL
-        from urllib.parse import urlparse
-
-        backup_dir = "/app/backups"
-        os.makedirs(backup_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"{backup_dir}/jobnavigator_{timestamp}.sql"
-
-        parsed = urlparse(DATABASE_URL)
-        env = os.environ.copy()
-        env["PGPASSWORD"] = parsed.password or ""
-
-        result = subprocess.run(
-            ["pg_dump", "-h", parsed.hostname, "-p", str(parsed.port or 5432),
-             "-U", parsed.username, "-d", parsed.path.lstrip("/"),
-             "-f", backup_file],
-            env=env, capture_output=True, text=True, timeout=300
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"pg_dump failed: {result.stderr}")
-
-        # Keep only last 5 backups
-        backups = sorted(glob.glob(f"{backup_dir}/jobnavigator_*.sql"))
-        pruned = 0
-        while len(backups) > 5:
-            os.remove(backups.pop(0))
-            pruned += 1
-
-        size_mb = os.path.getsize(backup_file) / (1024 * 1024)
-        return f"Snapshot {size_mb:.0f} MB -> {os.path.basename(backup_file)}" + (f" - {pruned} old pruned" if pruned else "")
+        from backend.db_backup import run_pg_dump
+        # Keeps only the last 5 rotation backups
+        b = run_pg_dump()
+        return f"Snapshot {b['size_mb']:.0f} MB -> {b['file']}" + (f" - {b['pruned']} old pruned" if b['pruned'] else "")
 
     try:
         run_id = launch_background("db_backup", _do, trigger="manual")
@@ -777,7 +1070,10 @@ async def trigger_digest():
         from backend.scheduler import _activity_summary
         started = _dt.now(_tz.utc)
         from backend.notifier.telegram import send_digest
-        await send_digest()
+        sent = await send_digest()
+        if sent is False:      # QA F9 / T3-02
+            from backend.scheduler import DIGEST_SKIPPED_SUMMARY
+            return DIGEST_SKIPPED_SUMMARY
         return _activity_summary(started, "telegram", "alert") or "Digest sent"
 
     try:
@@ -816,15 +1112,19 @@ async def trigger_company_scrape(company_id: str, auto_score: bool = None):
             c = db2.query(C).filter(C.id == company_id).first()
             if c:
                 result = await scrape_single_career_page(c)
+                if result and result.get("deleted"):   # QA F6 / T5-04
+                    return f"{company_name} - deleted during the run, nothing saved"
                 # Same audit row the batch path writes, so a manual run also shows
                 # up in /api/scrape-log, is_warning and /health/entities.
-                record_company_scrape_log(c.id, c.name, result or {}, db=db2)
+                # A manual run feeds only this account (MT-8): its own run_id, no fan-out.
+                import uuid as _uuid
                 should_score = auto_score if auto_score is not None else (c.auto_scoring_depth in ("light", "full"))
+                record_company_scrape_log(c.id, c.name, result or {}, db=db2, run_id=_uuid.uuid4())
                 if should_score and result and result.get("new_jobs", 0) > 0:
                     from backend.analyzer.cv_scorer import analyze_unscored_jobs
                     await analyze_unscored_jobs(status="new")
                 if result:
-                    return f"{c.name} - {result.get('jobs_found', 0)} seen, +{result.get('new_jobs', 0)} new"
+                    return f"{company_name} - {result.get('jobs_found', 0)} seen, +{result.get('new_jobs', 0)} new"
         finally:
             db2.close()
 
@@ -836,21 +1136,18 @@ async def trigger_company_scrape(company_id: str, auto_score: bool = None):
         )
         return {"run_id": run_id, "status": "running", "company": company_name}
     except JobAlreadyRunningError as e:
-        logger.info("Duplicate trigger rejected for job_type=%s", e.job_type)
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"{e.job_type} is already running"},
-        )
+        logger.info("Duplicate trigger rejected for job_type=%s: %s", e.job_type, e)
+        from backend.job_monitor import scheduled_scrape_conflict_response
+        return scheduled_scrape_conflict_response(e)
 
 
 @app.post("/api/telegram/webhook", tags=["telegram"], summary="Telegram webhook")
 async def telegram_webhook(update: dict, request: Request):
-    """Handle a Telegram webhook update (callback queries from inline buttons); validates X-Telegram-Bot-Api-Secret-Token against the telegram_webhook_secret setting."""
-    import hmac as _hmac
+    """Handle a Telegram webhook update of the household bot (callback queries from inline buttons, link codes); validates X-Telegram-Bot-Api-Secret-Token against the telegram_webhook_secret setting.
+    The chat names the account (MT-17): buttons act only on that account's jobs, an unlinked chat acts on nothing."""
     db = SessionLocal()
     try:
-        row = db.query(Setting).filter(Setting.key == "telegram_webhook_secret").first()
-        expected = (row.value or "").strip() if row else ""
+        expected = (get_install_setting(db, "telegram_webhook_secret") or "").strip()
     finally:
         db.close()
     if not expected:
@@ -859,40 +1156,137 @@ async def telegram_webhook(update: dict, request: Request):
         logger.warning("telegram_webhook rejected: webhook secret not configured")
         raise HTTPException(status_code=503, detail="Telegram webhook secret not configured")
     received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not received or not _hmac.compare_digest(received, expected):
+    if not received or not _secret_eq(received, expected):   # QA F8 / R5-07: never a 500
         logger.warning("telegram_webhook rejected: invalid secret token")
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    from backend.notifier.telegram import handle_callback
+    import backend.notifier.telegram as tg
+    await _telegram_update(update, tg.household_chat_account, TELEGRAM_BOT_TOKEN)
+    return {"ok": True}
 
+
+async def _telegram_update(update: dict, chat_account, answer_token: str, bot_account=None):
+    """One webhook update (MT-17). Inline buttons act only for the account the chat is
+    linked to (`chat_account(chat_id)`, NOT_LINKED = none); text messages carry link codes.
+    `bot_account` = the member whose own bot posted (None = the household bot)."""
+    import backend.notifier.telegram as tg
+    if not isinstance(update, dict):
+        return
     callback_query = update.get("callback_query")
-    if callback_query:
+    if callback_query and isinstance(callback_query, dict):
         data = callback_query.get("data", "")
-        message_id = callback_query.get("message", {}).get("message_id")
-        result = await handle_callback(data, message_id)
+        message = callback_query.get("message")
+        message_id = message.get("message_id") if isinstance(message, dict) else None
+        with tg.acting_for_chat(chat_account(tg.update_chat_id(callback_query))):
+            result = await tg.handle_callback(data, message_id)
 
         # Answer callback to remove loading state
         callback_id = callback_query.get("id")
-        if callback_id and TELEGRAM_BOT_TOKEN:
+        if callback_id and answer_token:
             import httpx
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+                    f"https://api.telegram.org/bot{answer_token}/answerCallbackQuery",
                     json={"callback_query_id": callback_id, "text": result},
                 )
+    message = update.get("message")
+    if isinstance(message, dict):
+        own_token = answer_token if bot_account is not None else None
+        await tg.handle_message(message, bot_account=bot_account, token=own_token)
 
+
+@app.post("/api/telegram/webhook/{bot_account_id}", tags=["telegram"], summary="Telegram webhook (a member's own bot)")
+async def telegram_member_webhook(bot_account_id: str, update: dict, request: Request):
+    """Webhook of a member's own bot (MT-17): validates X-Telegram-Bot-Api-Secret-Token
+    against that member's own webhook secret; buttons act only when pressed in the
+    member's own chat, on the member's jobs; text messages carry link codes."""
+    import uuid as _uuid
+    import backend.notifier.telegram as tg
+    try:
+        acc = _uuid.UUID(bot_account_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown bot")
+    db = SessionLocal()
+    try:
+        own = tg.member_own_bot(db, acc)
+    finally:
+        db.close()
+    if own is None:
+        raise HTTPException(status_code=404, detail="Unknown bot")
+    token, expected = own
+    if not expected:
+        raise HTTPException(status_code=503, detail="Telegram webhook secret not configured")
+    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not received or not _secret_eq(received, expected):   # QA F8 / R5-07: never a 500
+        logger.warning("telegram_member_webhook rejected: invalid secret token")
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    await _telegram_update(update, lambda chat: tg.own_bot_chat_account(acc, chat), token, bot_account=acc)
     return {"ok": True}
+
+
+@app.post("/api/telegram/link-code", tags=["telegram"], summary="Code to link a Telegram chat")
+def telegram_link_code():
+    """A 6-digit code (10 minutes) for the caller's account. Sending `/start <code>` (or
+    just the code) to the bot links that chat as the account's chat id (MT-17)."""
+    from backend.accounts.context import current_account
+    from backend.models.db import Account, get_owner_id
+    import backend.notifier.telegram as tg
+    db = SessionLocal()
+    try:
+        acc_id = current_account.get() or get_owner_id(db)
+        acc = db.query(Account).filter(Account.id == acc_id).first() if acc_id else None
+        if acc is None:
+            raise HTTPException(status_code=409, detail="No account to link")
+        own = tg.member_own_bot(db, acc.id) is not None
+        name = acc.name
+    finally:
+        db.close()
+    out = tg.create_link_code(acc_id)
+    out.update({"account": name, "bot": "own" if own else "household"})
+    return out
+
+
+def _telegram_owner_check(db):
+    from backend.accounts.settings import acts_as_owner
+    if not acts_as_owner(db):
+        raise HTTPException(status_code=403, detail="owner_only")
 
 
 @app.post("/api/telegram/register-webhook", tags=["telegram"], summary="Register Telegram webhook")
 async def telegram_register_webhook(body: dict):
-    """Register {public_url}/api/telegram/webhook with Telegram, signed with telegram_webhook_secret; public_url must be HTTPS."""
-    from backend.notifier.telegram import register_webhook
+    """Register {public_url}/api/telegram/webhook with Telegram, signed with telegram_webhook_secret; public_url must be HTTPS.
+    A member on its own bot registers that bot at {public_url}/api/telegram/webhook/<account id> with a fresh
+    secret of its own; the household bot is the owner's (403 for a member)."""
+    import secrets as _secrets
+    import backend.notifier.telegram as tg
+    from backend.accounts.settings import member_account
     public_url = (body.get("public_url") or "").strip().rstrip("/")
     if not public_url.startswith("https://"):
         raise HTTPException(status_code=400, detail="public_url must start with https://")
+    db = SessionLocal()
+    try:
+        member = member_account(db)
+        own = tg.member_own_bot(db, member) if member is not None else None
+        if own is None:
+            _telegram_owner_check(db)
+    finally:
+        db.close()
+    if own is not None:
+        # QA F8 / R5-05: the fresh secret is stored only once Telegram accepted the webhook
+        # that carries it; on any failure the old secret (and the old webhook) keep working.
+        secret = _secrets.token_urlsafe(32)
+        result = await tg.register_webhook(f"{public_url}/api/telegram/webhook/{member}", token=own[0], secret=secret)
+        if isinstance(result, dict) and result.get("ok") is True:
+            db = SessionLocal()
+            try:
+                put_setting(db, tg.OWN_WEBHOOK_SECRET_KEY, secret, account_id=member,
+                            description="Secret of this account's own Telegram bot webhook.")
+                db.commit()
+            finally:
+                db.close()
+        return result
     full_url = f"{public_url}/api/telegram/webhook"
-    result = await register_webhook(full_url)
+    result = await tg.register_webhook(full_url)
     return result
 
 
@@ -900,9 +1294,15 @@ async def telegram_register_webhook(body: dict):
 async def telegram_rotate_webhook_secret():
     """Regenerate `telegram_webhook_secret` and return the new value. After
     rotating, call POST /api/telegram/register-webhook to re-register with
-    Telegram so the next callback carries the new header value.
+    Telegram so the next callback carries the new header value. The household bot is the
+    owner's: a member gets 403 (its own bot gets a fresh secret on every registration).
     """
     from backend.notifier.telegram import rotate_webhook_secret
+    db = SessionLocal()
+    try:
+        _telegram_owner_check(db)
+    finally:
+        db.close()
     new_value = rotate_webhook_secret()
     return {"ok": True, "webhook_secret": new_value}
 
@@ -923,6 +1323,9 @@ async def telegram_test():
             status_code=409,
             content={"detail": f"{e.job_type} is already running"},
         )
+
+
+_OWNER_ONLY_SCHEDULES = frozenset({"h1b_refresh", "db_backup"})   # their triggers: require_owner
 
 
 @app.get("/api/scheduler/jobs", tags=["scheduler"], summary="List scheduled jobs")
@@ -981,6 +1384,9 @@ def get_scheduler_jobs():
             "pending": job.pending,
             "trigger_url": trigger_url,
             "running": running_info,
+            # QA F7 / T7-02: the trigger is `require_owner` (403 for a member that has
+            # not unlocked the owner sections); the Stats table hides Run now then
+            "owner_only": job.id in _OWNER_ONLY_SCHEDULES,
         })
 
     # Per-search and per-company custom scrape intervals
@@ -1040,7 +1446,8 @@ def get_scheduler_jobs():
 # ── Monitor endpoints ────────────────────────────────────────────────────────
 @app.get("/api/monitor/active", tags=["monitor"], summary="Currently running jobs")
 def get_active_jobs():
-    """Return all currently running jobs with elapsed time in seconds."""
+    """Return the current account's running jobs with elapsed time in seconds (MT-6;
+    get_all_running(all_accounts=True) is the hook for an owner "every account" view)."""
     return get_all_running()
 
 
@@ -1054,7 +1461,7 @@ def get_in_flight(job_ids: str = None, detail: bool = False):
         wanted = {s.strip() for s in job_ids.split(",") if s.strip()}
 
     result: dict[str, list] = {}
-    for r in mon._running.values():
+    for r in mon.visible_running():   # the current account's runs only (MT-6)
         if r.target_job_id is None:
             continue
         key = str(r.target_job_id)
@@ -1137,24 +1544,107 @@ def get_run_history(limit: Annotated[int, Query(ge=0, le=1000)] = 30, offset: in
             q = q.filter(JobRun.job_type == job_type)
         if status:
             q = q.filter(JobRun.status == status)
-        runs = q.order_by(JobRun.started_at.desc()).offset(max(0, offset)).limit(limit).all()
-        return [
-            {
-                "id": str(r.id),
-                "job_type": r.job_type,
-                "trigger": r.trigger,
-                "status": r.status,
-                "started_at": r.started_at.isoformat() if r.started_at else None,
-                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-                "duration_seconds": r.duration_seconds,
-                "result_summary": r.result_summary,
-                "error": sanitize_run_error(r.error),
-                "meta": r.meta,
-            }
-            for r in runs
-        ]
+        q = q.order_by(JobRun.started_at.desc())
+        member = _member_viewer(db)
+        if member is None or (job_type and job_type != "scrape_all"):
+            runs = q.offset(max(0, offset)).limit(limit).all()
+            return [_run_dict(r) for r in runs]
+        # QA V-03: a member also sees the install-level scheduled scrape_all runs (the
+        # owner's rows), which ingest into every account — merged by start time.
+        upto = max(0, offset) + limit
+        own = q.limit(upto).all()
+        shared = _install_scrape_runs(db, member, status=status, limit=upto)
+        runs = sorted(own + shared, key=lambda r: _utc_ts(r.started_at), reverse=True)
+        runs = runs[max(0, offset):upto]
+        shared_ids = {r.id for r in shared}
+        views = _member_views(db, [r for r in runs if r.id in shared_ids])
+        return [views.get(r.id) or _run_dict(r) for r in runs]
     finally:
         db.close()
+
+
+def _run_dict(r) -> dict:
+    return {
+        "id": str(r.id),
+        "job_type": r.job_type,
+        "trigger": r.trigger,
+        "status": r.status,
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        "duration_seconds": r.duration_seconds,
+        "result_summary": r.result_summary,
+        "error": sanitize_run_error(r.error),
+        "meta": r.meta,
+    }
+
+
+def _utc_ts(ts):
+    from datetime import datetime as _d, timezone as _tz
+    if ts is None:
+        return _d.min.replace(tzinfo=_tz.utc)
+    return ts.replace(tzinfo=_tz.utc) if ts.tzinfo is None else ts
+
+
+def _member_viewer(db):
+    """The caller's account when it is a member (None for the owner / no accounts)."""
+    from backend.accounts.settings import member_account
+    try:
+        return member_account(db)
+    except Exception:
+        return None
+
+
+# Message a member sees instead of a failed scheduled run's error, which may name
+# other accounts (the owner sees the full text).
+INSTALL_RUN_FAILED = "The scheduled scrape failed — details are in the owner's Run history"
+
+
+def _install_scrape_runs(db, member, status=None, limit=30, run_id=None) -> list:
+    """The owner's scheduled scrape_all runs (install-level since MT-8: one fetch, ingest
+    into every subscribing account) started after `member` was created, newest first.
+    Read unscoped; the caller turns each into the member's view (_member_views)."""
+    from backend.accounts.context import unscoped, owner_account_id
+    from backend.models.db import Account
+    owner = owner_account_id()
+    if owner is None:
+        return []
+    with unscoped():
+        acc = db.query(Account).filter(Account.id == member).first()
+        q = db.query(JobRun).filter(JobRun.account_id == owner,
+                                    JobRun.job_type == "scrape_all",
+                                    JobRun.trigger == "scheduler")
+        if acc is not None and acc.created_at is not None:
+            q = q.filter(JobRun.started_at >= acc.created_at)
+        if status:
+            q = q.filter(JobRun.status == status)
+        if run_id is not None:
+            q = q.filter(JobRun.id == run_id)
+        runs = q.order_by(JobRun.started_at.desc()).limit(limit).all()
+        for r in runs:
+            db.expunge(r)   # read-only snapshots: never flushed back under the member
+    return runs
+
+
+def _member_views(db, runs) -> dict:
+    """id → the member's view of install-level scheduled runs: timing and status kept,
+    the summary rebuilt from the member's OWN ScrapeLog rows in the run's window, the
+    error replaced by a generic line, meta dropped. Nothing of another account."""
+    from backend.scheduler import own_scrape_summaries
+    if not runs:
+        return {}
+    try:
+        lines = own_scrape_summaries(db, [(r.started_at, r.finished_at) for r in runs])
+    except Exception:
+        logger.exception("member run summary failed")
+        lines = ["Summary unavailable"] * len(runs)
+    out = {}
+    for r, line in zip(runs, lines):
+        d = _run_dict(r)
+        d["result_summary"] = None if r.status == "running" else line
+        d["error"] = INSTALL_RUN_FAILED if (r.status == "failed" or r.error) else None
+        d["meta"] = {"install_run": True}
+        out[r.id] = d
+    return out
 
 
 @app.get("/api/monitor/run/{run_id}", tags=["monitor"], summary="Single run details")
@@ -1163,20 +1653,15 @@ def get_run_detail(run_id: str):
     db = SessionLocal()
     try:
         r = db.query(JobRun).filter(JobRun.id == run_id).first()
-        if not r:
-            raise HTTPException(status_code=404, detail="Run not found")
-        return {
-            "id": str(r.id),
-            "job_type": r.job_type,
-            "trigger": r.trigger,
-            "status": r.status,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-            "duration_seconds": r.duration_seconds,
-            "result_summary": r.result_summary,
-            "error": sanitize_run_error(r.error),
-            "meta": r.meta,
-        }
+        if r:
+            return _run_dict(r)
+        member = _member_viewer(db)
+        if member is not None:
+            # QA V-03: a member may open an install-level scheduled run (its own part).
+            shared = _install_scrape_runs(db, member, limit=1, run_id=run_id)
+            if shared:
+                return _member_views(db, shared)[shared[0].id]
+        raise HTTPException(status_code=404, detail="Run not found")
     finally:
         db.close()
 
@@ -1260,14 +1745,17 @@ def get_stats_timeline(days: Annotated[int, Query(le=3650)] = 30):
     `timedelta` and escaped as a bare 500 (R4-T1-08).
     """
     from backend.models.db import Job
-    from sqlalchemy import func, cast, Date
+    from sqlalchemy import func
     from datetime import datetime, timedelta, timezone
 
     db = SessionLocal()
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        # date() instead of CAST(... AS DATE): the same day on Postgres, and SQLite
+        # (tests) answers it too, so the leak harness can judge this route (MT-6).
+        day = func.date(Job.discovered_at)
         rows = db.query(
-            cast(Job.discovered_at, Date).label("date"),
+            day.label("date"),
             func.count().label("total"),
             func.count().filter(Job.status == "new").label("new"),
             func.count().filter(Job.status == "saved").label("saved"),
@@ -1275,9 +1763,7 @@ def get_stats_timeline(days: Annotated[int, Query(le=3650)] = 30):
             func.count().filter(Job.status == "skip").label("skipped"),
             # 'ignored' = auto-filtered (title/body/H-1B), saved only for dedup — never shown in the feed.
             func.count().filter(Job.status == "ignored").label("filtered"),
-        ).filter(Job.discovered_at >= cutoff).group_by(
-            cast(Job.discovered_at, Date)
-        ).order_by(cast(Job.discovered_at, Date)).all()
+        ).filter(Job.discovered_at >= cutoff).group_by(day).order_by(day).all()
         return [{
             "date": str(r.date), "total": r.total,
             "new": r.new, "saved": r.saved, "applied": r.applied,
@@ -1424,10 +1910,12 @@ def get_stats_sankey():
 
 # ── LLM cost stats ───────────────────────────────────────────────────────────
 
-def _llm_costs_stats(days: int = 7) -> dict:
-    """Aggregate llm_call_log rows within the last `days` days."""
+def _llm_costs_stats(days: int = 7, all_accounts: bool = False) -> dict:
+    """Aggregate llm_call_log rows within the last `days` days. `all_accounts` (owner only,
+    checked by the route) sums every account's rows and adds a per-account breakdown."""
     from datetime import datetime, timedelta, timezone
-    from backend.models.db import LlmCallLog
+    from backend.accounts.context import unscoped
+    from backend.models.db import Account, LlmCallLog
 
     db = SessionLocal()
     try:
@@ -1435,7 +1923,12 @@ def _llm_costs_stats(days: int = 7) -> dict:
         if days and days > 0:  # days <= 0 → all time (no date filter)
             since = datetime.now(timezone.utc) - timedelta(days=days)
             q = q.filter(LlmCallLog.created_at >= since)
-        rows = q.all()
+        if all_accounts:
+            with unscoped():
+                rows = q.all()
+                names = {a.id: a.name for a in db.query(Account).all()}
+        else:
+            rows = q.all()
 
         total_cost = sum(r.cost_usd or 0 for r in rows)
         total_calls = len(rows)
@@ -1475,20 +1968,43 @@ def _llm_costs_stats(days: int = 7) -> dict:
             )
             by_purpose.append(g)
 
-        return {
+        out = {
             "window_days": days,
             "total_calls": total_calls,
             "total_cost_usd": round(total_cost, 6),
             "by_purpose": sorted(by_purpose, key=lambda x: -x["cost_usd"]),
         }
+        if all_accounts:
+            per: dict = {}
+            for r in rows:
+                g = per.setdefault(r.account_id, {"account_id": str(r.account_id) if r.account_id else None,
+                                                  "name": names.get(r.account_id, "Unknown"),
+                                                  "calls": 0, "cost_usd": 0.0})
+                g["calls"] += 1
+                g["cost_usd"] += r.cost_usd or 0
+            by_account = sorted(per.values(), key=lambda x: -x["cost_usd"])
+            for g in by_account:
+                g["cost_usd"] = round(g["cost_usd"], 6)
+            out["all_accounts"] = True
+            out["by_account"] = by_account
+        return out
     finally:
         db.close()
 
 
 @app.get("/api/stats/llm-costs", tags=["stats"], summary="LLM cost + cache hit stats")
-async def llm_costs(days: int = 7):
-    """Returns spend and cache hit rate aggregated by (purpose, model) for the last N days."""
-    return _llm_costs_stats(days=days)
+async def llm_costs(days: int = 7, all_accounts: bool = False):
+    """Returns spend and cache hit rate aggregated by (purpose, provider, model) for the last N days, for the calling account. `all_accounts=1` (owner only, 403 for members) sums every account and adds `by_account`."""
+    if all_accounts:
+        from backend.accounts.settings import acts_as_owner
+        db = SessionLocal()
+        try:
+            allowed = acts_as_owner(db)
+        finally:
+            db.close()
+        if not allowed:
+            raise HTTPException(status_code=403, detail="owner_only")
+    return _llm_costs_stats(days=days, all_accounts=all_accounts)
 
 
 @app.get("/api/stats", tags=["stats"], summary="Dashboard statistics")

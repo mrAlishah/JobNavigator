@@ -84,6 +84,19 @@ async def test_scheduler_run_all_scrapes_skips_instead_of_raising(test_db, monke
     """The scheduler swallows JobAlreadyRunningError so APScheduler is not poisoned."""
     import backend.job_monitor as jm
     from backend.scheduler import run_all_scrapes
+    jm._running["scrape_all:scheduled"] = jm.RunningJob(
+        run_id=uuid.uuid4(), job_type="scrape_all", trigger="scheduler",
+        started_at=datetime.now(timezone.utc))
+    await run_all_scrapes()          # must not raise
+    assert _runs(test_db, job_type="scrape_all") == []
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_all_scrapes_runs_beside_the_owners_manual_run(test_db, monkeypatch):
+    """QA F6 / R4-02 (was: the tick skipped): the owner's manual Run all no longer blocks
+    the scheduled tick; the tick runs and names the owner as left out."""
+    import backend.job_monitor as jm
+    from backend.scheduler import run_all_scrapes
     gate = asyncio.Event()
 
     async def _slow():
@@ -93,8 +106,10 @@ async def test_scheduler_run_all_scrapes_skips_instead_of_raising(test_db, monke
     await run_all_scrapes()          # must not raise
     gate.set()
     await asyncio.sleep(0)
-    rows = _runs(test_db, job_type="scrape_all")
-    assert len(rows) == 1 and rows[0].trigger == "manual"
+    rows = {r.trigger: r for r in _runs(test_db, job_type="scrape_all")}
+    assert set(rows) == {"manual", "scheduler"}
+    assert rows["scheduler"].status == "completed"
+    assert "skipped (manual run in progress)" in (rows["scheduler"].result_summary or "")
 
 
 @pytest.mark.asyncio

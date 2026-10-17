@@ -1,9 +1,11 @@
 name: Images
 
 # Builds the backend and frontend images and publishes them to GHCR on every
-# version tag (v2.1.0 → :2.1.0, :2.1 and :latest) so a clone can `docker compose
-# pull` instead of building Playwright's Chromium for five minutes. `workflow_dispatch`
-# publishes :edge from whatever ref it runs on.
+# version tag so a clone can `docker compose pull` instead of building Playwright's
+# Chromium for five minutes. Releases are tagged major.minor: v3.0 → :3.0 and :latest.
+# An older three-part tag (v2.2.0) still gives :2.2.0, :2.2 and :latest. type=semver is
+# not used because it skips a two-part tag. `workflow_dispatch` publishes only :edge
+# from whatever ref it runs on.
 on:
   push:
     tags: ["v*"]
@@ -16,7 +18,7 @@ permissions:
 jobs:
   publish:
     name: Build and push ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -26,27 +28,27 @@ jobs:
           - name: frontend
             dockerfile: Dockerfile.frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/jobnavigator-${{ matrix.name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
+            type=match,pattern=^v(\d+\.\d+)(\.\d+)?$,group=1
+            type=match,pattern=^v(\d+\.\d+\.\d+)$,group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}

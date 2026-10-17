@@ -1,11 +1,13 @@
 """LLM helper endpoints — live model catalogs for the Settings model picker; OpenRouter's is public, OpenAI/Anthropic require a resolved API key, and results are cached ~1h per provider."""
+import hashlib
 import os
 import re
 import time
 import logging
 import httpx
 from fastapi import APIRouter, HTTPException
-from backend.models.db import SessionLocal, Setting
+from backend.models.db import SessionLocal
+from backend.accounts.settings import get_setting
 
 logger = logging.getLogger("jobnavigator.llm")
 router = APIRouter(prefix="/llm", tags=["settings"])
@@ -22,21 +24,26 @@ _KEY_SLOTS = [
     ("autofill_llm_provider", "autofill_llm_api_key"),
     ("email_llm_provider", "email_llm_api_key"),
 ]
-_ENV_KEY = {"openai": "OPENAI_API_KEY", "claude_api": "ANTHROPIC_API_KEY"}
+_ENV_KEY = {"openai": "OPENAI_API_KEY", "claude_api": "ANTHROPIC_API_KEY",
+            "opencode_go": "OPENCODE_API_KEY"}
 
 
 def _get(db, key: str) -> str:
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return (row.value or "") if row else ""
+    return get_setting(db, key) or ""
 
 
 def _resolve_key(db, provider: str) -> str:
-    """Find an API key already configured for `provider` in any slot, else env."""
+    """Find an API key already configured for `provider` in any slot, else env. A member on
+    its own Models section sees only its own slots (get_setting never falls back to the
+    owner's there, QA F5) and never the `.env` key, which is the owner's (R3-02)."""
     for pkey, kkey in _KEY_SLOTS:
         if _get(db, pkey) == provider:
             val = _get(db, kkey)
             if val:
                 return val
+    from backend.accounts.credentials import own_login_account
+    if own_login_account(db) is not None:
+        return ""
     return os.getenv(_ENV_KEY.get(provider, ""), "")
 
 
@@ -92,6 +99,18 @@ async def _fetch_anthropic(key: str) -> list:
     return [{"id": m.get("id"), "name": m.get("display_name") or m.get("id")} for m in data]
 
 
+async def _fetch_opencode_go(key: str) -> list:
+    """OpenCode Go models from its OpenAI-compatible endpoint; the catalog is public, so a
+    missing key still lists what exists."""
+    from backend.analyzer.llm_client import OPENCODE_GO_BASE_URL
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(f"{OPENCODE_GO_BASE_URL}/models", headers=headers)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+    return [{"id": m.get("id"), "name": m.get("id")} for m in data if m.get("id")]
+
+
 @router.get("/efforts")
 async def list_efforts():
     """Reasoning-effort values per provider for the Settings pickers; a provider not listed takes none."""
@@ -103,14 +122,15 @@ async def list_efforts():
 async def list_models(provider: str = "openrouter"):
     """Live model catalog for a provider, cached ~1h; openrouter needs no key, openai/claude_api use a configured key or env fallback (400 if none, 502 if the provider rejects it); claude_code borrows the Anthropic key and falls back to the built-in list without one."""
     now = time.time()
-    hit = _cache.get(provider)
-    if hit and (now - hit["at"]) < _CACHE_TTL:
-        return {"models": hit["models"], "cached": True}
-
     db = SessionLocal()
+    key = ""
     try:
         if provider == "openrouter":
-            fetch = _fetch_openrouter()
+            pass
+        elif provider == "opencode_go":
+            # Go's catalog is public: an empty key (none set, or a member on own without one)
+            # still lists it; a key, when set, is the account's own (cached per key below).
+            key = _resolve_key(db, "opencode_go")
         elif provider in ("openai", "claude_api", "claude_code"):
             # Claude Code (subscription) serves the same models as Claude API, so it
             # shares the Anthropic catalog — resolved via any configured Anthropic key.
@@ -122,11 +142,23 @@ async def list_models(provider: str = "openrouter"):
             if not key:
                 label = "OpenAI" if provider == "openai" else "Anthropic"
                 raise HTTPException(400, f"No {label} API key configured — set one in Settings first.")
-            fetch = _fetch_openai(key) if provider == "openai" else _fetch_anthropic(key)
         else:
             raise HTTPException(400, f"Live model search is not supported for provider '{provider}'.")
     finally:
         db.close()
+
+    # MT-15: a keyed catalog is cached per key, so an account with its own key never gets the
+    # list another account's key fetched (an OpenAI org's catalog can differ).
+    cache_key = f"{provider}:{hashlib.sha256(key.encode()).hexdigest()[:16]}" if key else provider
+    hit = _cache.get(cache_key)
+    if hit and (now - hit["at"]) < _CACHE_TTL:
+        return {"models": hit["models"], "cached": True}
+    if provider == "openrouter":
+        fetch = _fetch_openrouter()
+    elif provider == "opencode_go":
+        fetch = _fetch_opencode_go(key)
+    else:
+        fetch = _fetch_openai(key) if provider == "openai" else _fetch_anthropic(key)
 
     try:
         models = await fetch
@@ -147,5 +179,5 @@ async def list_models(provider: str = "openrouter"):
 
     models = [m for m in models if m.get("id")]
     models.sort(key=lambda m: m["id"])
-    _cache[provider] = {"at": now, "models": models}
+    _cache[cache_key] = {"at": now, "models": models}
     return {"models": models, "cached": False}

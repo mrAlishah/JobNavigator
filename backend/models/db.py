@@ -1,6 +1,7 @@
 """All SQLAlchemy models for JobNavigator."""
 import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -8,7 +9,7 @@ from sqlalchemy import (
     ForeignKey, JSON, Index, UniqueConstraint, create_engine, text
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import backref, column_property, declarative_base, deferred, relationship, sessionmaker
+from sqlalchemy.orm import backref, column_property, declarative_base, declared_attr, deferred, relationship, sessionmaker
 
 from backend.config import DATABASE_URL
 from backend.countries import DEFAULT_COUNTRY
@@ -28,11 +29,66 @@ from backend.countries import DEFAULT_COUNTRY
 #                       every request piled up behind the drain and /health went
 #                       unanswerable; 5 s turns that into a quick 503.
 #   pool_recycle 1800   drop connections Postgres or a proxy may have killed.
+#
+# S2-01: every app connection starts with `lock_timeout` set. Most DB calls run
+# synchronously on the event loop, so a statement waiting on a row lock held by
+# a session that is itself parked at an `await` blocks the loop that session
+# needs to finish: the whole backend froze with no error. The code no longer
+# holds a write across an await (see `has_uncommitted_writes`); this is the
+# backstop that turns any future wait into a LockNotAvailable error after
+# DB_LOCK_TIMEOUT instead of a hang. Ordinary row locks here last
+# milliseconds. Startup DDL is exempt (`lock_timeout_exempt`), so a restart during a
+# long pg_dump still waits for it as before. pg_dump itself (db_backup) runs in
+# its own process and connection, so the setting never touches backups.
+# `idle_in_transaction_session_timeout` is deliberately not set: run_all's batch
+# session and other readers keep a read-only transaction open across long
+# fetches on purpose, and killing them would fail healthy runs.
+DB_LOCK_TIMEOUT = "10s"
 _engine_kwargs = {"pool_pre_ping": True}
 if not DATABASE_URL.startswith("sqlite"):
     _engine_kwargs.update(pool_size=20, max_overflow=10, pool_timeout=5, pool_recycle=1800)
+    if DATABASE_URL.startswith("postgresql"):
+        _engine_kwargs["connect_args"] = {"options": f"-c lock_timeout={DB_LOCK_TIMEOUT}"}
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+_lock_timeout_exempt = False
+
+
+@contextmanager
+def lock_timeout_exempt():
+    """Startup DDL only: connections checked out inside wait for locks without a limit.
+
+    `create_tables` and the seed migrations take ACCESS EXCLUSIVE locks; a pg_dump
+    running while the backend restarts holds ACCESS SHARE on every table, so a boot
+    used to wait for it, and still should. The lifespan runs these steps before the
+    app serves anything, so a module flag is enough. A connection leaving the block
+    gets the default back on its next checkout."""
+    global _lock_timeout_exempt
+    _lock_timeout_exempt = True
+    try:
+        yield
+    finally:
+        _lock_timeout_exempt = False
+
+
+if engine.dialect.name == "postgresql":
+    from sqlalchemy import event as _sa_event
+
+    @_sa_event.listens_for(engine, "checkout")
+    def _sync_lock_timeout(dbapi_conn, record, proxy):
+        want = "0" if _lock_timeout_exempt else None   # None: the connect-time default
+        if record.info.get("jn_lock_timeout") == want:
+            return
+        cur = dbapi_conn.cursor()
+        try:
+            # SET persists for the connection only once committed: a later rollback
+            # of the same transaction would undo it.
+            cur.execute("SET lock_timeout = 0" if want else "RESET lock_timeout")
+        finally:
+            cur.close()
+        dbapi_conn.commit()
+        record.info["jn_lock_timeout"] = want
 Base = declarative_base()
 
 
@@ -48,24 +104,85 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
-# ── Settings ─────────────────────────────────────────────────────────────────
-class Setting(Base):
-    __tablename__ = "settings"
-
-    key = Column(String, primary_key=True)
-    value = Column(Text, nullable=False)
-    description = Column(String, nullable=True)
+# ── Accounts (multi-tenancy) ─────────────────────────────────────────────────
+# One row per person sharing the install. Every owned table carries a nullable
+# account_id (MT-1); backend.accounts.scoping filters and stamps it (MT-2).
+ACCOUNT_COLORS = ["#2f6fed", "#d9534f", "#2e9e6b", "#e0912b", "#8a5cd6"]
 
 
-# ── Searches ─────────────────────────────────────────────────────────────────
-class Search(Base):
-    __tablename__ = "searches"
+class Account(Base):
+    __tablename__ = "accounts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
+    color = Column(String, nullable=False, default=ACCOUNT_COLORS[0])
+    role = Column(String, nullable=False, default="member")  # owner | member (max 5 accounts, enforced in the API)
+    pin_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    last_active_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AccountScoped:
+    """Marker mixin for every account-owned model: backend.accounts.scoping filters their
+    queries by the current account and stamps new rows with it (MT-2). The declared
+    attribute lets with_loader_criteria's lambda be analysed against the mixin itself."""
+
+    @declared_attr
+    def account_id(cls):
+        return _account_fk()
+
+
+def _account_fk():
+    """The owning-account column every user-data table carries. Nullable until the
+    scoping batches land; seed.run_migrations backfills existing rows with the owner."""
+    return Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"),
+                  nullable=True, index=True)
+
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+class Setting(Base):
+    """A setting value. account_id NULL = the install value (what the owner edits); a row
+    with an account_id is that member's own value (MT-9). Not AccountScoped on purpose:
+    reads must reach the install row, so they all go through
+    backend.accounts.settings.get_setting, which picks the row explicitly."""
+    __tablename__ = "settings"
+    __table_args__ = (
+        # One install row per key, one row per (account, key). Partial indexes because a
+        # plain UNIQUE(key, account_id) lets any number of NULL-account rows through.
+        Index("uq_settings_install_key", "key", unique=True,
+              postgresql_where=text("account_id IS NULL"), sqlite_where=text("account_id IS NULL")),
+        Index("uq_settings_account_key", "account_id", "key", unique=True,
+              postgresql_where=text("account_id IS NOT NULL"), sqlite_where=text("account_id IS NOT NULL")),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String, nullable=False)
+    value = Column(Text, nullable=False)
+    description = Column(String, nullable=True)
+    account_id = _account_fk()
+
+
+class SectionPolicy(Base):
+    """Per member, whether a 'policy' settings section inherits the install value or keeps
+    the member's own (MT-9). No row = the section's default (SETTING_SECTIONS)."""
+    __tablename__ = "section_policies"
+
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"),
+                        primary_key=True)
+    section = Column(String, primary_key=True)
+    mode = Column(String, nullable=False)  # inherit | own
+
+
+# ── Searches ─────────────────────────────────────────────────────────────────
+class Search(AccountScoped, Base):
+    __tablename__ = "searches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
+    name = Column(String, nullable=False)
     active = Column(Boolean, default=True)
     sources = Column(JSON, default=["linkedin", "indeed", "zip_recruiter", "google", "direct"])
-    search_mode = Column(String, default="keyword")  # keyword | levels_fyi | linkedin_personal | jobright | freehire | extension | linkedin_extension
+    search_mode = Column(String, default="keyword")  # keyword | levels_fyi | linkedin_personal | jobright | freehire | apify | caribbeanjobs | trulyremote | extension | linkedin_extension
     search_term = Column(String, nullable=True)
     direct_url = Column(String, nullable=True)
     # A city or a region, never a country: `country` is the single country
@@ -102,11 +219,14 @@ class Search(Base):
 
 
 # ── Companies ────────────────────────────────────────────────────────────────
-class Company(Base):
+class Company(AccountScoped, Base):
     __tablename__ = "companies"
+    # Unique per account (MT-4): two accounts may each track "Acme".
+    __table_args__ = (UniqueConstraint("account_id", "name", name="uq_companies_account_name"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False, unique=True)
+    account_id = _account_fk()
+    name = Column(String, nullable=False)
     active = Column(Boolean, default=True)
     scrape_urls = Column(JSON, default=[])              # list of career/search URLs
     tier = Column(Integer, nullable=True)
@@ -149,12 +269,23 @@ class VisaCache(Base):
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
-class Job(Base):
+class Job(AccountScoped, Base):
     __tablename__ = "jobs"
+    # Dedup key unique per account (MT-4): the same posting can sit in two accounts' feeds.
+    # QA F9 / T6-01: composites for the per-account status counts and date/score sorts.
+    __table_args__ = (
+        UniqueConstraint("account_id", "external_id", name="uq_jobs_account_external_id"),
+        Index("ix_jobs_acct_status", "account_id", "status"),
+        Index("ix_jobs_acct_discovered", "account_id", text("discovered_at DESC")),
+        # NULLS LAST needs SQLite 3.30; the SQLite twin (tests) drops it.
+        Index("ix_jobs_acct_score", "account_id", text("best_cv_score DESC NULLS LAST")).ddl_if(dialect="postgresql"),
+        Index("ix_jobs_acct_score_sqlite", "account_id", text("best_cv_score DESC")).ddl_if(dialect="sqlite"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     short_id = Column(Integer, unique=True, nullable=True, index=True, server_default=text("nextval('jobs_short_id_seq')"))  # Auto-increment numeric ID for URLs
-    external_id = Column(String, unique=True, nullable=False)  # SHA256 dedup key
+    external_id = Column(String, nullable=False)  # SHA256 dedup key, unique per account
     content_hash = Column(String, nullable=True, index=True)  # SHA256 of company+title for cross-source dedup
     linkedin_job_id = Column(String, nullable=True, index=True)  # LinkedIn numeric ID for cross-scraper dedup
     company = Column(String, nullable=True)
@@ -299,10 +430,12 @@ del _col
 
 
 # ── Applications ─────────────────────────────────────────────────────────────
-class Application(Base):
+class Application(AccountScoped, Base):
     __tablename__ = "applications"
+    __table_args__ = (Index("ix_applications_acct_status_updated", "account_id", "status", text("updated_at DESC")),)   # QA F9 / T6-01
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False)
     status = Column(String, default="applied")
     # applied|interview|offer|rejected. Retired screening/phone_screen/final_round
@@ -322,11 +455,12 @@ class Application(Base):
                               cascade="all, delete-orphan", order_by="Interview.created_at")
 
 
-class Interview(Base):
+class Interview(AccountScoped, Base):
     """One interview round on an application: what it is, when, where/how, and a free-text prep note."""
     __tablename__ = "interviews"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"),
                             nullable=False, index=True)
     what = Column(String, nullable=False)
@@ -372,10 +506,12 @@ def revert_transition(app, back_to: str) -> bool:
 
 
 # ── Scrape Log ───────────────────────────────────────────────────────────────
-class ScrapeLog(Base):
+class ScrapeLog(AccountScoped, Base):
     __tablename__ = "scrape_log"
+    __table_args__ = (Index("ix_scrape_log_acct_company", "account_id", "company_id"),)   # QA F9 / T6-01
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     # The audit trail outlives the entity it describes; SET NULL keeps the row
     # readable instead of blocking the delete with a ForeignKeyViolation (500).
     search_id = Column(UUID(as_uuid=True), ForeignKey("searches.id", ondelete="SET NULL"), nullable=True)
@@ -390,18 +526,23 @@ class ScrapeLog(Base):
     source_breakdown = Column(JSON, nullable=True)
     duration_seconds = Column(Float, nullable=True)
     ran_at = Column(DateTime(timezone=True), default=utcnow)
+    # MT-8: one fetch of a shared target writes one row per subscribing account; they all
+    # carry the same run_id. A manual run gets a run_id of its own.
+    run_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
 
 # ── Job Runs (execution tracking) ───────────────────────────────────────────
-class JobRun(Base):
+class JobRun(AccountScoped, Base):
     __tablename__ = "job_runs"
     __table_args__ = (
         Index("ix_job_runs_job_type", "job_type"),
         Index("ix_job_runs_started_at", "started_at"),
         Index("ix_job_runs_target_job_id", "target_job_id"),
+        Index("ix_job_runs_acct_started", "account_id", text("started_at DESC")),   # QA F9 / T6-01
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     job_type = Column(String, nullable=False)          # scrape_all, email_check, etc.
     trigger = Column(String, nullable=False)            # scheduler | manual
     status = Column(String, nullable=False, default="running")  # running | completed | failed
@@ -416,15 +557,17 @@ class JobRun(Base):
 
 
 # ── LLM Call Log (observability for prompt caching / cost tracking) ─────────
-class LlmCallLog(Base):
+class LlmCallLog(AccountScoped, Base):
     __tablename__ = "llm_call_log"
     __table_args__ = (
         Index("ix_llm_call_log_created_at", "created_at"),
         Index("ix_llm_call_log_purpose", "purpose"),
         Index("ix_llm_call_log_job_id", "job_id"),
+        Index("ix_llm_call_log_acct_created", "account_id", "created_at"),   # QA F9 / T6-01
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
     purpose = Column(String, nullable=False)  # score_light, score_full, tailor, email, pdf
     provider = Column(String, nullable=False, default="")  # claude_api, claude_code, codex_cli, antigravity_cli, openai, ollama
@@ -441,10 +584,11 @@ class LlmCallLog(Base):
 
 
 # ── Activity Log ────────────────────────────────────────────────────────────
-class ActivityLog(Base):
+class ActivityLog(AccountScoped, Base):
     __tablename__ = "activity_log_v2"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     type = Column(String, nullable=False)       # scrape | h1b | cv_score | email | telegram
     message = Column(Text, nullable=False)
     company = Column(String, nullable=True)
@@ -464,10 +608,11 @@ def first_template(kind: str) -> str:
         names = []
     return names[0] if names else "traditional"
 
-class Resume(Base):
+class Resume(AccountScoped, Base):
     __tablename__ = "resumes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     name = Column(String, nullable=False)
     is_base = Column(Boolean, default=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
@@ -485,10 +630,11 @@ class Resume(Base):
 # ── Cover Letter ──────────────────────────────────────────────────────────────
 # Job-specific (no is_base). Mirrors Resume's storage so the PDF render + tracer-
 # rewrite helpers are reused as-is; json_data holds header/recipient/date/greeting/body_paragraphs/closing/signature.
-class CoverLetter(Base):
+class CoverLetter(AccountScoped, Base):
     __tablename__ = "cover_letters"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     name = Column(String, nullable=False)
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     resume_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
@@ -517,12 +663,15 @@ class CoverLetter(Base):
 
 
 # ── Persona ──────────────────────────────────────────────────────────────────
-# Singleton row (id=1). contact/preferences feed tailoring + cover letter + autofill;
+# One row per account (MT-5), read through backend.accounts.owned.get_persona(), which
+# creates it on first access; never look a Persona up by id. contact/preferences feed tailoring + cover letter + autofill;
 # work_auth/demographics/compensation/qa_bank feed autofill; resume_content feeds tailoring.
-class Persona(Base):
+class Persona(AccountScoped, Base):
     __tablename__ = "personas"
+    __table_args__ = (UniqueConstraint("account_id", name="uq_personas_account"),)
 
-    id = Column(Integer, primary_key=True)  # singleton: always 1
+    id = Column(Integer, primary_key=True)  # the owner's row is id 1 on installs older than MT-5
+    account_id = _account_fk()
     contact = Column(JSON, default=dict)
     work_auth = Column(JSON, default=dict)
     demographics = Column(JSON, default=dict)
@@ -535,10 +684,11 @@ class Persona(Base):
 
 
 # ── Tracer Links ───────────────────────────────────────────────────────────
-class TracerLink(Base):
+class TracerLink(AccountScoped, Base):
     __tablename__ = "tracer_links"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id = _account_fk()
     token = Column(String(10), unique=True, nullable=False, index=True)
     # A tracer link belongs to a resume, a cover letter, or — when the two share the
     # same job and token — both at once; each document's /tracer-stats filters on its own FK.
@@ -608,13 +758,20 @@ def get_company_all_names(db) -> dict:
 def get_global_title_exclude(db) -> list:
     """Load global title exclude keywords from settings."""
     import json as _json
-    row = db.query(Setting).filter(Setting.key == "title_exclude_global").first()
-    if row and row.value:
+    from backend.accounts.settings import get_setting
+    raw = get_setting(db, "title_exclude_global")
+    if raw:
         try:
-            return _json.loads(row.value)
+            return _json.loads(raw)
         except _json.JSONDecodeError:
             pass
     return []
+
+
+def get_owner_id(db):
+    """Id of the install's owner account, or None before the migration has created it."""
+    row = db.query(Account.id).filter(Account.role == "owner").order_by(Account.created_at).first()
+    return row[0] if row else None
 
 
 def get_existing_external_ids(db) -> set:
@@ -649,3 +806,46 @@ def create_tables():
             "ALTER TABLE searches ADD COLUMN IF NOT EXISTS exclude_active_companies BOOLEAN DEFAULT FALSE"
         ))
         conn.commit()
+
+
+# ── Account scoping listeners (MT-2) ─────────────────────────────────────────
+from backend.accounts.scoping import install_scoping  # noqa: E402
+
+install_scoping(AccountScoped)
+
+
+# ── Uncommitted writes (S2-01) ───────────────────────────────────────────────
+# A flushed INSERT/UPDATE/DELETE holds row and unique-index locks until the
+# transaction ends. Awaiting anything slow while holding them (an H-1B lookup
+# mid-ingest) let a second coroutine's synchronous write wait on those locks on
+# the event loop, so the holder could never resume: the whole backend froze.
+# These listeners keep a per-session flag so code that is about to make a slow
+# await can tell whether the caller's session is holding writes.
+from sqlalchemy.orm import Session as _OrmSession  # noqa: E402
+
+_WRITES_KEY = "jn_uncommitted_writes"
+
+
+@event.listens_for(_OrmSession, "after_flush")
+def _note_flushed_writes(session, flush_context):
+    session.info[_WRITES_KEY] = True   # after_flush only fires when the flush had work
+
+
+@event.listens_for(_OrmSession, "do_orm_execute")
+def _note_statement_writes(state):
+    if state.is_insert or state.is_update or state.is_delete:
+        state.session.info[_WRITES_KEY] = True
+
+
+@event.listens_for(_OrmSession, "after_transaction_end")
+def _clear_written_flag(session, transaction):
+    if transaction.parent is None:   # the outermost transaction: commit or rollback
+        session.info.pop(_WRITES_KEY, None)
+
+
+def has_uncommitted_writes(session) -> bool:
+    """True while `session` has flushed writes its transaction has not committed or rolled
+    back (conservative: a rolled-back savepoint keeps it set). Never await a slow call
+    while this is true."""
+    info = getattr(session, "info", None)
+    return isinstance(info, dict) and bool(info.get(_WRITES_KEY))

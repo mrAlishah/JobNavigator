@@ -123,14 +123,141 @@ const state = {
   theme: 'system',
   liInfo: false, afInfo: false, charsOpen: false, urlOpen: false,
   serverUrl: 'http://localhost', apiKey: '',
+  // MT-18 / QA F1: target account. The signed API token the server issued for it (after its
+  // PIN, when it has one) lives in chrome.storage.local with the id the row shows (per
+  // browser profile, not synced: a synced token would carry to another machine).
+  accounts: [], accountId: '', accountToken: '', acctOpen: false, acctPending: '', acctNote: '',
 };
 let _sendT, _saveT;
+
+async function forgetAccount(note) {
+  state.accountId = ''; state.accountToken = ''; state.acctNote = note;
+  await chrome.storage.local.remove(['accountId', 'accountToken']);
+  await chrome.storage.local.set({ accountRemoved: true });
+}
 
 async function cfg() {
   const s = await chrome.storage.sync.get(['serverUrl', 'apiKey']);
   state.serverUrl = s.serverUrl || 'http://localhost';
   state.apiKey = s.apiKey || '';
+  const l = await chrome.storage.local.get(['accountId', 'accountToken', 'accountRemoved']);
+  state.accountId = l.accountId || '';
+  state.accountToken = l.accountToken || '';
+  if (l.accountRemoved) state.acctNote = 'Account removed — pick again';
+  // a choice stored by the pre-token extension (bare id, no token) no longer counts
+  if (state.accountId && !state.accountToken) await forgetAccount('Pick the account again');
   return { serverUrl: state.serverUrl, apiKey: state.apiKey };
+}
+
+// Every backend call carries the install key and, when one is chosen, the account token.
+function apiHeaders(extra) {
+  const h = Object.assign({ 'X-API-Key': state.apiKey }, extra || {});
+  if (state.accountToken) h['X-Account-Token'] = state.accountToken;
+  return h;
+}
+
+// 401 invalid_account_token = the chosen account was removed, its PIN changed or the
+// token expired: forget it and say so.
+async function noteIfAccountGone(resp) {
+  if (resp.status !== 401) return false;
+  let d = null;
+  try { d = await resp.clone().json(); } catch {}
+  if (d && d.detail === 'account_required') { state.errHint = 'Choose an account in Settings › Saves to.'; return false; }
+  if (!d || d.detail !== 'invalid_account_token') return false;
+  state.errHint = 'Account changed or removed — pick again in Settings › Saves to.';
+  await forgetAccount('Account changed or removed — pick again');
+  await loadAccounts(); render();
+  return true;
+}
+
+// ---- account selector (MT-18) ----
+// The accounts list needs only the install key (no token: a stale one would 401).
+async function loadAccounts(url, key) {
+  try {
+    const resp = await fetch(`${url || state.serverUrl}/api/auth/accounts`, { headers: { 'X-API-Key': key !== undefined ? key : state.apiKey } });
+    state.accounts = resp.ok ? await resp.json() : [];
+  } catch { state.accounts = []; }
+  if (state.accounts.length >= 2 && state.accountId && !state.accounts.some(a => a.id === state.accountId)) {
+    await forgetAccount('Account removed — pick again');
+  }
+  renderAccounts();
+}
+function renderAccounts() {
+  const multi = state.accounts.length >= 2;
+  $('acctField').classList.toggle('hide', !multi);
+  if (!multi) return;
+  const cur = state.accounts.find(a => a.id === state.accountId);
+  $('acctName').textContent = cur ? cur.name : 'Not chosen';
+  $('acctDot').style.background = cur ? cur.color : '';
+  $('acctNote').textContent = state.acctNote;
+  $('acctNote').classList.toggle('hide', !state.acctNote);
+  $('acctList').classList.toggle('hide', !state.acctOpen || !!state.acctPending);
+  $('acctList').innerHTML = '';
+  state.accounts.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'aopt' + (a.id === state.accountId ? ' cur' : '');
+    const dot = document.createElement('span'); dot.className = 'adot'; dot.style.background = a.color;
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = a.name;
+    const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = a.has_pin ? 'PIN' : '';
+    row.append(dot, nm, tag);
+    row.onclick = () => pickAccount(a);
+    $('acctList').appendChild(row);
+  });
+  const pend = state.accounts.find(a => a.id === state.acctPending);
+  $('acctPin').classList.toggle('hide', !pend);
+  if (pend) $('acctPinFor').textContent = `Enter the PIN for ${pend.name} (the owner's PIN also works)`;
+}
+async function storeAccount(a, token) {
+  state.accountId = a.id; state.accountToken = token;
+  state.acctNote = ''; state.acctOpen = false; state.acctPending = '';
+  await chrome.storage.local.set({ accountId: a.id, accountToken: token });
+  await chrome.storage.local.remove('accountRemoved');
+  renderAccounts();
+  // The popup reads the persona-bound state per account; background reads storage on each call.
+  checkConnection();
+}
+// POST /api/auth/verify-pin issues the account's token: an account without a PIN gets it
+// with no PIN; one with a PIN after its PIN (or the owner's, for a member).
+async function requestToken(a, pin) {
+  const body = { account_id: a.id };
+  if (pin !== undefined) body.pin = pin;
+  const resp = await fetch(`${$('serverUrl').value.trim() || state.serverUrl}/api/auth/verify-pin`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': $('apiKey').value.trim() || state.apiKey },
+    body: JSON.stringify(body),
+  });
+  const d = await resp.json().catch(() => ({}));
+  return { resp, d };
+}
+async function pickAccount(a) {
+  if (a.id === state.accountId && state.accountToken) { state.acctOpen = false; renderAccounts(); return; }
+  if (!a.has_pin) {
+    try {
+      const { resp, d } = await requestToken(a);
+      if (resp.ok && d.token) { await storeAccount(a, d.token); return; }
+      if (d.detail !== 'pin_required') {      // a PIN set since the list loaded falls through to the PIN field
+        state.acctNote = resp.status === 404 ? 'That account no longer exists' : `Server error ${resp.status}`;
+        if (resp.status === 404) await loadAccounts(); else renderAccounts();
+        return;
+      }
+    } catch { state.acctNote = 'Cannot reach server'; renderAccounts(); return; }
+  }
+  state.acctPending = a.id; $('acctPinIn').value = ''; $('acctPinErr').classList.add('hide');
+  renderAccounts(); $('acctPinIn').focus();
+}
+async function verifyPinAndStore() {
+  const a = state.accounts.find(x => x.id === state.acctPending);
+  if (!a) return;
+  const err = (t) => { $('acctPinErr').textContent = t; $('acctPinErr').classList.remove('hide'); };
+  try {
+    const { resp, d } = await requestToken(a, $('acctPinIn').value);
+    if (resp.ok && d.token) { await storeAccount(a, d.token); return; }
+    if (d.detail === 'wrong_pin') err(`Wrong PIN — ${d.tries_left} ${d.tries_left === 1 ? 'try' : 'tries'} left`);
+    else if (d.detail === 'pin_cooldown') err(`Too many tries — wait ${resp.headers.get('Retry-After') || 30} s`);
+    else if (d.detail === 'pin_required') err('Enter the PIN');
+    else if (resp.status === 404) { err('That account no longer exists'); await loadAccounts(); }
+    else err(`Server error ${resp.status}`);
+  } catch { err('Cannot reach server'); }
+  $('acctPinIn').value = '';
 }
 
 // ---- render ----
@@ -174,7 +301,7 @@ function render() {
     $('errBo').textContent = `${state.filterReason || 'Filtered out by your Extension search rules'}. Edit the rules in Searches › Extension.`;
   } else if (showErr) {
     $('errHd').textContent = state.lastError === 'applied' ? "Couldn't reach the Application Board" : "Couldn't reach the Job Feed";
-    $('errBo').textContent = 'Not saved. Check your connection, then retry.';
+    $('errBo').textContent = state.errHint ? `Not saved. ${state.errHint}` : 'Not saved. Check your connection, then retry.';
   }
 
   // captured strip + LinkedIn count
@@ -209,7 +336,7 @@ async function doSend() {
   if (state.send === 'sending') return;
   const title = $('title').value.trim(), company = $('company').value.trim(), url = state.url.trim();
   if (!title || !company || !url) return;
-  state.send = 'sending'; render();
+  state.errHint = ''; state.send = 'sending'; render();
   let description = '';
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -217,10 +344,10 @@ async function doSend() {
   } catch {}
   try {
     const resp = await fetch(`${state.serverUrl}/api/jobs/save-from-extension`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': state.apiKey },
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title, company, url, description }),
     });
-    if (!resp.ok) throw new Error(String(resp.status));
+    if (!resp.ok) { await noteIfAccountGone(resp); throw new Error(String(resp.status)); }
     // OPEN-12: a 200 does not mean it reached the feed — the Extension search's
     // title/company filters (merged with the global title-exclude list) store the
     // job as `ignored` so the dedup keys stick. The server now says so; say it too.
@@ -238,14 +365,14 @@ async function doApplied() {
   if (state.applied === 'saving') return;
   const title = $('title').value.trim(), company = $('company').value.trim(), url = state.url.trim();
   if (!title || !company || !url) return;
-  state.applied = 'saving'; render();
+  state.errHint = ''; state.applied = 'saving'; render();
   try {
     const resp = await fetch(`${state.serverUrl}/api/applications`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': state.apiKey },
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title, company, url }),
     });
     if (resp.status === 409) { state.applied = 'exists'; render(); clearTimeout(_saveT); _saveT = setTimeout(() => { state.applied = 'idle'; render(); }, 2200); return; }   // already logged for this posting
-    if (!resp.ok) throw new Error(String(resp.status));
+    if (!resp.ok) { await noteIfAccountGone(resp); throw new Error(String(resp.status)); }
     state.applied = 'saved'; render();
     clearTimeout(_saveT); _saveT = setTimeout(() => { state.applied = 'idle'; render(); }, 1800);
   } catch { state.applied = 'error'; state.lastError = 'applied'; render(); }
@@ -254,9 +381,15 @@ async function doApplied() {
 async function checkConnection() {
   $('connDot').classList.remove('bad'); $('connTx').textContent = 'Checking…';
   try {
-    const resp = await fetch(`${$('serverUrl').value.trim() || state.serverUrl}/api/autofill/config`,
-      { headers: { 'X-API-Key': $('apiKey').value.trim() || state.apiKey } });
-    if (resp.status === 401) { $('connDot').classList.add('bad'); $('connTx').textContent = 'API key rejected'; }
+    const url = $('serverUrl').value.trim() || state.serverUrl, key = $('apiKey').value.trim() || state.apiKey;
+    const headers = { 'X-API-Key': key };
+    if (state.accountToken) headers['X-Account-Token'] = state.accountToken;
+    const resp = await fetch(`${url}/api/autofill/config`, { headers });
+    let detail = '';
+    if (resp.status === 401) { try { detail = (await resp.clone().json()).detail; } catch {} }
+    if (detail === 'invalid_account_token') { await noteIfAccountGone(resp); $('connTx').textContent = 'Account changed or removed — pick again'; $('connDot').classList.add('bad'); }
+    else if (detail === 'account_required') { $('connDot').classList.remove('bad'); $('connTx').textContent = 'Connected · choose an account'; }
+    else if (resp.status === 401) { $('connDot').classList.add('bad'); $('connTx').textContent = 'API key rejected'; }
     else if (resp.ok) { $('connDot').classList.remove('bad'); $('connTx').textContent = `Connected · v${VERSION}`; }
     else { $('connDot').classList.add('bad'); $('connTx').textContent = `Server error ${resp.status}`; }
   } catch { $('connDot').classList.add('bad'); $('connTx').textContent = 'Cannot reach server'; }
@@ -267,6 +400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await cfg();
   $('serverUrl').value = state.serverUrl;
   $('apiKey').value = state.apiKey;
+  loadAccounts();   // fills the "Saves to" row (settings) when the server has 2+ accounts
 
   // storage-backed feature state
   const st = await chrome.storage.sync.get(['linkedinCapture', 'autofillEnabled', 'autofillDefaultLength', 'structuredAutofillEnabled', 'structuredAutofillTrigger', 'theme', 'previewUnblock']);
@@ -298,7 +432,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   render();
 
   // header nav
-  $('toSettings').onclick = () => { state.screen = 'settings'; render(); checkConnection(); };
+  $('toSettings').onclick = () => { state.screen = 'settings'; render(); loadAccounts().then(checkConnection); };
   $('hdrSettings').onclick = () => { state.screen = 'capture'; render(); };
 
   // capture actions
@@ -364,11 +498,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     const on = $('apiKey').type === 'password';
     $('apiKey').type = on ? 'text' : 'password'; $('showKey').textContent = on ? 'Hide' : 'Show';
   };
-  $('apiKey').onchange = checkConnection;
-  $('serverUrl').onchange = checkConnection;
+  const recheck = async () => {
+    await loadAccounts($('serverUrl').value.trim() || state.serverUrl, $('apiKey').value.trim());
+    await checkConnection();
+  };
+  $('apiKey').onchange = recheck;
+  $('serverUrl').onchange = recheck;
+  $('acctChange').onclick = () => { state.acctOpen = !state.acctOpen; state.acctPending = ''; renderAccounts(); };
+  $('acctPinOk').onclick = verifyPinAndStore;
+  $('acctPinIn').onkeydown = (e) => { if (e.key === 'Enter') verifyPinAndStore(); };
+  $('acctPinCancel').onclick = () => { state.acctPending = ''; renderAccounts(); };
   $('saveSettings').onclick = async () => {
     state.serverUrl = $('serverUrl').value.trim(); state.apiKey = $('apiKey').value.trim();
     await chrome.storage.sync.set({ serverUrl: state.serverUrl, apiKey: state.apiKey });
+    await loadAccounts();
     await checkConnection();
     state.screen = 'capture'; render();
   };

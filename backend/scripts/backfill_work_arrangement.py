@@ -78,7 +78,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    report = run(commit=args.commit, limit=args.limit)
+    # QA F4 / R1-10: every account's jobs (with no context only the owner's are seen).
+    from backend.accounts.background import acting_as, all_account_ids
+    tally, by_tier = collections.Counter(), collections.Counter()
+    for account in all_account_ids():
+        with acting_as(account):
+            r = run(commit=args.commit, limit=args.limit)
+        tally.update(r["tally"])
+        by_tier.update(r["by_tier"])
+    report = {"tally": dict(tally), "by_tier": dict(by_tier)}
 
     tally, by_tier = report["tally"], report["by_tier"]
     mode = "COMMIT" if args.commit else "DRY RUN — nothing written"

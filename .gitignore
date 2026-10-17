@@ -188,3 +188,6 @@ docker-compose.override.yml
 
 # local backlog
 BACKLOG.md
+MT-PLAN.md
+QA-PLAN.md
+qa-shots/

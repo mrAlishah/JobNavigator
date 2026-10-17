@@ -1,11 +1,21 @@
 # JobNavigator
 
-**Self-hosted job-hunt automation.**
+**Self-hosted, multi-account job-hunt automation.**
 
-Scrape career pages and aggregators, score jobs against your résumés with an LLM, tailor résumés and cover letters, auto-fill applications from your persona, get Telegram alerts, track every application.
+Scrape career pages and aggregators, score jobs against your résumés with an LLM, tailor résumés and cover letters, auto-fill applications from your persona, get Telegram alerts, track every application. One install serves one person or a household: up to five accounts, each with its own jobs, résumés, settings and optional PIN, sharing one scrape.
+
+**Updating from 2.x**
+
+```bash
+docker compose exec -T db sh -c 'pg_dump -U $POSTGRES_USER $POSTGRES_DB' > backups/pre-3.0.sql   # back up first
+git pull
+docker compose pull && docker compose up -d      # or: docker compose up --build -d
+```
+
+Then reload the extension (`chrome://extensions` › reload). 3.0 backs up the database automatically before upgrading (`backups/pre_upgrade_*.sql`); a manual backup is still recommended. `git pull` alone is not enough — the images must be pulled or rebuilt. Full steps: [Upgrading from 2.x](CHANGELOG.md#upgrading-from-2x).
 
 <p align="center">
-  <img src="docs/demo.gif" alt="JobNavigator 2.0 — feed, scoring, tailoring, applications" width="100%">
+  <img src="docs/demo.gif" alt="JobNavigator — feed, scoring, tailoring, applications" width="100%">
 </p>
 
 <p align="center">
@@ -28,13 +38,15 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 │   Any site via          │  JobSpy: LinkedIn,      │  Passive LinkedIn       │
 │   Playwright            │  Indeed, ZipRecruiter,  │  capture while          │
 │                         │  Google Jobs            │  browsing               │
-│   11 ATS endpoints:     │                         │                         │
+│   12 ATS endpoints:     │                         │                         │
 │   Workday, Greenhouse   │  LinkedIn Personal      │  Auto-fill based on     │
 │   Lever, Ashby,         │  collections            │  your persona input     │
-│   Oracle, Phenom,       │                         │  and question bank      │
+│   Oracle, Phenom,       │  Apify (paid boards)    │  and question bank      │
 │   TalentBrew, Rippling  │  Jobright.ai            │                         │
 │   SmartRecruiters,      │  Levels.fyi             │  Save any job from      │
-│   + custom              │  freehire.me            │  any page               │
+│   Amazon, Meta, Google  │  freehire.me            │  any page               │
+│                         │  CaribbeanJobs.com      │                         │
+│                         │  TrulyRemoteWork.com    │                         │
 │                         │                         │                         │
 └─────────────────────────┴───────────┬─────────────┴─────────────────────────┘
                                       │
@@ -62,8 +74,8 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              AI RESUME SCORING                              │
 │                                                                             │
-│   Providers ── Claude API/CLI, Codex CLI, Antigravity CLI, OpenAI,          │
-│                OpenRouter, Ollama                                           │
+│   Providers ── Claude API/CLI, Codex CLI, Antigravity CLI, OpenCode Go,     │
+│                OpenAI, OpenRouter, Ollama, LM Studio                        │
 │   Depths ───── Light (scores only) or Full (report + keyword analysis)      │
 │   Multi ────── Score against multiple resumes, compare fit per role         │
 │                                                                             │
@@ -73,7 +85,7 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           RESUME + COVER LETTER                             │
 │                                                                             │
-│   Templates ── 8 resume + 8 cover-letter, auto-discovered (add your own!)   │
+│   Templates ── 8 resume + 7 cover-letter, auto-discovered (add your own!)   │
 │   AI Tailor ── Rewrites resume bullets/keywords from the scoring report     │
 │   AI Letter ── Job-specific cover letters from resume + JD, voice presets   │
 │   Export ───── Live-preview PDF via Playwright with export                  │
@@ -97,17 +109,18 @@ Scrape career pages and aggregators, score jobs against your résumés with an L
 
 | Feature | Description |
 |---------|-------------|
-| **Discovery** | Career pages (Playwright + 11 ATS handlers), JobSpy (LinkedIn, Indeed, ZipRecruiter, Google), LinkedIn collections, Levels.fyi, Jobright.ai, freehire.me, the Chrome extension |
-| **Scoring** | Claude, OpenAI, OpenRouter, Ollama, Claude Code, Codex CLI or Antigravity CLI; live model search, a model per feature; Light (score) or Full (report, keyword coverage, requirement mapping) against every base résumé; prompt caching on Anthropic |
-| **Résumés** | Structured base résumés, tailoring per job with a review step, 8 PDF templates (drop in your own), tracked links that record opens |
-| **Cover letters** | Generated from the paired résumé and persona; voice and length presets, 8 templates, PDF |
+| **Discovery** | Career pages (Playwright + 12 ATS handlers), JobSpy (LinkedIn, Indeed, ZipRecruiter, Google), Apify (Indeed, LinkedIn, Glassdoor, Greenhouse/Lever/Ashby/Workday search; not on the Apify Creator plan), LinkedIn collections, Levels.fyi, Jobright.ai, freehire.me, CaribbeanJobs.com, TrulyRemoteWork.com, the Chrome extension |
+| **Scoring** | Claude, OpenAI, OpenRouter, Ollama, LM Studio, Claude Code, Codex CLI, Antigravity CLI or OpenCode Go; live model search, a model per feature; Light (score) or Full (report, keyword coverage, requirement mapping) against every base résumé; prompt caching on Anthropic |
+| **Résumés** | Structured base résumés, tailoring per job with a review step, 8 PDF templates (drop in your own) and a Word (.docx) export, an opt-in page footer (name, job title, company) on tailored copies, tracked links that record opens |
+| **Cover letters** | Generated from the paired résumé and persona; voice and length presets, 7 templates, PDF |
 | **Dedup** | URL identity hash (tracking params stripped) plus company + title hash across sources |
 | **Jobs** | Filters, sorting, keyboard shortcuts (`?`), full report, collapsible analysis pane, bulk actions with undo, posting preview |
 | **Applications** | Stages, interviews, notes, status history (funnel and Sankey in Stats), a prep handover for any AI chat |
 | **Persona** | Contact, work authorization, compensation, preferences, résumé content, Q&A bank; import from a résumé or PDF |
 | **Extension** | Passive LinkedIn capture, save any job from any page, ATS form autofill and AI answers to free-text questions from your Persona |
-| **Gmail** | Polls replies, classifies them, updates the application |
-| **Telegram** | New-job alerts, daily digest, scrape health, inline actions |
+| **Accounts** | Owner + up to four members, each with their own jobs, applications, résumés, letters, Persona, searches and companies; optional 4-digit PINs; settings inherited or own per section; scraping shared (one fetch per page, filtered and scored per account); with one account none of it shows |
+| **Gmail** | Polls replies, classifies them, updates the application; each account connects its own mailbox |
+| **Telegram** | New-job alerts, daily digest, scrape health, inline actions; per account (household bot or its own) |
 | **H-1B** | Company filing lookups, description exclusion phrases |
 | **Scheduling** | Intervals and crons for scraping, email, backups, cleanup, auto-reject; every cron field explains itself and offers presets |
 | **Themes** | Paper, Green Paper, Stone, V1 Style, Windows 98 × light / dark / system |
@@ -125,19 +138,20 @@ cp .env.example .env
 docker compose pull && docker compose up -d      # prebuilt images from GHCR
 ```
 
-Open `http://localhost`. To build from source instead (or on ARM), use `docker compose up --build -d`; every release is also published as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=2.1.0` in `.env`. On first run sign in with a blank key, then set one in Settings › Advanced.
+Open `http://localhost`. To build from source instead (or on ARM), use `docker compose up --build -d`; every release is also published as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=3.0` in `.env`. On first run sign in with a blank key, then set one in Settings › System › Advanced.
 
 **2. Connect a model**
 
-Any API key goes straight into Settings › AI. A subscription needs one login inside the container first:
+Any API key goes straight into Settings › AI. A subscription needs one login inside the container first (OpenCode Go needs none):
 
-| Subscription | Once after the containers start | Then pick |
-|---|---|---|
-| Claude Pro / Max | `docker compose exec backend claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` | **Claude Code** |
-| ChatGPT | `docker compose exec backend codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) | **Codex CLI** |
-| Google Antigravity | `docker compose exec -it backend agy` — the container has no browser, so the CLI prints a URL and asks for the code it shows (the login lives in the `antigravity_auth` volume) | **Antigravity CLI** |
+| Subscription | Once after the containers start |
+|---|---|
+| Claude Pro / Max | `docker compose exec backend claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` |
+| ChatGPT | `docker compose exec backend codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) |
+| Google Antigravity | `docker compose exec -it backend agy` — the container has no browser, so the CLI prints a URL and asks for the code it shows (the login lives in the `antigravity_auth` volume) |
+| OpenCode Go | nothing: paste the Go API key under Settings › AI |
 
-No API key needed for any of them. A plan limit fails over to the fallback provider without retrying.
+No pay-per-token key needed for any of them. A plan limit fails over to the fallback provider without retrying. With several accounts, `docker compose exec backend python -m backend.scripts.cli_login <codex|agy|claude> "<account>"` prints a member's own login command.
 
 **3. First steps**
 
@@ -154,13 +168,16 @@ The full walkthrough, screen by screen, is in [docs/GETTING-STARTED.md](docs/GET
 - Captures job ids while you browse `linkedin.com/jobs/collections/*` and imports them with full details.
 - Fills ATS forms and drafts answers to free-text questions from your Persona and Q&A bank (toggle in the popup; model and prompt in Settings › AI).
 
-Install: `chrome://extensions` › Developer mode › Load unpacked › `extension/`. The LinkedIn import needs a separate LinkedIn account in Settings › Accounts.
+- With two or more accounts, **Saves to** in the popup picks the account that captures and autofill use.
+
+Install: `chrome://extensions` › Developer mode › Load unpacked › `extension/`. The LinkedIn import signs in through Settings › Integrations › LinkedIn (a separate mock account is recommended).
 
 ## Optional Integrations
 
-**Telegram** — bot token in `.env`, chat id in Settings.
-
-**Gmail** — `python backend/gmail_oauth_setup.py`, OAuth credentials in `.env`.
+| | Server (`.env`) | Per account (Settings) |
+|---|---|---|
+| **Telegram** | `TELEGRAM_BOT_TOKEN` (the household bot) | Notifications › Link Telegram, or its own bot |
+| **Gmail** | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`; add `<dashboard>/api/gmail/callback` as a redirect URI | Email classification › Gmail › Connect Gmail |
 
 ## Tech Stack
 
@@ -170,7 +187,7 @@ Install: `chrome://extensions` › Developer mode › Load unpacked › `extensi
 | Frontend | React 18, Vite, Recharts, a token-based design system ([DESIGN-SYSTEM.md](frontend/src/DESIGN-SYSTEM.md)) |
 | Database | PostgreSQL 16 |
 | Infrastructure | Docker Compose, Caddy, nginx |
-| AI | Anthropic SDK, OpenAI SDK, Ollama, Claude Code CLI, Codex CLI, Antigravity CLI |
+| AI | Anthropic SDK, OpenAI SDK, Ollama, LM Studio, Claude Code CLI, Codex CLI, Antigravity CLI, OpenCode Go endpoint |
 | Extension | Chrome Manifest V3 |
 
 ## Contributing

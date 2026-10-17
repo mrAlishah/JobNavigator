@@ -99,16 +99,21 @@ def test_import_progress_is_idle_when_nothing_ran(client):
     assert client.get("/api/jobs/linkedin-import/progress").json() == {"status": "idle"}
 
 
-def test_import_progress_echoes_the_live_dict(client):
-    """A non-empty progress dict is returned verbatim, not wrapped."""
+def test_import_progress_echoes_the_live_dict(client, test_db):
+    """A non-empty progress dict is returned verbatim, not wrapped (the caller's own
+    entry: progress is per account since QA F5 R5-02)."""
+    from backend.accounts.context import use_account
+    from backend.models.db import Account
     from backend.scraper.sources.linkedin_extension import _linkedin_import_progress
-    _linkedin_import_progress.clear()
-    _linkedin_import_progress.update({"status": "running", "done": 3, "total": 10})
+    owner = test_db.query(Account).filter(Account.role == "owner").one().id
+    _linkedin_import_progress.reset_all()
+    with use_account(owner):
+        _linkedin_import_progress.update({"status": "running", "done": 3, "total": 10})
     try:
         assert client.get("/api/jobs/linkedin-import/progress").json() == {
             "status": "running", "done": 3, "total": 10}
     finally:
-        _linkedin_import_progress.clear()
+        _linkedin_import_progress.reset_all()
 
 
 # ── GET /api/jobs — the filters T1 left dark ─────────────────────────────────

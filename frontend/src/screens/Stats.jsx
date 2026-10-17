@@ -4,7 +4,8 @@ import { ResponsiveContainer, Sankey, Tooltip, LineChart, Line, XAxis, YAxis, Ca
 import api from '../api'
 import { useToasts, ToastStack } from '../Toast'
 import { useEscape, useSettled, useWarm, NBSP, DASH } from '../hooks'
-import { Card, GlyphBadge, Heading, HeaderRow, Helper, Label, Link, Menu, MenuItem, Meter, Mono, PageTitle, Pill as UiPill, Spinner, TableHead, TableRow } from '../ui'
+import { useAccounts } from '../accounts'
+import { Card, GlyphBadge, Heading, HeaderRow, Helper, Label, Link, Menu, MenuItem, Meter, Mono, PageTitle, Pill as UiPill, Spinner, Switch, TableHead, TableRow } from '../ui'
 import '../theme.css'
 
 // Stats reads the pipeline back: funnel, scorer, LLM costs, scheduler activity.
@@ -120,6 +121,13 @@ export default function Stats() {
   const [flows, setFlows] = useState([])
   const [costs, setCosts] = useState(null)
   const [period, setPeriod] = useState(30)
+  // MT-20: the owner of a multi-account install can sum the LLM cost across accounts (that panel only).
+  const { me, multi, unlockedUntil } = useAccounts()
+  const canAll = multi && me?.role === 'owner'
+  // T7-02: a member (not unlocked as the owner) gets no Run now on owner-only schedules
+  const ownerLocked = multi && !!me && me.role !== 'owner' && !(unlockedUntil && unlockedUntil > Date.now())
+  const [allAccountsPick, setAllAccounts] = useState(false)
+  const allAccounts = canAll && allAccountsPick
   const [jobs, setJobs] = useState([])
   const [runs, setRuns] = useState([])
   const [runsMore, setRunsMore] = useState(false)
@@ -208,14 +216,14 @@ export default function Stats() {
   const { ready } = useSettled([
     () => loadCore(),
     () => loadLive(),
-    () => api.get('/stats/llm-costs', { params: { days: period } }).then(({ data }) => setCosts(data)).catch(() => setCosts(null)),
+    () => api.get('/stats/llm-costs', { params: { days: period, ...(allAccounts && { all_accounts: 1 }) } }).then(({ data }) => setCosts(data)).catch(() => setCosts(null)),
   ])
   // a later period change is an explicit action, so it reloads on its own
   const firstCosts = useRef(true)
   useEffect(() => {
     if (firstCosts.current) { firstCosts.current = false; return }
-    api.get('/stats/llm-costs', { params: { days: period } }).then(({ data }) => setCosts(data)).catch(() => setCosts(null))
-  }, [period])
+    api.get('/stats/llm-costs', { params: { days: period, ...(allAccounts && { all_accounts: 1 }) } }).then(({ data }) => setCosts(data)).catch(() => setCosts(null))
+  }, [period, allAccounts])
   // debounce the company box — v1 fired a request per keystroke
   useEffect(() => { clearTimeout(qRef.current); qRef.current = setTimeout(loadActivity, 300); return () => clearTimeout(qRef.current) }, [loadActivity])
 
@@ -240,7 +248,7 @@ export default function Stats() {
     await Promise.all([loadCore(), loadLive()])
     loadActivity()
     // Behind the Refresh button — a failure that leaves old figures on screen has to say so.
-    api.get('/stats/llm-costs', { params: { days: period } }).then(({ data }) => setCosts(data)).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not refresh the LLM costs' }) })
+    api.get('/stats/llm-costs', { params: { days: period, ...(allAccounts && { all_accounts: 1 }) } }).then(({ data }) => setCosts(data)).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not refresh the LLM costs' }) })
     setRefreshing(false)
   }
 
@@ -258,7 +266,7 @@ export default function Stats() {
     } catch (e) {
       console.error('trigger', e)
       clear()
-      pushToast({ kind: 'error', msg: e.response?.status === 409 ? `${job.name} is already running.` : `Could not start ${job.name}` + errSuffix(e) })
+      pushToast({ kind: 'error', msg: e.response?.data?.detail === 'scheduled_scrape_running' ? 'The scheduled scrape is running — try again when it finishes.' : e.response?.status === 409 ? `${job.name} is already running.` : `Could not start ${job.name}` + errSuffix(e) })
     }
   }
 
@@ -563,11 +571,14 @@ export default function Stats() {
           </Card>
 
           <Card style={{ height: 300, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflow: 'hidden' }}>
-            <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'baseline', gap: 9, lineHeight: '24px' }}>
-              <Heading strong size={17}>LLM costs</Heading>
+            {/* T7-04: one line in every theme — the title never wraps; with the All-accounts
+                switch in a wide-control theme (Win98) "how priced?" gives way first */}
+            <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'baseline', gap: 9, lineHeight: '24px', whiteSpace: 'nowrap', minWidth: 0 }}>
+              <Heading strong size={17} style={{ flex: '0 0 auto' }}>LLM costs</Heading>
               <Helper title="OpenAI and Claude pricing info comes from a fixed table, OpenRouter from its catalog (updated every 12 h), Claude Code, Codex CLI, and Ollama counted as $0. Each call is priced when it is logged."
-                style={{ cursor: 'help', borderBottom: '1px dotted var(--line-strong)' }}>how priced?</Helper>
-              <span style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex', gap: 3 }}>
+                style={{ cursor: 'help', borderBottom: '1px dotted var(--line-strong)', ...(canAll ? { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } : null) }}>how priced?</Helper>
+              {canAll && <Switch on={allAccounts} onChange={setAllAccounts} label="All accounts" ariaLabel="Sum LLM costs across all accounts" style={{ marginLeft: 'auto', alignSelf: 'center' }} />}
+              <span style={{ ...(canAll ? null : { marginLeft: 'auto' }), alignSelf: 'center', display: 'flex', gap: 3 }}>
                 {PERIODS.map(([id, label]) => {
                   const on = period === id
                   return <UiPill key={label} size="sm" on={on} onClick={() => setPeriod(id)}>{label}</UiPill>
@@ -602,6 +613,11 @@ export default function Stats() {
                   <Mono line={16} style={{ flex: '0 0 44px', textAlign: 'right', color: c.cache_involving ? 'var(--mono-ink-accent)' : 'var(--mono-ink-muted)' }}>{c.cache_involving ? `${Math.round(c.cache_hit_ratio * 100)}%` : '—'}</Mono>
                 </div>
               ))}
+              {allAccounts && (costs?.by_account || []).length > 0 && (
+                <Helper style={{ display: 'block', padding: '8px 0 2px' }}>
+                  By account: {costs.by_account.map((a) => `${a.name} ${money(a.cost_usd)}`).join(' · ')}
+                </Helper>
+              )}
               {!(costs?.by_purpose || []).length && <Helper style={{ display: 'block', padding: '14px 0' }}>No LLM calls in this period.</Helper>}
               </div>
             </div>
@@ -643,7 +659,9 @@ export default function Stats() {
                   </span>}
                 </span>
                 <span style={{ flex: '0 0 110px', display: 'flex', justifyContent: 'flex-end' }}>
-                  {j.trigger_url
+                  {j.trigger_url && j.owner_only && ownerLocked
+                    ? <Helper title={`Only the owner can run ${j.name}`}>Owner only</Helper>
+                    : j.trigger_url
                     // ui: keep — running-state box (D-13): Pill xs is the role, but the running branch quiets border+ink (--line/--edge) instead of dimming via --disabled-opacity, and its box is pad 0 11 / gap 6 on no ground. The canonical xs paint reproduces none of the three, so this one stays hand-drawn.
                     ? <span onClick={() => !running && trigger(j)} {...kb(() => !running && trigger(j))} aria-disabled={running}
                         title={running ? `${j.name} is running` : `Run ${j.name} now`} aria-label={running ? `${j.name} is running` : `Run ${j.name} now`}

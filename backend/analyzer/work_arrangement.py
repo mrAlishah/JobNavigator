@@ -142,9 +142,35 @@ _JD_TIERS = [
 _CONTEXT = 120  # characters of context each guard inspects around a match
 
 
+def _strip_tags(text: str) -> str:
+    """Replace each tag with a space, exactly as `re.sub(r"<[^>]+>", " ", text)`
+    would, but in linear time. The regex retries from every "<" and scans to the
+    end of the string each time, so "<<<<..." with no ">" is quadratic, and a
+    description is uncontrolled input (CodeQL py/polynomial-redos).
+
+    A tag is a "<" followed by at least one character and the first ">" after
+    it; "<>" is not a tag, and once no ">" remains nothing further can match."""
+    out = []
+    pos = 0
+    start = text.find("<")
+    while start != -1:
+        close = text.find(">", start + 1)
+        if close == -1:
+            break
+        if close == start + 1:                  # "<>": [^>]+ needs one character
+            start = text.find("<", close)
+            continue
+        out.append(text[pos:start])
+        out.append(" ")
+        pos = close + 1
+        start = text.find("<", pos)
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def _strip_html(text: str) -> str:
     if "<" in text and ">" in text:
-        return _html.unescape(re.sub(r"<[^>]+>", " ", text))
+        return _html.unescape(_strip_tags(text))
     return text
 
 

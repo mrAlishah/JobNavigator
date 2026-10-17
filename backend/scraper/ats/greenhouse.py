@@ -10,6 +10,7 @@ import httpx
 
 from backend.scraper._shared.urls import host_matches
 from backend.scraper._shared.filters import _validate_job
+from backend.scraper._shared.errors import raise_if_board_gone
 
 logger = logging.getLogger("jobnavigator.scraper.ats.greenhouse")
 
@@ -107,6 +108,8 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
         resp = await client.get(api_url)
         if resp.status_code != 200:
             logger.warning(f"Greenhouse API returned {resp.status_code} for {company_slug}")
+            if not debug:
+                raise_if_board_gone(resp.status_code, "Greenhouse", company_slug)
             if debug:
                 return [], [{"title": "(none)", "url": api_url, "selector": "greenhouse_api", "reason": f"HTTP {resp.status_code}"}]
             return []

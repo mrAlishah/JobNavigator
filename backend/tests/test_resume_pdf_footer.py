@@ -117,15 +117,17 @@ def _fake_browser(monkeypatch, captured: dict):
         captured.update(kwargs)
         return b"%PDF-1.4\n/Type /Page\n"
 
-    async def fake_close():
-        return None
-
     fake_page.set_content = AsyncMock(side_effect=fake_set_content)
     fake_page.pdf = AsyncMock(side_effect=fake_pdf)
-    fake_page.close = AsyncMock(side_effect=fake_close)
+    fake_page.close = AsyncMock(return_value=None)
 
+    # 3.0 renders in a sandboxed context (JavaScript off, a route guard), not on a bare page.
+    fake_context = MagicMock()
+    fake_context.new_page = AsyncMock(return_value=fake_page)
+    fake_context.route = AsyncMock(return_value=None)
+    fake_context.close = AsyncMock(return_value=None)
     fake_browser = MagicMock()
-    fake_browser.new_page = AsyncMock(return_value=fake_page)
+    fake_browser.new_context = AsyncMock(return_value=fake_context)
 
     async def fake_get_browser():
         return fake_browser

@@ -46,6 +46,13 @@ COPY backend/antigravity-settings.json /opt/antigravity-settings.json
 COPY backend/ ./backend/
 # .env is passed via docker-compose env_file, not baked into image
 
+# Stamp the release this image was built from. Compose bind-mounts ./backend over
+# /app/backend, so after a `git pull` the code can be newer than the image; at
+# startup backend/image_check.py compares this stamp (and the installed packages)
+# with the mounted code and reports a mismatch in the log and on /health.
+RUN mkdir -p /opt/jobnavigator \
+    && python -c "from backend.version import APP_VERSION; print(APP_VERSION)" > /opt/jobnavigator/image-version
+
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 

@@ -5,6 +5,8 @@ Changes made in this fork on top of upstream JobNavigator. Upstream's own releas
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+Last merged with `upstream/main` on 2026-10-17 (release 3.0, multi-tenancy). The fork branched at `3be5ab1` (2026-10-15, after upstream 2.2.0). Where the two sides disagreed, the fork's behaviour was kept and upstream's account scoping, sandboxed rendering and safe filenames were wired in around it. Everything below exists only in this fork.
+
 ## [Unreleased]
 
 ### Added
@@ -13,7 +15,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Manrope font:** the Professional templates ship Manrope (seven weights, `fonts/Manrope-*.ttf`) and the style panel lists it beside the other fonts. The PDF embeds it only when a section or part uses it (about 0.9 MB of extra HTML for that render; résumés that never pick it carry nothing). Word has no font embedding here, so a Word file names "Manrope" and shows it only where it is installed. The `.ttf` files are git-ignored (`.gitignore`), so they exist in a local checkout and a local Docker build but are not committed.
 - **Style saved with the résumé and applied to both exports:** values live in `json_data.style`, are validated server-side (fixed font list, `#RRGGBB` colours, clamped numbers) and print in the PDF and the Word export. Other templates ignore them; a template opts in with `"style_overrides": true` in its `meta.json` (see CONTRIBUTING.md).
 - **Style in Word exports:** margin and padding become paragraph spacing and indents (Word has no padding; a heading's bottom padding is the gap above its rule line), letter spacing rounds to Word's units, a picture is centre-cropped to the chosen width and height like the PDF's cover crop, and heading paragraphs keep their XML in the order Word requires.
+- **Professional résumé templates with a profile image:** Professional (Top-Left Image) and Professional (Top-Right Image), two PDF templates in the ATS reference style (Arial, `#232323` text, ruled `#1F4E79` section titles, "Title - Company" entries) with an optional 100 px profile image. The picture is uploaded once in Settings › Resumes (`POST /settings/profile-image`, stored globally) and used by every résumé; a "Show profile image" switch in a résumé's Settings section turns it off. Each account keeps its own picture (it is a per-account setting, never inherited from the owner).
+- **Editable Word export:** the résumé editor's Download menu offers PDF and Word (.docx). The file is real text (hyperlinks, tab-aligned rows), so it stays editable and ATS-friendly. The Professional templates get a styled Word file with the picture beside the name; custom section headings and the footer carry over. The export uses upstream 3.0's helpers: text is cleaned of XML-illegal control characters, `tel:`/`mailto:`/web links stay clickable, downloads keep non-Latin names (`filename*=UTF-8''…`), and a 503 explains a missing python-docx.
+- **Tailored PDF footer:** every page of a tailored résumé PDF ends with "Candidate Name - Job Title - Company" in small light-grey text, with its own reserved band so content never runs under it. A "Show footer" switch in the résumé's Settings section turns it off (on by default; tailored copies do not inherit a base résumé's choice). Unlike upstream 3.0, where the footer is opt-in, it stays on by default in this fork; the linked job is read only from the current account.
+- **Custom section headings:** Summary, Skills, Experience, Education, Projects and Publications each take an optional "Header title" in the résumé editor and Persona. It replaces the heading in every template's PDF and in the Word export; empty keeps the template's default. Upstream's Modern Professional template follows it too.
+- **Duplicate and Rename** in the base résumé menu and the tailored-copy menu. Duplicate creates an independent base résumé with the same content.
+- **Delete jobs with what hangs off them:** "Delete" in a feed row's menu and in the bulk bar removes the job with its tailored résumés, cover letters and applications (`POST /jobs/bulk-delete`). Base résumés and LLM cost logs stay, only unlinked from the job.
+- **Scrape all:** a button in the Searches header runs every search once, disables itself while the scrape is active and reloads the list when it finishes.
+- **Two isolated Docker instances:** `docker-compose.alish.yml` and `docker-compose.elsa.yml` override the base file with their own project name, ports and named volumes so the instances cannot mix; each also runs Adminer for PostgreSQL, and Elsa's file sets its own network.
 
 ### Changed
 - **Settings section of a résumé** keeps only the "Show profile image" and "Show footer" checkboxes; all styling is done through Select & style.
 - **Profile image upload:** files up to 10 MB are accepted (was 2 MB), and the stored copy fits 300×300 px (was 120×120) so the image-size option stays sharp.
+- **Professional templates and the Word builder kept in step:** both templates and the shared Word builder use smaller meta and description text (8.5 pt), a bold title with the company in normal weight, and a 100 px picture, so PDF and Word match.
+- **Repository:** `.gitignore` also ignores `.DS_Store`, `tmp/` and `misc`.
+
+### Fixed
+- **PDF page margins on every page:** all résumé templates keep their top and bottom margin in `@page` (and reserve the footer band there), so page 2 onward is no longer flush with the paper edge. Upstream's Modern Professional template got the same footer band and print rules, and upstream's print-layout test now checks this layout.
+- **Word exports include the footer** of a tailored résumé.
+- **Word export input checks:** an unknown template is rejected with 422, and an invalid stored profile image is skipped with a warning instead of failing the export.
+- **Deleting a job unlinks `job_runs.target_job_id` explicitly,** so SQLite, which does not enforce `ON DELETE SET NULL`, behaves like PostgreSQL.

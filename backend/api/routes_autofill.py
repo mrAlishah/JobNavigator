@@ -5,7 +5,9 @@ import logging
 import re as _re
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from backend.models.db import SessionLocal, Setting, Persona
+from backend.accounts.owned import get_persona
+from backend.models.db import SessionLocal, Persona
+from backend.accounts.settings import get_setting
 from backend.analyzer.llm_client import call_autofill_llm, call_autofill_llm_stream
 from backend.analyzer.model_json import first_json_object
 from backend.analyzer.llm_logger import track_llm_call
@@ -251,8 +253,8 @@ def _flatten_qa_bank(bank) -> str:
 
 
 def _setting(db, key, default=""):
-    row = db.query(Setting).filter(Setting.key == key).first()
-    return row.value if row and row.value is not None else default
+    value = get_setting(db, key)
+    return value if value is not None else default
 
 
 def _json_setting(db, key, default):
@@ -267,7 +269,7 @@ def autofill_config():
     """Serve everything the extension needs to fill structured fields: the projected fixed answers, matching dictionaries, and the schema."""
     db = SessionLocal()
     try:
-        p = db.query(Persona).filter(Persona.id == 1).first()
+        p = get_persona(db, create=False)
         persona = {
             "contact": (p.contact if p else None) or {},
             "work_auth": (p.work_auth if p else None) or {},
@@ -306,13 +308,12 @@ def _build_autofill_prompt(body: dict, *, want_provider: bool = False) -> dict:
     provider = model = None
     db = SessionLocal()
     try:
-        persona = db.query(Persona).filter(Persona.id == 1).first()
-        len_row = db.query(Setting).filter(Setting.key == "autofill_default_length").first()
-        default_len = int(len_row.value) if len_row and (len_row.value or "").isdigit() else 120
-        tmpl_row = db.query(Setting).filter(Setting.key == "autofill_prompt").first()
-        if not tmpl_row or not (tmpl_row.value or "").strip():
+        persona = get_persona(db, create=False)
+        len_raw = get_setting(db, "autofill_default_length") or ""
+        default_len = int(len_raw) if len_raw.isdigit() else 120
+        template = get_setting(db, "autofill_prompt") or ""
+        if not template.strip():
             raise HTTPException(500, "autofill_prompt setting is empty")
-        template = tmpl_row.value
         persona_txt = _flatten_persona(persona) if persona else "(no persona)"
         qa_txt = _flatten_qa_bank(persona.qa_bank if persona else [])
 

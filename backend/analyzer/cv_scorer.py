@@ -4,10 +4,11 @@ import asyncio
 import json
 import logging
 import time
-from backend.analyzer.llm_client import call_llm
+from backend.analyzer.llm_client import call_llm, llm_feature
 from backend.analyzer.llm_logger import log_llm_call
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, parse_model_json
-from backend.models.db import SessionLocal, Job, Setting
+from backend.models.db import SessionLocal, Job
+from backend.accounts.settings import get_setting
 
 logger = logging.getLogger("jobnavigator.cv_scorer")
 
@@ -138,9 +139,9 @@ _PERSONA_DISPLAY = "Persona"
 
 
 def _get_persona_text(db) -> dict:
-    """Return {'Persona': flattened_text} when the singleton persona has non-empty resume_content, else {} — only resume_content is used for scoring."""
-    from backend.models.db import Persona
-    p = db.query(Persona).filter(Persona.id == 1).first()
+    """Return {'Persona': flattened_text} when the current account's persona has non-empty resume_content, else {} — only resume_content is used for scoring."""
+    from backend.accounts.owned import get_persona
+    p = get_persona(db, create=False)
     if not p:
         return {}
     text = _flatten_resume(p.resume_content or {})
@@ -164,12 +165,21 @@ def _get_resume_texts(db) -> dict:
 def _get_default_resume(db) -> dict:
     """Return {Resume.name: flat_text} for the default Resume (special id 'persona' returns persona text); empty dict if not set or not found."""
     from backend.models.db import Resume
-    row = db.query(Setting).filter(Setting.key == "default_resume_id").first()
-    if not row or not row.value:
+    # Résumé query is account-scoped: an id from another account finds nothing.
+    default_id = (get_setting(db, "default_resume_id") or "").strip()
+    if not default_id:
         return {}
-    if row.value == _PERSONA_KEY:
+    if default_id == _PERSONA_KEY:
         return _get_persona_text(db)
-    r = db.query(Resume).filter(Resume.id == row.value, Resume.is_base == True).first()
+    # R3-05: a stored value that is not a UUID counts as unset (Postgres would raise a
+    # DataError in the scoring sweep otherwise).
+    import uuid as _uuid
+    try:
+        rid = _uuid.UUID(default_id)
+    except ValueError:
+        logger.warning("default_resume_id %r is not a résumé id; ignored", default_id)
+        return {}
+    r = db.query(Resume).filter(Resume.id == rid, Resume.is_base == True).first()
     if not r:
         return {}
     text = _flatten_resume(r.json_data or {})
@@ -325,17 +335,15 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         return None
 
     if len(cv_texts) < 1:
-        logger.warning("No CVs uploaded, skipping scoring")
+        logger.info("No base résumés, skipping scoring")
         return None
 
     # Read prompts + model from settings (quick DB read, released immediately)
     settings_db = db or SessionLocal()
     try:
-        rubric_row = settings_db.query(Setting).filter(Setting.key == "scoring_rubric").first()
-        rubric = rubric_row.value if rubric_row and rubric_row.value else ""
+        rubric = get_setting(settings_db, "scoring_rubric") or ""
         schema_key = "scoring_output_full" if depth == "full" else "scoring_output_light"
-        schema_row = settings_db.query(Setting).filter(Setting.key == schema_key).first()
-        output_schema = schema_row.value if schema_row and schema_row.value else ""
+        output_schema = get_setting(settings_db, schema_key) or ""
         # Scoring can override the Primary model (empty = use Primary); the Fallback
         # is applied inside call_llm regardless, which reports the pair that answered.
         from backend.analyzer.llm_client import resolve_llm_config
@@ -344,8 +352,7 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         model_for_log = _cfg["model"]
         scoring_api_key = _cfg["api_key"]
         scoring_effort = _cfg["effort"]
-        cache_row = settings_db.query(Setting).filter(Setting.key == "prompt_caching_enabled").first()
-        caching_enabled = (cache_row.value if cache_row else "true").strip().lower() == "true"
+        caching_enabled = get_setting(settings_db, "prompt_caching_enabled", "true").strip().lower() == "true"
     finally:
         if not db:
             settings_db.close()
@@ -386,9 +393,10 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
         # Honor the prompt_caching_enabled setting — setting cached_prefix=None disables
         # the cache_control block on the Anthropic request, so caching is fully off.
         effective_prefix = cached_prefix if caching_enabled else None
-        resp = await call_llm(user_prompt, system_msg, max_tokens, cached_prefix=effective_prefix,
-                              provider=provider_for_log, model=model_for_log, api_key=scoring_api_key,
-                              effort=scoring_effort)
+        with llm_feature("scoring"):
+            resp = await call_llm(user_prompt, system_msg, max_tokens, cached_prefix=effective_prefix,
+                                  provider=provider_for_log, model=model_for_log, api_key=scoring_api_key,
+                                  effort=scoring_effort)
         text = resp["text"]
         usage = resp.get("usage", usage)
         # If call_llm fell back to the secondary pair, log what actually ran.
@@ -497,6 +505,19 @@ def unscored_filter():
     return (Job.cv_scores == None) | (cast(Job.cv_scores, Text) == "{}")
 
 
+# QA F6 / R4-01: job ids a running sweep has picked and not yet finished with. Two sweeps
+# can overlap (a manual run's sweep and the scheduled one, or the saved-job pass and the
+# new-job pass of one account); each takes only jobs nobody holds, so a job is never sent
+# to the LLM twice. The claim is taken in the same synchronous step as the batch query (no
+# await in between), which is atomic on the one event loop, and released when the sweep
+# ends. Job ids are UUIDs, unique across accounts, so one set serves every account.
+_sweep_claims: set = set()
+
+
+def claimed_jobs() -> frozenset:
+    return frozenset(_sweep_claims)
+
+
 async def analyze_unscored_jobs(status: str = "saved"):
     """Score all unscored jobs against uploaded CVs in batches of 20; status='saved' scores saved jobs, status='new' scores new jobs from auto_scoring_depth != 'off' entities only.
 
@@ -505,25 +526,57 @@ async def analyze_unscored_jobs(status: str = "saved"):
     A batch used to hold one connection from the first query to the last commit,
     LLM calls included, so a slow provider pinned a pooled connection for the
     whole run.
+
+    A job another sweep is scoring right now is left to that sweep (`_sweep_claims`).
     """
+    # Jobs this pass has already handled. A transient LLM failure leaves
+    # cv_scores NULL on purpose (so the next pass retries), which without this
+    # would make the `while True` loop re-select the same batch forever. These are
+    # also exactly the claims this pass holds.
+    attempted: set = set()
+    try:
+        await _analyze_unscored_jobs(status, attempted)
+    finally:
+        _sweep_claims.difference_update(attempted)
+
+
+# QA V-05: an account without base résumés is a normal state (a member that copied
+# only companies), not a problem. Say so once at info per account, then stay quiet
+# (debug) on every later tick until a base résumé appears.
+NO_BASE_RESUMES_MESSAGE = "No base résumés in this account, skipping the scoring pass"
+_no_resume_logged: set = set()
+
+
+def _account_key():
+    from backend.accounts.context import current_account
+    return current_account.get()
+
+
+def _log_no_base_resumes():
+    key = _account_key()
+    if key in _no_resume_logged:
+        logger.debug(NO_BASE_RESUMES_MESSAGE)
+        return
+    _no_resume_logged.add(key)
+    logger.info(NO_BASE_RESUMES_MESSAGE)
+
+
+async def _analyze_unscored_jobs(status: str, attempted: set):
     from types import SimpleNamespace
     from sqlalchemy import or_, func
     from backend.models.db import Search, Company as CompanyModel
 
     batch_size = 20
     total_scored = 0
-    # Jobs this pass has already handled. A transient LLM failure leaves
-    # cv_scores NULL on purpose (so the next pass retries), which without this
-    # would make the `while True` loop re-select the same batch forever.
-    attempted: set = set()
 
     # -- Phase 0: per-run constants (short session, no network) --------------
     db = SessionLocal()
     try:
         default_cv_texts = _get_default_resume(db) or _get_resume_texts(db)
         if not default_cv_texts:
-            logger.warning("No CVs uploaded yet, skipping analysis pipeline")
+            _log_no_base_resumes()
             return
+        _no_resume_logged.discard(_account_key())
 
         # For "new" jobs, only score those from entities with auto_scoring_depth != 'off'
         auto_score_filter = None
@@ -550,10 +603,8 @@ async def analyze_unscored_jobs(status: str = "saved"):
             auto_score_filter = or_(*conditions)
 
         # Per-run constants -- hoisted out of the per-job loop (were re-queried per job)
-        default_depth_row = db.query(Setting).filter(Setting.key == "scoring_default_depth").first()
-        default_depth = default_depth_row.value if default_depth_row and default_depth_row.value else "light"
-        threshold_row = db.query(Setting).filter(Setting.key == "fit_score_threshold").first()
-        alert_threshold = int(threshold_row.value) if threshold_row else 60
+        default_depth = get_setting(db, "scoring_default_depth") or "light"
+        alert_threshold = int(get_setting(db, "fit_score_threshold", "60"))
     finally:
         db.close()
 
@@ -572,17 +623,22 @@ async def analyze_unscored_jobs(status: str = "saved"):
                 q = q.filter(Job.status == status)
                 if auto_score_filter is not None:
                     q = q.filter(auto_score_filter)
-            if attempted:
-                q = q.filter(Job.id.notin_(list(attempted)))
+            # Our own handled jobs plus everything another sweep holds right now.
+            skip = attempted | _sweep_claims
+            if skip:
+                q = q.filter(Job.id.notin_(list(skip)))
 
             unscored = q.limit(batch_size).all()
             if not unscored:
                 break
+            # Claim the batch before anything is awaited (R4-01).
+            for job in unscored:
+                attempted.add(job.id)
+                _sweep_claims.add(job.id)
 
             logger.info(f"Analyzing batch of {len(unscored)} unscored jobs (total so far: {total_scored})")
 
             for job in unscored:
-                attempted.add(job.id)
                 company = _find_company_for_job(db, job)
                 cv_texts = _get_resume_texts_for_company(db, company) if company else default_cv_texts
 

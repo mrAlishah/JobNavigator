@@ -1,5 +1,9 @@
 """One-time Gmail OAuth2 setup script: run locally (`py backend/gmail_oauth_setup.py`) to get a
-refresh token for .env's GMAIL_REFRESH_TOKEN, catching the redirect via a temporary localhost server."""
+refresh token for .env's GMAIL_REFRESH_TOKEN, catching the redirect via a temporary localhost server.
+
+Since MT-19 every account connects its own mailbox in the app (Settings › Email classification ›
+Gmail); this script stays for the owner: GMAIL_REFRESH_TOKEN in .env is the owner's mailbox
+whenever the owner has not connected one in the app. Members never use it."""
 import http.server
 import json
 import os

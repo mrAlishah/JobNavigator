@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-from backend.models.db import get_db, Application, Job, Company, Setting, utcnow, SessionLocal
+from backend.models.db import get_db, Application, Job, Company, utcnow, SessionLocal
+from backend.accounts.settings import get_setting, default_resume_ids
 from backend.scraper._shared.bot_wall import is_bot_wall
 
 logger = logging.getLogger("jobnavigator.applications")
@@ -369,11 +370,9 @@ def create_application(
         from backend.models.db import find_company_by_name
         existing_co = find_company_by_name(db, company_name)
         if not existing_co:
-            default_resume_row = db.query(Setting).filter(Setting.key == "default_resume_id").first()
-            default_resume_ids = [default_resume_row.value] if default_resume_row and default_resume_row.value else []
             new_co = Company(
                 name=company_name, tier=None, active=False, playwright_enabled=False,
-                selected_resume_ids=default_resume_ids,
+                selected_resume_ids=default_resume_ids(db),
             )
             db.add(new_co)
             db.flush()
@@ -853,8 +852,7 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         return k(lo or hi) if (lo or hi) else None
 
     # Which optional sections to include (Settings -> Interview prep).
-    inc_row = db.query(Setting).filter(Setting.key == "prep_include").first()
-    inc = {x.strip() for x in ((inc_row.value if inc_row else None) or "resume,posting,notes").split(",") if x.strip()}
+    inc = {x.strip() for x in (get_setting(db, "prep_include") or "resume,posting,notes").split(",") if x.strip()}
 
     L = []
     add = L.append
@@ -921,10 +919,10 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         add(posting.strip() or "[no posting text was captured]")
 
     # ── 4. the ask — editable in Settings → AI ───────────────────────────────
-    ask = db.query(Setting).filter(Setting.key == "prep_ask").first()
+    ask = get_setting(db, "prep_ask") or ""
     add("")
     add("## What I need from you")
-    add((ask.value.strip() if ask and ask.value else "") or "Prepare me for this interview.")
+    add(ask.strip() or "Prepare me for this interview.")
     return {"text": "\n".join(L)}
 
 

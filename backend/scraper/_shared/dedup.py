@@ -88,12 +88,13 @@ def _get_tracking_params() -> set:
     if _tracking_params_cache is not None:
         return _tracking_params_cache
     try:
-        from backend.models.db import SessionLocal, Setting
+        from backend.models.db import SessionLocal
+        from backend.accounts.settings import get_install_setting
         db = SessionLocal()
         try:
-            row = db.query(Setting).filter(Setting.key == "dedup_tracking_params").first()
-            if row and row.value:
-                params = json.loads(row.value)
+            raw = get_install_setting(db, "dedup_tracking_params")
+            if raw:
+                params = json.loads(raw)
                 _tracking_params_cache = {p.lower() for p in params}
                 logger.info(f"Loaded {len(_tracking_params_cache)} dedup tracking params from DB")
                 return _tracking_params_cache
@@ -213,3 +214,15 @@ def make_content_hash(company: str, title: str) -> str:
     """Hash of company+title only (no URL) for cross-source dedup."""
     raw = f"{(company or '').lower().strip()}{(title or '').lower().strip()}"
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def mark_ignored(job) -> None:
+    """Turn a Job about to be stored into an "ignored" row: one the filters dropped, kept only
+    so its external_id stays in the dedup set and its page is not read again.
+
+    An ignored row carries no content_hash (R30 S-10), in every source. The content hash is the
+    cross-source key that save-from-extension and the manual add match on, and a match on an
+    ignored row would refuse the user's own save of the same company + title from another URL
+    because one search's filters dropped it once. Scrapers dedup on external_id only."""
+    job.status = "ignored"
+    job.content_hash = None

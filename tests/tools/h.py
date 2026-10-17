@@ -20,18 +20,109 @@ OUT = "/tmp/v2t"
 os.makedirs(f"{OUT}/shots", exist_ok=True)
 
 
-# ── API ──────────────────────────────────────────────────────────────────
-def api(method, path, body=None, key=KEY, raw=False, timeout=120):
-    """Call the backend. Returns (status, json_or_text). Never raises on HTTP errors."""
+# ── accounts (multi-tenancy) ─────────────────────────────────────────────
+# With 2+ accounts the install key alone selects no account (401 account_required):
+# the API path needs a signed X-Account-Token (POST /api/auth/verify-pin) and the
+# dashboard the signed jn_account cookie (POST /api/auth/switch). The harness acts as
+# the OWNER. Whether it does is decided ONCE per process from the account count at
+# that moment (`_common` pins it at import, before any case runs): the mt-* cases add
+# a second account mid-case on a one-account install and expect the picker then, so a
+# context opened during such a case must not switch on its own. JN_OWNER_PIN is only
+# needed when the owner has a PIN.
+OWNER_PIN = os.environ.get("JN_OWNER_PIN") or None
+_ACCT = {"multi": None, "owner": None, "token": None, "count": None}
+
+
+def _raw(method, path, body=None, headers=None, key=KEY, timeout=60):
     data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(BASE + "/api" + path, data=data, method=method,
-                                 headers={"X-API-Key": key, "Content-Type": "application/json"})
+    hd = {"X-API-Key": key, "Content-Type": "application/json"}
+    hd.update(headers or {})
+    req = urllib.request.Request(BASE + "/api" + path, data=data, method=method, headers=hd)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            txt = r.read().decode("utf-8", "replace")
-            st = r.status
+            return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        txt = e.read().decode("utf-8", "replace"); st = e.code
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+def owner_account(key=KEY, refresh=False):
+    """The owner's public record from /api/auth/accounts (install key only), cached."""
+    if _ACCT["owner"] is None or refresh:
+        st, txt = _raw("GET", "/auth/accounts", key=key)
+        if st != 200:
+            raise RuntimeError(f"GET /api/auth/accounts: {st} {txt[:200]}")
+        accs = json.loads(txt)
+        own = [a for a in accs if a.get("role") == "owner"] or accs[:1]
+        _ACCT["owner"] = own[0] if own else None
+        _ACCT["count"] = len(accs)
+    return _ACCT["owner"]
+
+
+def account_count(key=KEY):
+    """Live account count (uncached)."""
+    owner_account(key=key, refresh=True)
+    return _ACCT["count"]
+
+
+def owner_mode(key=KEY):
+    """True when the harness must name the owner explicitly (2+ accounts at first call)."""
+    if _ACCT["multi"] is None:
+        _ACCT["multi"] = account_count(key=key) > 1
+    return _ACCT["multi"]
+
+
+def owner_token(key=KEY, refresh=False):
+    """A signed owner X-Account-Token from verify-pin, cached until refresh."""
+    if _ACCT["token"] is None or refresh:
+        own = owner_account(key=key, refresh=refresh)
+        body = {"account_id": str(own["id"])}
+        if OWNER_PIN:
+            body["pin"] = OWNER_PIN
+        st, txt = _raw("POST", "/auth/verify-pin", body, key=key)
+        if st != 200:
+            raise RuntimeError(f"verify-pin for the owner: {st} {txt[:200]}")
+        _ACCT["token"] = json.loads(txt)["token"]
+    return _ACCT["token"]
+
+
+def owner_cookie(ctx, key=KEY):
+    """Give a browser context the owner's jn_account cookie the way the dashboard's
+    picker does (POST /api/auth/switch; the Set-Cookie lands in the context's jar).
+    No-op unless owner_mode()."""
+    if not owner_mode(key=key):
+        return False
+    body = {"account_id": str(owner_account(key=key)["id"])}
+    if OWNER_PIN:
+        body["pin"] = OWNER_PIN
+    r = ctx.request.post(BASE + "/api/auth/switch", data=body, headers={"X-API-Key": key})
+    if r.status != 200:
+        raise RuntimeError(f"auth/switch to the owner: {r.status} {r.text()[:200]}")
+    return True
+
+
+# ── API ──────────────────────────────────────────────────────────────────
+_RETRY_DETAILS = ("account_required", "invalid_account_token")
+
+
+def api(method, path, body=None, key=KEY, raw=False, timeout=120, headers=None):
+    """Call the backend. Returns (status, json_or_text). Never raises on HTTP errors.
+
+    Without an account header of the caller's own, an owner X-Account-Token is attached
+    on a multi-account install (and fetched afresh once on a 401 account_required /
+    invalid_account_token, which also covers an install that gained an account later)."""
+    hd = dict(headers or {})
+    own_hdr = any(k.lower() == "x-account-token" for k in hd)
+    if not own_hdr and owner_mode(key=key):
+        hd["X-Account-Token"] = owner_token(key=key)
+    st, txt = _raw(method, path, body, headers=hd, key=key, timeout=timeout)
+    if st == 401 and not own_hdr:
+        try:
+            detail = (json.loads(txt) or {}).get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        if detail in _RETRY_DETAILS:
+            hd["X-Account-Token"] = owner_token(key=key, refresh=True)
+            st, txt = _raw(method, path, body, headers=hd, key=key, timeout=timeout)
     if raw:
         return st, txt
     try:
@@ -64,6 +155,7 @@ def context(b, appearance="light", width=1440, height=900, dsf=1, key=KEY, extra
           "jobnavigator_welcomed": "1"}
     ls.update(extra_ls or {})
     ctx.add_init_script("try{" + "".join(f"localStorage.setItem({json.dumps(k)},{json.dumps(v)});" for k, v in ls.items()) + "}catch(e){}")
+    owner_cookie(ctx, key=key)   # 2+ accounts: open as the owner, no picker
     # warm-up: lets App.jsx sync the cookie session so /api hrefs work
     w = ctx.new_page(); w.goto(BASE + "/feed", wait_until="networkidle"); w.wait_for_timeout(500); w.close()
     return ctx

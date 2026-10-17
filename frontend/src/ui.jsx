@@ -1137,6 +1137,171 @@ export function GlyphBadge({
   )
 }
 
+// ── Avatar ──────────────────────────────────────────────────────────────────
+// An account's mark (MT-12): a disc in the account's own colour with two white
+// initials. Sizes 20 (menu rows), 22 (rail footer), 26 (lists) and 44 (the
+// account picker). The fill is DATA — the account's `#rrggbb`, validated by the
+// API — so it is the one inline colour a primitive takes from a prop; anything
+// that is not a hex colour falls back to --avatar-bg. The shape is
+// --radius-avatar (a circle; 0 on win98, where theme.css also swaps the five
+// default colours for the 16-colour palette through `data-swatch`).
+// Keep in step with backend/models/db.py ACCOUNT_COLORS.
+export const ACCOUNT_SWATCHES = ['#2f6fed', '#d9534f', '#2e9e6b', '#e0912b', '#8a5cd6']
+const AVATAR_TYPE = { 20: 'var(--t-9)', 22: 'var(--t-10)', 26: 'var(--t-11)', 44: 'var(--t-15)' }
+const HEX6 = /^#[0-9a-f]{6}$/
+// "Viktor Esadze" → VE, "alex" → AL, "Mary Ann Lee" → ML, "" → ?
+export function initialsOf(name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (!words.length) return '?'
+  const chars = words.length > 1
+    ? [Array.from(words[0])[0], Array.from(words[words.length - 1])[0]]
+    : Array.from(words[0]).slice(0, 2)
+  return chars.join('').toUpperCase()
+}
+export function Avatar({ name, color, size = 22, title, style, className }) {
+  const c = typeof color === 'string' ? color.trim().toLowerCase() : ''
+  const fill = HEX6.test(c) ? c : ''
+  const swatch = fill ? ACCOUNT_SWATCHES.indexOf(fill) : -1
+  return (
+    <span role="img" aria-label={title || name || 'Account'} title={title}
+      className={cx('v2-avatar', className)} data-swatch={swatch >= 0 ? String(swatch) : undefined}
+      style={{
+        flex: '0 0 auto', width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: 'var(--radius-avatar)', background: fill || 'var(--avatar-bg)', color: 'var(--avatar-ink)',
+        fontFamily: 'var(--font-body)', fontSize: AVATAR_TYPE[size] || AVATAR_TYPE[22], fontWeight: 'var(--weight-semibold)',
+        lineHeight: 1, letterSpacing: '.02em', userSelect: 'none', ...style,
+      }}>{initialsOf(name)}</span>
+  )
+}
+
+// ── PinPad ──────────────────────────────────────────────────────────────────
+// The 4-digit PIN entry (MT-12): one single-digit field per digit. Typing a
+// digit moves to the next field, Backspace on an empty field steps back and
+// clears it, ←/→ move, and pasting the whole PIN into any field fills every
+// field. The last digit fires `onComplete(pin)` — there is no Enter.
+//
+// The caller owns the check: it sets `busy` while verifying (the fields go
+// read-only and a Spinner sits beside them, outside the row so nothing moves),
+// then `error` (the message; the fields take the invalid border) and bumps
+// `resetKey` for the next try, which clears the fields, refocuses the first and
+// — when there is an error — shakes the row. `cooldown` (seconds, from a 429's
+// Retry-After) disables the fields and counts down in the message line;
+// `onCooldownEnd` fires when it reaches zero. `hint` is the idle message.
+const PIN_CELL = {
+  ...FIELD, width: 44, height: 48, padding: BPAD, textAlign: 'center',
+  fontFamily: 'var(--font-mono)', fontSize: 'var(--t-18)', lineHeight: 1,
+}
+export function PinPad({
+  length = 4, onComplete, busy, error, hint, cooldown = 0, onCooldownEnd, resetKey,
+  autoFocus = true, ariaLabel = 'PIN', style, className,
+}) {
+  const [digits, setDigits] = useState(() => Array(length).fill(''))
+  const [left, setLeft] = useState(() => Math.max(0, Math.ceil(cooldown || 0)))
+  const [shake, setShake] = useState(0)
+  const refs = useRef([])
+  const mounted = useRef(false)
+  // R6-05: every cell is described by the status line, so a refocused cell reads
+  // "Wrong PIN · 3 tries left", not only "digit 1"
+  const msgId = `jn-pinmsg-${React.useId().replace(/:/g, '')}`
+  const endRef = useRef(onCooldownEnd)
+  endRef.current = onCooldownEnd
+  const cooling = left > 0
+  const locked = !!busy || cooling
+
+  // a new attempt: empty fields, and a shake when the last one failed
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return }
+    setDigits(Array(length).fill(''))
+    if (error) setShake((n) => n + 1)
+  }, [resetKey])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setLeft(Math.max(0, Math.ceil(cooldown || 0))) }, [cooldown, resetKey])
+  const wasCooling = useRef(cooling)
+  useEffect(() => {
+    if (left > 0) {
+      wasCooling.current = true
+      const t = setTimeout(() => setLeft((s) => Math.max(0, s - 1)), 1000)
+      return () => clearTimeout(t)
+    }
+    if (wasCooling.current) { wasCooling.current = false; endRef.current?.() }
+    return undefined
+  }, [left])
+  // focus the first empty field whenever the pad becomes usable again
+  useEffect(() => {
+    if (!autoFocus || locked) return
+    const i = digits.findIndex((d) => !d)
+    const el = refs.current[i < 0 ? 0 : i]
+    if (el) el.focus()
+  }, [autoFocus, locked, resetKey, shake])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const focusAt = (i) => {
+    const el = refs.current[Math.max(0, Math.min(length - 1, i))]
+    if (el) { el.focus(); try { el.select() } catch { /* jsdom */ } }
+  }
+  const put = (from, raw) => {
+    if (locked) return
+    const ds = Array.from(String(raw || '').replace(/\D/g, ''))
+    if (!ds.length) return
+    const next = [...digits]
+    let j = from
+    for (const ch of ds) { if (j >= length) break; next[j++] = ch }
+    setDigits(next)
+    if (next.every(Boolean)) onComplete?.(next.join(''))
+    else focusAt(next.findIndex((d) => !d))
+  }
+  const onChange = (i) => (e) => {
+    const v = e.target.value.replace(/\D/g, '')
+    if (!v) { const next = [...digits]; next[i] = ''; setDigits(next); return }
+    put(i, v.slice(-1))   // typing over a filled field keeps the newest digit
+  }
+  const onKeyDown = (i) => (e) => {
+    if (e.key === 'Backspace') {
+      e.preventDefault()
+      if (locked) return
+      const next = [...digits]
+      if (next[i]) { next[i] = ''; setDigits(next); return }
+      if (i > 0) { next[i - 1] = ''; setDigits(next); focusAt(i - 1) }
+    } else if (e.key === 'ArrowLeft') { e.preventDefault(); focusAt(i - 1) }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); focusAt(i + 1) }
+  }
+  const onPaste = (i) => (e) => {
+    e.preventDefault()
+    const text = (e.clipboardData || window.clipboardData)?.getData('text') || ''
+    const ds = text.replace(/\D/g, '')
+    put(ds.length >= length ? 0 : i, ds)
+  }
+
+  const msg = cooling
+    ? `Too many tries · try again in ${left}s`
+    : error || (busy ? 'Checking…' : hint || '')
+  const bad = cooling || !!error
+  return (
+    <div className={className} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, ...style }}>
+      <div role="group" aria-label={ariaLabel} aria-busy={busy ? 'true' : undefined} style={{ position: 'relative', display: 'flex' }}>
+        <div key={shake} className={shake ? 'v2-shake' : undefined} style={{ display: 'flex', gap: 8 }}>
+          {digits.map((d, i) => (
+            <input key={i} ref={(el) => { refs.current[i] = el }}
+              type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]*"
+              value={d} onChange={onChange(i)} onKeyDown={onKeyDown(i)} onPaste={onPaste(i)}
+              onFocus={(e) => { try { e.target.select() } catch { /* jsdom */ } }}
+              readOnly={!!busy} disabled={cooling}
+              aria-label={`${ariaLabel} digit ${i + 1}`} aria-invalid={bad ? 'true' : undefined} aria-describedby={msgId}
+              className="v2-inset" style={{ ...PIN_CELL, opacity: cooling ? 0.6 : 1 }} />
+          ))}
+        </div>
+        {busy && (
+          <span style={{ position: 'absolute', left: 'calc(100% + 12px)', top: '50%', transform: 'translateY(-50%)', display: 'flex' }}>
+            <Spinner size={14} />
+          </span>
+        )}
+      </div>
+      <span id={msgId} aria-live="polite" style={{
+        minHeight: 18, lineHeight: '18px', fontSize: 'var(--t-11-5)', textAlign: 'center',
+        color: bad ? 'var(--bad)' : 'var(--helper-ink)',
+      }}>{msg}</span>
+    </div>
+  )
+}
+
 // ── CopyGlyph ───────────────────────────────────────────────────────────────
 // The "duplicate / copy to clipboard" mark. It used to be the character ⧉
 // (U+29C9), which none of the app's font stacks covers on Linux/Chromium — it
@@ -1821,13 +1986,54 @@ export function MoveArrows({ onUp, onDown, upOff, downOff, style, className }) {
 // same string is also the body heading it replaces. There is no small-window
 // variant: round 8 #11 dropped the `prompt` flag, so a confirm box and a full
 // modal wear the same caption and differ only in size.
+// ── VisuallyHidden ──────────────────────────────────────────────────────────
+// Text for screen readers only (QA F7 / R6-06: "(locked)" on a Settings nav entry).
+export function VisuallyHidden({ children }) {
+  return (
+    <span style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }}>{children}</span>
+  )
+}
+
+// `trapFocus` (QA F7 / R6-05) is for the gates that cannot be walked around (the
+// account picker, the account-changed notice): focus moves into the panel on open
+// unless something inside already has it, and Tab / Shift+Tab wrap inside it, so
+// the rail and the screen behind the scrim are never reached from the keyboard.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+function useFocusTrap(ref, on) {
+  useEffect(() => {
+    if (!on) return undefined
+    const items = () => Array.from(ref.current?.querySelectorAll(FOCUSABLE) || []).filter((el) => !el.closest('[inert]'))
+    const enter = () => {
+      const p = ref.current
+      if (!p || p.contains(document.activeElement)) return
+      const first = items()[0]
+      if (first) first.focus(); else { p.setAttribute('tabindex', '-1'); p.focus() }
+    }
+    // after children's own effects (a PIN pad focuses its first cell itself)
+    const t = setTimeout(enter, 0)
+    const onKey = (e) => {
+      if (e.key !== 'Tab' || !ref.current) return
+      const list = items()
+      if (!list.length) { e.preventDefault(); return }
+      const i = list.indexOf(document.activeElement)
+      if (i < 0) { e.preventDefault(); (e.shiftKey ? list[list.length - 1] : list[0]).focus(); return }
+      if (!e.shiftKey && i === list.length - 1) { e.preventDefault(); list[0].focus() }
+      else if (e.shiftKey && i === 0) { e.preventDefault(); list[list.length - 1].focus() }
+    }
+    const onFocusIn = (e) => { if (ref.current && !ref.current.contains(e.target)) enter() }
+    document.addEventListener('keydown', onKey, true)
+    document.addEventListener('focusin', onFocusIn)
+    return () => { clearTimeout(t); document.removeEventListener('keydown', onKey, true); document.removeEventListener('focusin', onFocusIn) }
+  }, [ref, on])
+}
 export function ModalPanel({
   width = 480, as, onSubmit, onClose, escape = true, escapeCapture = false, labelledBy, zIndex = 70, titlebar, title,
-  children, style, className, scrimStyle, scrimProps,
+  trapFocus = false, children, style, className, scrimStyle, scrimProps,
 }) {
   useEscape(onClose, escape && !!onClose, escapeCapture)
   const panel = useRef(null)
   useSnapTop(panel)
+  useFocusTrap(panel, trapFocus)
   const chrome = useTitleBar()
   const Panel = as === 'form' ? 'form' : 'div'
   // Round 10 · WHY THE SMALL MODALS NEVER BECAME 98 WINDOWS. The big panels
@@ -1857,7 +2063,7 @@ export function ModalPanel({
       {/* when the caption bar carries the name, the body's <Heading id={labelledBy}>
           is gone with it, so the panel names itself from the same string */}
       <Panel ref={panel} role="dialog" aria-modal="true" aria-labelledby={labelledBy}
-        aria-label={chrome && typeof title === 'string' ? title : undefined}
+        aria-label={!labelledBy && typeof title === 'string' && title ? title : (chrome && typeof title === 'string' ? title : undefined)}
         onSubmit={onSubmit} onClick={(e) => e.stopPropagation()} className={cx('v2-raised', className)}
         style={{
           // `padding` is 0 in every theme but the bevelled one, where it is the

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import api from '../api'
+import { downloadName } from '../download'
+import { useFlushBeforeSwitch } from '../accounts'
 import { Picker, VoicePicker, LengthPicker, LENGTHS, STAGE_CLASS } from './CoverLetters'
 import ConfirmDialog from '../ConfirmDialog'
 // the undo-removal helper and the band rule are shared with the résumé editors
@@ -131,13 +133,17 @@ export default function CoverLetterEditor() {
     if (!loaded.current) return
     pendingPatch.current = { ...pendingPatch.current, ...patch }
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
-      const body = pendingPatch.current
-      pendingPatch.current = {}
-      try { await api.patch(`/cover-letters/${id}`, body); setSavedAt(new Date().toISOString()); setSaveErr('') }
-      catch (e) { console.error(e); setSaveErr('Could not save — your last edit is not stored.'); pushToast({ kind: 'error', msg: 'Could not save — your last edit is not stored.' }) }
-    }, 500)
-  }, [id])
+    saveTimer.current = setTimeout(sendPending, 500)
+  }, [id])  // eslint-disable-line react-hooks/exhaustive-deps
+  async function sendPending() {
+    const body = pendingPatch.current
+    pendingPatch.current = {}
+    if (!Object.keys(body).length) return
+    try { await api.patch(`/cover-letters/${id}`, body); setSavedAt(new Date().toISOString()); setSaveErr('') }
+    catch (e) { console.error(e); setSaveErr('Could not save — your last edit is not stored.'); pushToast({ kind: 'error', msg: 'Could not save — your last edit is not stored.' }) }
+  }
+  // QA F7 / R6-01: a switch sends the merged patch the timer still owes first
+  useFlushBeforeSwitch(() => { clearTimeout(saveTimer.current); return sendPending() })
 
   const update = (mutator) => {
     setData((prev) => {
@@ -180,11 +186,9 @@ export default function CoverLetterEditor() {
   const download = async () => {
     try {
       const r = await api.get(`/cover-letters/${id}/pdf`, { responseType: 'blob' })
-      const cd = r.headers['content-disposition'] || ''
-      const m = /filename="?([^"]+)"?/.exec(cd)
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
-      a.href = url; a.download = m ? m[1] : 'CoverLetter.pdf'
+      a.href = url; a.download = downloadName(r.headers?.['content-disposition'], 'CoverLetter.pdf')
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (e) { console.error(e); pushToast({ kind: 'error', msg: 'Could not download the PDF.' }) }   // a download failure is not a save failure

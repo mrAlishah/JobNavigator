@@ -22,6 +22,8 @@ export const kb = (fn, role = 'button') => ({
 export const EMPTY = { header: { name: '', contact_items: [] }, summary: '', experience: [], skills: {}, education: [], projects: [], publications: [] }
 export const SECTION_ORDER = ['Header', 'Summary', 'Experience', 'Skills', 'Education', 'Projects', 'Publications', 'Settings']
 export const PERSONA_SECTIONS = SECTION_ORDER.filter((name) => name !== 'Settings')
+// The résumé editor lists every section, Settings included; Persona uses PERSONA_SECTIONS.
+export const resumeSectionNames = () => SECTION_ORDER
 
 // Section counts for the collapsed header, from whichever sections exist.
 export const sectionCounts = (data) => ({

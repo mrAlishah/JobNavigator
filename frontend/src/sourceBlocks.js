@@ -6,6 +6,18 @@
 export const BLOCKED_BADGE = 'Often blocked'
 
 export const SOURCE_BLOCKS = {
-  zip_recruiter: 'The ZipRecruiter server refuses the requests that this scraper sends.',
+  zip_recruiter: 'ZipRecruiter redirects this scraper to a regional site that it does not read, or refuses its requests.',
   google: 'Google usually returns a JavaScript check page instead of job data, and this scraper cannot read that page.',
+}
+
+// Whole search modes whose site refuses this scraper from some networks. The editor shows
+// the reason under the mode note; the run then fails with the backend's text
+// (backend/scraper/sources/caribbeanjobs.py `CLOUDFLARE_BLOCKED`). Change both places together.
+export const MODE_BLOCKS = {
+  caribbeanjobs: 'caribbeanjobs.com answers many networks with a Cloudflare challenge, which this scraper does not pass. From such a network every run and Test fails and says so.',
+}
+
+// Terms notices for modes that scrape a site which discourages automated access.
+export const MODE_TERMS = {
+  caribbeanjobs: 'Terms: caribbeanjobs.com challenges automated visitors, so scraping it may break its terms of use. Use at your own risk; see LEGAL_DISCLAIMER.md.',
 }

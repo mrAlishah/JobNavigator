@@ -9,7 +9,7 @@ style keys that matter for design consistency, and groups sites by role and sign
 import re, os, sys, json, collections, io
 
 # Same scanned set as stylelint.py: frontend/src/*.jsx + frontend/src/screens/*.jsx.
-# classic/ (the Tailwind v1 interface), design-base/ (git-ignored /ui gallery +
+# design-base/ (git-ignored /ui gallery +
 # /toasts lab) and __tests__/ are deliberately not scanned — design-base renders
 # primitives on purpose, so its signatures are not screen drift.
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "src")

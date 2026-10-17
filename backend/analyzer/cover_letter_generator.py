@@ -7,7 +7,7 @@ import logging
 from backend.analyzer.cv_scorer import _flatten_resume
 from backend.analyzer.llm_client import call_cover_letter_llm
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
-from backend.models.db import Setting
+from backend.accounts.settings import get_setting
 
 logger = logging.getLogger("jobnavigator.cover_letter")
 
@@ -21,16 +21,15 @@ _LENGTH_INSTRUCTIONS = {
 def resolve_voice_instruction(db, voice_id: str | None) -> tuple[str, str]:
     """Return (voice_id, instruction) for the given preset id, falling back to cover_letter_default_voice, then the first preset, then a neutral instruction; returns the resolved id so callers can persist it."""
     presets = []
-    row = db.query(Setting).filter(Setting.key == "cover_letter_voice_presets").first()
-    if row and row.value:
+    raw = get_setting(db, "cover_letter_voice_presets")
+    if raw:
         try:
-            presets = json.loads(row.value)
+            presets = json.loads(raw)
         except (ValueError, TypeError):
             presets = []
 
     if not voice_id:
-        d = db.query(Setting).filter(Setting.key == "cover_letter_default_voice").first()
-        voice_id = (d.value if d and d.value else "") or None
+        voice_id = get_setting(db, "cover_letter_default_voice") or None
 
     by_id = {p.get("id"): p for p in presets if isinstance(p, dict)}
     if voice_id and voice_id in by_id:

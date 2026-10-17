@@ -11,10 +11,12 @@ from fastapi.responses import Response, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend.models.db import get_db, CoverLetter, Resume, Job, Setting, Persona, TracerLink, TracerClickEvent, SessionLocal
+from backend.accounts.owned import get_owned_or_404, get_persona, owned_id_or_404
+from backend.models.db import get_db, CoverLetter, Resume, Job, Persona, TracerLink, TracerClickEvent, SessionLocal
+from backend.accounts.settings import get_setting
 from backend.api._input import str_field, uuid_filter
 from backend.job_monitor import launch_background, JobAlreadyRunningError
-from backend.api.routes_resumes import _get_browser, _rewrite_urls_with_tracers, _resolve_tailoring_jd  # shared with resumes
+from backend.api.routes_resumes import _content_disposition, _header_name, _render_pdf, _rewrite_urls_with_tracers, _resolve_tailoring_jd  # shared with resumes
 
 logger = logging.getLogger("jobnavigator.cover_letters")
 
@@ -60,7 +62,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str) -> str:
     from jinja2 import Environment, FileSystemLoader
     from markupsafe import Markup
 
-    from backend.api.routes_resumes import _load_template_fonts, resolve_template_dir
+    from backend.api.routes_resumes import _load_template_fonts, _render_safe_links, resolve_template_dir
 
     # Same on-disk allowlist the résumé renderer uses — the folder comes from the
     # directory listing, the request name is only a key (R4-T5-01).
@@ -75,7 +77,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str) -> str:
 
     fonts = _load_template_fonts(str(template_dir / "fonts"))
 
-    return template.render(**json_data, page_format=page_format, fonts=fonts)
+    return template.render(**_render_safe_links(json_data or {}), page_format=page_format, fonts=fonts)
 
 
 @router.get("/templates")
@@ -167,10 +169,11 @@ def create_cover_letter(body: dict, db: Session = Depends(get_db)):
     name = str_field(body, "name", required=True)
     if "template" in body:
         _validate_template(body["template"])
+    # Body ids must be the account's own rows (MT-5): 404 for anything else.
     cl = CoverLetter(
         name=name,
-        job_id=body.get("job_id"),
-        resume_id=body.get("resume_id"),
+        job_id=owned_id_or_404(db, Job, body.get("job_id")),
+        resume_id=owned_id_or_404(db, Resume, body.get("resume_id")),
         template=body.get("template", _default_template_id()),
         page_format=body.get("page_format", "letter"),
         json_data=body.get("json_data", {}),
@@ -198,6 +201,12 @@ def update_cover_letter(cl_id: str, body: dict, db: Session = Depends(get_db)):
                "voice", "length"}
     if "template" in body:
         _validate_template(body["template"])
+    # Re-pairing a letter: the new job / résumé must be the account's own (MT-5).
+    body = dict(body)
+    if "job_id" in body:
+        body["job_id"] = owned_id_or_404(db, Job, body["job_id"])
+    if "resume_id" in body:
+        body["resume_id"] = owned_id_or_404(db, Resume, body["resume_id"])
     for k, v in body.items():
         if k in allowed:
             setattr(cl, k, v)
@@ -268,22 +277,19 @@ async def export_pdf(cl_id: str, db: Session = Depends(get_db)):
     paper_format = "A4" if fmt.lower() == "a4" else "Letter"
 
     try:
-        browser = await _get_browser()
-        page = await browser.new_page()
-        await page.set_content(html, wait_until="networkidle")
-        pdf_bytes = await page.pdf(
-            format=paper_format, print_background=True,
+        # JavaScript off, no network but Google Fonts: the letter's text is HTML here.
+        pdf_bytes = await _render_pdf(
+            html, format=paper_format, print_background=True,
             margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
         )
-        await page.close()
     except Exception as e:
         logger.error(f"Cover-letter PDF generation failed: {e}")
         raise HTTPException(500, f"PDF generation failed: {str(e)}")
 
     # Filename: {Name}_{Type}_CoverLetter_{number}.pdf
-    header_name = (cl.json_data or {}).get("header", {}).get("name", "CoverLetter").replace(" ", "")
+    header_name = (_header_name(cl.json_data) or "CoverLetter").replace(" ", "")
     def _safe(text: str) -> str:
-        """ASCII, no spaces or punctuation that muddles a download filename."""
+        """Letters (any script), digits, `-` and `_`; no spaces or punctuation that muddles a download filename."""
         out = "".join(c for c in (text or "") if c.isalnum() or c in " -_").strip()
         return out.replace(" ", "")
 
@@ -295,12 +301,14 @@ async def export_pdf(cl_id: str, db: Session = Depends(get_db)):
             if job.short_id:
                 number = f"_{job.short_id}"
             label = _safe(job.company) or label
-    filename = f"{header_name}_{label}_CoverLetter{number}".encode("ascii", "replace").decode()
+    # An ASCII filename= for old clients plus filename*=UTF-8'' so José or Дана keeps its name
+    # (the same header the résumé downloads send).
+    stem = f"{header_name}_{label}_CoverLetter{number}"
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'},
+        headers={"Content-Disposition": _content_disposition(stem, "pdf")},
     )
 
 
@@ -319,33 +327,27 @@ async def generate_cover_letter(body: dict, db: Session = Depends(get_db)):
 
     target_id = body.get("cover_letter_id")
     if target_id:
-        if not db.query(CoverLetter).filter(CoverLetter.id == target_id).first():
-            raise HTTPException(404, "Cover letter not found")
+        get_owned_or_404(db, CoverLetter, target_id)
 
     # Reserved id 'persona' bases the letter on the Persona's resume_content
     # (mirrors the tailor flow). Otherwise resume_id must be a real Resume row.
     if resume_id == "persona":
-        persona = db.query(Persona).filter(Persona.id == 1).first()
+        persona = get_persona(db, create=False)
         if not persona or not (persona.resume_content or {}):
             raise HTTPException(400, "Persona has no resume_content — fill it in /persona first")
     else:
-        resume = db.query(Resume).filter(Resume.id == resume_id).first()
-        if not resume:
-            raise HTTPException(404, "Resume not found")
+        resume = get_owned_or_404(db, Resume, resume_id)
         if not (resume.json_data or {}):
             raise HTTPException(400, "Resume has no content")
 
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(404, "Job not found")
+    job = get_owned_or_404(db, Job, job_id)
     # Fast-fail: the job needs some JD source; _generate_inner resolves the actual
     # text (description -> live fetch -> cached page) later, so this skips the slow fetch.
     # A hand-logged job (Log application) arrives with a URL and no description.
     if not ((job.description or "").strip() or (job.url or "").strip() or (job.cached_page_text or "").strip()):
         raise HTTPException(400, "Job has no description, URL, or cached page to write from")
 
-    prompt_row = db.query(Setting).filter(Setting.key == "cover_letter_prompt").first()
-    if not prompt_row or not (prompt_row.value or "").strip():
+    if not (get_setting(db, "cover_letter_prompt") or "").strip():
         raise HTTPException(500, "cover_letter_prompt setting is empty — configure it in Settings")
 
     # Regenerating scopes to the letter, so rewriting one draft never blocks
@@ -401,7 +403,7 @@ async def _generate_inner(resume_id, job_id, voice, length, template, page_forma
     db = SessionLocal()
     try:
         job = db.query(Job).filter(Job.id == job_id).first()
-        persona = db.query(Persona).filter(Persona.id == 1).first()
+        persona = get_persona(db, create=False)
         if not job:
             raise RuntimeError("job missing at execution time")
 
@@ -430,7 +432,7 @@ async def _generate_inner(resume_id, job_id, voice, length, template, page_forma
             base_page_format = resume.page_format
             stored_resume_id = resume_id
 
-        prompt_template = db.query(Setting).filter(Setting.key == "cover_letter_prompt").first().value
+        prompt_template = get_setting(db, "cover_letter_prompt")
         voice_id, voice_instruction = resolve_voice_instruction(db, voice)
         preferences = (persona.preferences if persona else {}) or {}
 

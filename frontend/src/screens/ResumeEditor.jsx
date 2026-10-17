@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api'
+import { useFlushBeforeSwitch } from '../accounts'
 import '../theme.css'
 import { useToasts, ToastStack } from '../Toast'
 import ConfirmDialog, { PromptDialog } from '../ConfirmDialog'
+import { downloadName } from '../download'
 import { useEscape, useSingleOpen, setFlashToast, fetchRunOutcome, runFailed, runFailureReason, useSettled, NBSP } from '../hooks'
 import { useTitle } from '../useTitle'
 // The résumé-content editors are shared with /persona (a Persona's
 // resume_content is the same shape as a Resume's json_data).
 import {
-  EMPTY, SECTION_ORDER, sectionCounts, makeMutators,
+  EMPTY, resumeSectionNames, sectionCounts, makeMutators,
   SectionShell, SectionEditor, BandRule, StyleSettings, STYLE_AREAS, styleAreaLabel,
 } from './ResumeSections'
 import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, CopyGlyph, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
@@ -411,15 +413,25 @@ export default function ResumeEditor() {
   }, [isCopy, doc, freeformJd, changes.length, reviewed, scores.tailored, scoring, coverExists, jobData, runScore, markApplied]) // eslint-disable-line
 
   // debounced persist
+  // QA F7 / R6-01: the patch the timer still owes, so a switch can send it first
+  const pendingSave = useRef(null)
+  const sendSave = useCallback(async (patch) => {
+    try { await api.patch(`/resumes/${id}`, patch); setSavedAt(new Date().toISOString()) }
+    catch (e) { console.error(e); setSavedAt(null); pushToast({ kind: 'error', msg: `Save failed — your last edit is not stored. ${e.response?.data?.detail || e.message || ''}`.trim() }) }
+    setSaving(false)
+  }, [id])  // eslint-disable-line react-hooks/exhaustive-deps
   const persist = useCallback((patch) => {
     setSaving(true)
     clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(async () => {
-      try { await api.patch(`/resumes/${id}`, patch); setSavedAt(new Date().toISOString()) }
-      catch (e) { console.error(e); setSavedAt(null); pushToast({ kind: 'error', msg: `Save failed — your last edit is not stored. ${e.response?.data?.detail || e.message || ''}`.trim() }) }
-      setSaving(false)
-    }, 500)
-  }, [id])
+    pendingSave.current = patch
+    saveTimer.current = setTimeout(() => { pendingSave.current = null; sendSave(patch) }, 500)
+  }, [sendSave])
+  useFlushBeforeSwitch(() => {
+    const patch = pendingSave.current
+    if (!patch) return undefined
+    clearTimeout(saveTimer.current); pendingSave.current = null
+    return sendSave(patch)
+  })
   const onData = useCallback((next) => { setData(next); persist({ json_data: next }) }, [persist])
   const pickTemplate = (t) => { setTemplate(t); setTplOpen(false); persist({ template: t }) }
   const pickFormat = (f) => { setFormat(f); setFmtOpen(false); persist({ page_format: f }) }
@@ -517,15 +529,6 @@ export default function ResumeEditor() {
     return n
   })
 
-  const pdfDownloadUrl = useMemo(() => {
-    const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
-    return `${base}/api/resumes/${id}/pdf?template=${encodeURIComponent(template)}&format=${encodeURIComponent(format)}`
-  }, [id, template, format])
-  const docxDownloadUrl = useMemo(() => {
-    const base = (api.defaults.baseURL || '').replace(/\/api$/, '')
-    return `${base}/api/resumes/${id}/docx?template=${encodeURIComponent(template)}&format=${encodeURIComponent(format)}`
-  }, [id, template, format])
-
   // Reserves the chrome's shape while the document loads, instead of a bare "Loading…"
   // that collapses the screen then jumps to the real layout once the doc lands.
   if (!doc || !data) {
@@ -543,6 +546,7 @@ export default function ResumeEditor() {
   }
 
   const counts = sectionCounts(data)
+  const sectionNames = resumeSectionNames(doc)
   const tplLabel = templates.find((t) => t.id === template)?.name || template || 'Template'
 
   return (
@@ -668,7 +672,7 @@ export default function ResumeEditor() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* left: sections */}
         <section className="v2-scroll" style={{ flex: '0 0 47%', borderRight: '1px solid var(--line)', overflow: 'auto', padding: '14px 20px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {SECTION_ORDER.map((name) => (
+          {sectionNames.map((name) => (
             <SectionShell key={name} name={name} count={counts[name]} open={open.has(name)} onToggle={() => toggle(name)}
               meta={changedSections.has(name) ? <span title="Contains unreviewed tailoring changes" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--warn)' }}>● changed by tailoring</span> : null}>
               <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={tpl?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
@@ -707,7 +711,7 @@ export default function ResumeEditor() {
             {supportsStyle && <Button size="sm" title="Click a section in the preview to style it" onClick={() => { setSelectMode((v) => !v); setSelected(null) }}>
               {selectOn ? 'Back to PDF' : 'Select & style'}
             </Button>}
-            <DownloadMenu pdfUrl={pdfDownloadUrl} docxUrl={docxDownloadUrl} />
+            <DownloadMenu id={id} template={template} format={format} onError={(msg) => pushToast({ kind: 'error', msg })} />
           </HeaderRow>
           <Surface radius="none" style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             {selectOn
@@ -744,6 +748,46 @@ export default function ResumeEditor() {
       {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
 
       <ToastStack toasts={toasts} onClose={dismissToast} />
+    </div>
+  )
+}
+
+// ── Download (PDF / Word) ────────────────────────────────────────────────────
+// The preview toolbar's Download button and its menu; the Word export is based on work by
+// @mrAlishah. Each choice goes through axios and saves the blob, like the cover-letter
+// download, so the X-API-Key header travels and a failed export is an error toast rather
+// than a JSON page in a new tab. The current template and paper ride along, so a fresh
+// pick that the debounced save hasn't stored yet is still what downloads.
+export function DownloadMenu({ id, template, format, onError }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  useEscape(() => setOpen(false), open)
+  const download = async (kind) => {
+    setOpen(false); setBusy(true)
+    try {
+      const r = await api.get(`/resumes/${id}/${kind}`, { responseType: 'blob', params: { template, format } })
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url; a.download = downloadName(r.headers?.['content-disposition'], `Resume.${kind}`)
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (e) {
+      console.error(e)
+      onError?.(kind === 'docx' ? 'Could not download the Word document.' : 'Could not download the PDF.')
+    } finally { setBusy(false) }
+  }
+  // Overrides keep the toolbar's own 29px height and 12px label.
+  return (
+    <div style={{ position: 'relative', flex: '0 0 auto', marginLeft: 'auto' }}>
+      <Button size="sm" busy={busy} ariaHaspopup="menu" ariaExpanded={open} onClick={() => setOpen((v) => !v)}
+        style={{ minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download</Button>
+      {open && (
+        <Menu ariaLabel="Download résumé" onDismiss={() => setOpen(false)}
+          style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 168 }}>
+          <MenuItem hint=".pdf" hintMono onClick={() => download('pdf')}>PDF</MenuItem>
+          <MenuItem hint=".docx" hintMono onClick={() => download('docx')}>Word</MenuItem>
+        </Menu>
+      )}
     </div>
   )
 }
@@ -814,27 +858,6 @@ function RetailorModal({ doc, job, chain, onClose, onRun, pushToast }) {
 // The tailor endpoint chains a score of the copy it just made — a second LLM call the
 // modals should mention. Reads the setting that controls it; the control itself stays in Settings › AI.
 // Toolbar Download button + its PDF / Word menu — same open/backdrop/Escape shape as the ⋯ actions menu.
-export function DownloadMenu({ pdfUrl, docxUrl }) {
-  const [open, setOpen] = useState(false)
-  useEscape(() => setOpen(false), open)
-  return (
-    <div style={{ position: 'relative', flex: '0 0 auto', marginLeft: 'auto' }}>
-      {/* round 9: `Button` keeps the toolbar's own 29px height and 12px label. */}
-      <Button size="sm" ariaHaspopup="menu" ariaExpanded={open} onClick={() => setOpen((v) => !v)}
-        style={{ minWidth: 0, height: 29, gap: 6, fontSize: 12 }}>↓ Download</Button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 44 }} />
-          <Menu ariaLabel="Download résumé" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 5, zIndex: 45, width: 168 }}>
-            <MenuItem href={pdfUrl} target="_blank" onClick={() => setOpen(false)}>PDF</MenuItem>
-            <MenuItem href={docxUrl} target="_blank" onClick={() => setOpen(false)}>Word (.docx)</MenuItem>
-          </Menu>
-        </>
-      )}
-    </div>
-  )
-}
-
 const chainNote = (chain) => (chain
   ? `Also scores the copy afterwards at ${chain} depth · 1 more LLM call · change under Settings › AI`
   : 'Scoring after tailoring is off')

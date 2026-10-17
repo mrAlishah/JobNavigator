@@ -120,7 +120,9 @@ async def test_is_logged_in_trusts_voyager_not_the_dom(page, expected):
     [
         # /me refuses, but the feed loaded with the auth cookie — a live session.
         ("https://www.linkedin.com/feed/", 401, True, True),
-        ("https://www.linkedin.com/jobs/", 0, True, True),
+        ("https://www.linkedin.com/mynetwork/", 0, True, True),
+        # /jobs is public: a revoked `li_at` still in the jar must not pass as a session.
+        ("https://www.linkedin.com/jobs/", 0, True, False),
         # No `li_at`: an anonymous visit, however the URL reads.
         ("https://www.linkedin.com/feed/", 401, False, False),
         # A signed-out URL wins even with the cookie still set.
@@ -373,3 +375,88 @@ async def test_is_logged_in_is_false_when_the_url_is_unreadable():
             return 200
 
     assert await lp._is_logged_in(_Boom()) is False
+
+
+class _TimeoutLocator:
+    def __init__(self, timeouts):
+        self._timeouts = timeouts
+        self.first = self
+
+    async def fill(self, _value, timeout=None):
+        self._timeouts.append(timeout)
+
+    async def press(self, _key):
+        return None
+
+
+class _TimeoutPage:
+    def __init__(self):
+        self.timeouts = []
+
+    def locator(self, _selector):
+        return _TimeoutLocator(self.timeouts)
+
+
+@pytest.mark.asyncio
+async def test_fill_login_form_keeps_the_full_wait_by_default(monkeypatch):
+    """The manual session refresh calls it without a timeout: a slow login page gets 30 s."""
+    from backend.scraper.sources import linkedin_personal as lp
+
+    async def _no_sleep(_seconds):
+        return None
+    monkeypatch.setattr(lp.asyncio, "sleep", _no_sleep)
+    page = _TimeoutPage()
+    await lp._fill_login_form(page, "user@example.com", "secret")
+    assert page.timeouts == [30000, 30000]
+
+
+@pytest.mark.asyncio
+async def test_login_fills_with_the_short_wait(monkeypatch):
+    from backend.scraper.sources import linkedin_personal as lp
+
+    async def _no_sleep(_seconds):
+        return None
+    monkeypatch.setattr(lp.asyncio, "sleep", _no_sleep)
+
+    async def not_logged_in(*_a, **_k):
+        return False
+    monkeypatch.setattr(lp, "_is_logged_in", not_logged_in)
+
+    seen = {}
+    async def fake_fill(_page, _email, _password, timeout=30000):
+        seen["timeout"] = timeout
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(lp, "_fill_login_form", fake_fill)
+
+    page = _SessionPage(url="https://www.linkedin.com/login", status=401)
+    with pytest.raises(RuntimeError, match="stop here"):
+        await lp._login(page, _FakeContext([]), "user@example.com", "secret")
+    assert seen["timeout"] == 10000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("landing", [
+    "https://www.linkedin.com/authwall?trk=x",
+    "https://www.linkedin.com/login?session_redirect=%2Fjobs%2Fcollections%2Frecommended",
+])
+async def test_scrape_collection_reports_an_expired_session(monkeypatch, landing):
+    """A collection that lands on the login wall is a dead session, not 0 jobs."""
+    from backend.scraper.sources import linkedin_personal as lp
+
+    async def _no_sleep(_seconds):
+        return None
+    monkeypatch.setattr(lp.asyncio, "sleep", _no_sleep)
+
+    class _WallPage:
+        url = ""
+
+        async def goto(self, _url, **_kw):
+            self.url = landing
+
+    async def no_cards(*_a, **_k):
+        raise AssertionError("cards scraped on the login wall")
+    monkeypatch.setattr(lp, "_scrape_page_with_clicks", no_cards)
+
+    with pytest.raises(lp.LinkedInSessionExpiredError, match="session expired"):
+        await lp._scrape_collection(_WallPage(), "https://www.linkedin.com/jobs/collections/recommended/",
+                                    "recommended")

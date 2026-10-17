@@ -3,7 +3,6 @@
 Configured via the Search's `direct_url` (a freehire URL whose query params are forwarded verbatim, `limit`/`offset`/`page` ignored since we paginate) and/or `search_term` (used as `q=`, overriding any q in direct_url); at least one must be set.
 """
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qsl
@@ -12,12 +11,14 @@ import httpx
 from sqlalchemy.exc import IntegrityError
 
 from backend.models.db import (
-    SessionLocal, Job, Search, Setting, get_existing_external_ids,
-    get_global_title_exclude, find_company_by_name,
+    SessionLocal, Job, Search, get_existing_external_ids,
+    find_company_by_name,
 )
+from backend.accounts.settings import get_setting
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
-from backend.scraper._shared.filters import build_search_exclude_sets
-from backend.scraper._shared.analysis import analyze_inline
+from backend.scraper._shared.filters import build_search_exclude_sets, search_title_filters, title_kept
+from backend.scraper._shared.analysis import analyze_inline, prefetch_h1b
+from backend.scraper._shared.html_text import html_to_text as _strip_html  # freehire descriptions are HTML
 
 logger = logging.getLogger("jobnavigator.freehire")
 
@@ -25,21 +26,6 @@ API_URL = "https://freehire.me/api/v1/jobs/search"
 PAGE_SIZE = 100
 _MAX_PAGES = 50  # defensive cap: 5000 jobs / scrape
 _DROP_PARAMS = {"limit", "offset", "page", "per_page"}
-
-
-def _strip_html(html_str: str) -> str:
-    """freehire descriptions are HTML; flatten to plaintext, inserting newlines only at block boundaries (</p>, </li>, <br>, …) so inline markup (<b>, <a>) doesn't split words."""
-    if not html_str:
-        return ""
-    try:
-        from bs4 import BeautifulSoup
-        s = re.sub(r"(?i)<br\s*/?>", "\n", html_str)
-        s = re.sub(r"(?i)</(p|div|li|h[1-6]|tr|ul|ol)>", "\n", s)
-        text = BeautifulSoup(s, "html.parser").get_text()  # no separator → inline words stay joined
-        return re.sub(r"\n{3,}", "\n\n", text).strip()
-    except Exception:
-        import html as _html
-        return _html.unescape(re.sub(r"<[^>]+>", " ", html_str)).strip()
 
 
 def _base_params(search: Search) -> dict:
@@ -86,10 +72,11 @@ def _annual_salary(j: dict) -> tuple:
     return j.get("salary_min"), j.get("salary_max")
 
 
-async def _fetch_all(search: Search) -> list[dict]:
-    """Paginate the freehire search API up to results_wanted (limit/offset)."""
+async def _fetch_all(search: Search, wanted: int | None = None) -> list[dict]:
+    """Paginate the freehire search API up to results_wanted (limit/offset); `wanted`
+    overrides it for a shared fetch (MT-8: the max among subscribers)."""
     base = _base_params(search)
-    wanted = search.results_wanted or 100
+    wanted = wanted or search.results_wanted or 100
     out: list[dict] = []
     offset = 0
     async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "JobNavigator/1.0 (+freehire source)"}) as client:
@@ -111,9 +98,11 @@ async def _fetch_all(search: Search) -> list[dict]:
     return out[:wanted]
 
 
-async def _collect(search: Search) -> list[dict]:
-    """Fetch + parse + dedup-within-batch (by apply URL, then slug)."""
-    raw_list = await _fetch_all(search)
+async def _collect(search: Search, raw_list: list | None = None) -> list[dict]:
+    """Fetch + parse + dedup-within-batch (by apply URL, then slug); `raw_list` skips the
+    fetch (a shared fetch already trimmed to this search's results_wanted)."""
+    if raw_list is None:
+        raw_list = await _fetch_all(search)
     seen = set()
     unique = []
     for r in raw_list:
@@ -127,40 +116,36 @@ async def _collect(search: Search) -> list[dict]:
     return unique
 
 
-def _title_filters(search: Search, db) -> tuple[list, list]:
-    include_kw = search.title_include_keywords or []
-    exclude_kw = list(set((search.title_exclude_keywords or []) + get_global_title_exclude(db)))
-    return include_kw, exclude_kw
-
-
-def _title_kept(title: str, include_kw: list, exclude_kw: list) -> tuple[bool, str | None]:
-    tl = title.lower()
-    if include_kw and not any(kw.lower() in tl for kw in include_kw):
-        return False, f"No match for: {', '.join(include_kw)}"
-    if exclude_kw:
-        matched = [kw for kw in exclude_kw if re.search(r'\b' + re.escape(kw) + r'\b', tl)]
-        if matched:
-            return False, f"Excluded by: {', '.join(matched)}"
-    return True, None
-
-
-async def run(search: Search) -> dict:
-    """Full scrape entry point. Fetch → filter → save to DB."""
+async def run(search: Search, shared=None) -> dict:
+    """Full scrape entry point. Fetch → filter → save to DB. `shared` (MT-8 SharedFetch):
+    one API fetch at the largest results_wanted among subscribers, cut to this search's own."""
     start = time.time()
     try:
-        unique = await _collect(search)
+        if shared is None:
+            unique = await _collect(search)
+        else:
+            raw = await shared.get(lambda: _fetch_all(search, shared.params.get("results_wanted")))
+            unique = await _collect(search, raw_list=raw[: (search.results_wanted or 100)])
         logger.info(f"freehire '{search.name}': {len(unique)} jobs fetched")
 
         db = SessionLocal()
         new_jobs = 0
         try:
-            include_kw, exclude_kw = _title_filters(search, db)
+            include_kw, exclude_kw = search_title_filters(search, db)
             global_exclude_set, search_exclude_set = build_search_exclude_sets(db, search)
             existing_ids = get_existing_external_ids(db)
 
+            # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
+            await prefetch_h1b([
+                j.get("company") for j in unique
+                if j["url"] and title_kept(j["title"], include_kw, exclude_kw)[0]
+                and (j.get("company") or "").lower() not in global_exclude_set | search_exclude_set
+                and make_external_id(j["company"], j["title"], j["url"]) not in existing_ids
+            ])
+
             kept = 0
             for j in unique:
-                ok, _ = _title_kept(j["title"], include_kw, exclude_kw)
+                ok, _ = title_kept(j["title"], include_kw, exclude_kw)
                 if not ok:
                     continue
                 company_lower = (j.get("company") or "").lower()
@@ -205,7 +190,7 @@ async def run(search: Search) -> dict:
                     logger.warning(f"freehire inline analysis failed for {j['title']}: {e}")
 
                 if job.h1b_jd_flag:
-                    logger.info(f"Skipping (body exclusion): {j['title']} @ {j.get('company', '?')}")
+                    logger.info(f"Skipping (body exclusion): {j['title']} @ {job.company or j.get('company') or '?'}")
                     continue
 
                 try:
@@ -247,16 +232,16 @@ async def preview(search: Search, db) -> dict:
     try:
         unique = await _collect(search)
         raw_count = len(unique)
-        include_kw, exclude_kw = _title_filters(search, db)
+        include_kw, exclude_kw = search_title_filters(search, db)
         global_exclude_set, search_exclude_set = build_search_exclude_sets(db, search)
         all_exclude = list(global_exclude_set | search_exclude_set)
 
         import json
-        body_row = db.query(Setting).filter(Setting.key == "body_exclusion_phrases").first()
+        body_raw = get_setting(db, "body_exclusion_phrases")
         body_phrases = []
-        if body_row and body_row.value:
+        if body_raw:
             try:
-                body_phrases = json.loads(body_row.value)
+                body_phrases = json.loads(body_raw)
             except json.JSONDecodeError:
                 pass
 
@@ -265,7 +250,7 @@ async def preview(search: Search, db) -> dict:
 
         results = []
         for j in unique:
-            kept, reason = _title_kept(j["title"], include_kw, exclude_kw)
+            kept, reason = title_kept(j["title"], include_kw, exclude_kw)
             if kept:
                 cl = (j.get("company") or "").lower()
                 if cl in global_exclude_set:

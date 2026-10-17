@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import api from '../api'
+import api, { accountChanged, writeHeaders } from '../api'
+import { useFlushBeforeSwitch } from '../accounts'
 import { useToasts, ToastStack } from '../Toast'
 import { useSettled, NBSP } from '../hooks'
 import { Band, Button, Card, ChoiceCard, ChoiceModal, ChoiceRow, Heading, HeaderRow, Helper, Input, Label, PageTitle, Pill, SectionHead, Select } from '../ui'
@@ -168,15 +169,28 @@ export default function Persona() {
   const flushPending = useCallback(() => {
     const pend = timers.current
     timers.current = {}
+    // a tab that went stale (another tab switched the browser) writes nothing
+    if (accountChanged()) { Object.values(pend).forEach((e) => clearTimeout(e.timer)); return }
     Object.entries(pend).forEach(([key, e]) => {
       clearTimeout(e.timer)
-      const headers = { 'Content-Type': 'application/json' }
-      try { const k = localStorage.getItem('jobnavigator_api_key'); if (k) headers['X-API-Key'] = k } catch { /* ignore */ }
+      // writeHeaders carries X-Expected-Account (QA F7 / R6-01): if the cookie already
+      // names another account, the server refuses this instead of writing it there.
+      const headers = writeHeaders()
       try { fetch('/api/persona', { method: 'PATCH', headers, credentials: 'include', keepalive: true, body: JSON.stringify({ [key]: e.value }) }) }
       // silent: last-chance flush on unmount/beforeunload — nowhere to show a toast.
       catch { api.patch('/persona', { [key]: e.value }).catch(() => { /* silent: see above — nowhere left to report to */ }) }
     })
   }, [])
+  // QA F7 / R6-01: before an account switch, send what the timers still owe and
+  // wait for it, through axios (tracked, toasts on failure), in this account.
+  useFlushBeforeSwitch(() => {
+    const pend = timers.current
+    timers.current = {}
+    return Promise.all(Object.entries(pend).map(([key, e]) => {
+      clearTimeout(e.timer)
+      return api.patch('/persona', { [key]: e.value }).catch((err) => { console.error(`persona ${key}`, err) })
+    }))
+  })
 
   const loadPersona = useCallback(() => (
     api.get('/persona').then(({ data }) => { if (data) { setP(data); setLoadErr(false) } else { setLoadErr(true) } })
