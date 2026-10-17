@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Select & style for the Professional résumés:** a "Select & style" button in the résumé preview swaps the PDF for a clickable view of the same template. Click the page, the profile image, a section or any part of one (a heading, a job's title, its dates, description or bullets, a skills label, a school…) and a panel sets that part's font, size, line height, colour, bold, italic, alignment, case, letter spacing, margin and padding; a heading also takes its rule line, bullets their character and indent, the page its margins and the image a width and height. A change applies to every instance of the part. Values save with the résumé (`json_data.style`), are validated server-side (fixed font list, `#RRGGBB` colours, clamped numbers) and print in both the PDF and the Word export. "Back to PDF" shows the exact print layout. Other templates ignore the settings; a template opts in with `"style_overrides": true` (see CONTRIBUTING).
+- **Style in Word exports:** margin and padding become paragraph spacing and indents (Word has no padding; a heading's bottom padding is the gap above its rule line), letter spacing rounds to Word's units, and a picture is centre-cropped to the chosen width and height like the PDF's cover crop.
+
+### Changed
+- **Profile image upload:** files up to 10 MB are accepted (was 2 MB), and the stored copy fits 300×300 px (was 120×120) so the résumé image-size option stays sharp.
+
 ### Fixed
 - **Model Catalog for Claude Code without an API key**: choosing Claude Code (Subscription) in Settings › Model Catalog no longer fails with "No Anthropic API key configured". With no Anthropic key the catalog lists the built-in Claude models; with a key it still loads Anthropic's live list.
 - **LinkedIn Personal login no longer treats a live session as logged out:** the session check asks Voyager `/me` first; when `/me` refuses a session that is in fact live, a signed-in surface (`/feed`, `/mynetwork`, `/jobs`) reached with the `li_at` auth cookie counts as logged in. A `/login` that redirects to the feed is taken as already signed in, and a login form that never renders because the page went to the feed is treated as a login rather than a timeout.
