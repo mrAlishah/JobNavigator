@@ -285,7 +285,250 @@ def _section_titles(json_data: Optional[dict]) -> dict:
     return {k: v.strip() for k, v in raw.items() if isinstance(v, str) and v.strip()}
 
 
-def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0, profile_image_path: Optional[str] = None, profile_image_enabled: bool = True) -> str:
+# Fonts a résumé may be set in (name -> CSS stack). A fixed list keeps user text out of the stylesheet.
+_STYLE_FONTS = {
+    "Arial": "'Arial','Arimo','Liberation Sans',Helvetica,sans-serif",
+    "Calibri": "'Calibri','Carlito',sans-serif",
+    "Georgia": "'Georgia','Gelasio',serif",
+    "Times New Roman": "'Times New Roman','Tinos','Liberation Serif',serif",
+    "Garamond": "'Garamond','EB Garamond',serif",
+    "Verdana": "'Verdana','DejaVu Sans',sans-serif",
+}
+# section -> (root selector, main-text selectors, secondary-text selectors, printed one point smaller)
+_STYLE_SECTIONS = {
+    "header": (".header-content", [".header .header-content h1"], []),
+    "summary": (".sec-summary", [".sec-summary .summary-text"], []),
+    "experience": (".sec-experience", [".sec-experience .entry", ".sec-experience .entry-title", ".sec-experience ul.bullets li"],
+                   [".sec-experience .entry-meta", ".sec-experience .entry-description"]),
+    "skills": (".sec-skills", [".sec-skills .skill-line"], []),
+    "education": (".sec-education", [".sec-education .edu-school"], [".sec-education .edu-location", ".sec-education .edu-degree"]),
+    "projects": (".sec-projects", [".sec-projects .entry-name", ".sec-projects ul.bullets li"],
+                 [".sec-projects .entry-description", ".sec-projects .entry-url"]),
+    "publications": (".sec-publications", [".sec-publications .entry-name", ".sec-publications ul.bullets li"],
+                     [".sec-publications .entry-description"]),
+}
+
+
+# part key -> (box selector, extra text selectors). A part is one class of element in the Professional
+# templates; the same table drives the PDF CSS, the preview's click targets and (by key) the DOCX builder.
+_STYLE_PARTS = {
+    "header.name": (".header .header-content h1", []),
+    "header.title": (".header .title-line", []),
+    "header.contact": (".header .contact", [".header .contact a"]),
+    "summary.text": (".sec-summary .summary-text", []),
+    "experience.title": (".sec-experience .entry > div:first-child", [".sec-experience .entry-title"]),
+    "experience.meta": (".sec-experience .entry-meta", []),
+    "experience.description": (".sec-experience .entry-description", []),
+    "experience.bullets": (".sec-experience ul.bullets", [".sec-experience ul.bullets li"]),
+    "skills.label": (".sec-skills .skill-label", []),
+    "skills.line": (".sec-skills .skill-line", []),
+    "education.school": (".sec-education .edu-school", []),
+    "education.location": (".sec-education .edu-location", []),
+    "education.degree": (".sec-education .edu-degree", []),
+    "projects.name": (".sec-projects .entry-name", []),
+    "projects.url": (".sec-projects .entry-url", [".sec-projects .entry-url a"]),
+    "projects.description": (".sec-projects .entry-description", []),
+    "projects.bullets": (".sec-projects ul.bullets", [".sec-projects ul.bullets li"]),
+    "publications.name": (".sec-publications .entry-name", []),
+    "publications.description": (".sec-publications .entry-description", []),
+    "publications.bullets": (".sec-publications ul.bullets", [".sec-publications ul.bullets li"]),
+}
+for _sec in ("summary", "experience", "skills", "education", "projects", "publications"):
+    _STYLE_PARTS[f"{_sec}.heading"] = (f".sec-{_sec} .section-title", [])
+_INLINE_PARTS = {"skills.label"}        # <span>s: vertical margin / padding only work as inline-block
+_SIDES = ("top", "right", "bottom", "left")
+_PART_NUMS = {"size": (5, 36), "line_height": (0.9, 2.5), "letter_spacing": (-1, 5),
+              **{f"{k}_{s}": (0, 60) for k in ("margin", "padding") for s in _SIDES}}
+_BULLETS = {"•": "• ", "–": "– ", "▪": "▪ ", "◦": "◦ ", "none": ""}
+
+
+def _clamp(v, lo, hi):
+    return min(max(v, lo), hi) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _part_props(key: str, src: dict) -> dict:
+    """Validated properties of one part: numbers clamped, enums / fonts / colours checked, anything
+    else (and heading- or bullet-only properties on other parts) dropped."""
+    out = {k: n for k, (lo, hi) in _PART_NUMS.items() if (n := _clamp(src.get(k), lo, hi)) is not None}
+    if isinstance(src.get("font"), str) and src["font"] in _STYLE_FONTS:
+        out["font"] = src["font"]
+    for k in ("bold", "italic"):
+        if isinstance(src.get(k), bool):
+            out[k] = src[k]
+    for k, allowed in (("align", ("left", "center", "right", "justify")), ("case", ("none", "upper"))):
+        if isinstance(src.get(k), str) and src[k] in allowed:
+            out[k] = src[k]
+    colors = ["color"] + (["rule_color"] if key.endswith(".heading") else [])
+    for k in colors:
+        if isinstance(src.get(k), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", src[k]):
+            out[k] = src[k].lower()
+    if key.endswith(".heading") and (n := _clamp(src.get("rule_width"), 0, 4)) is not None:
+        out["rule_width"] = n
+    if key.endswith(".bullets"):
+        if isinstance(src.get("bullet"), str) and src["bullet"] in _BULLETS:
+            out["bullet"] = src["bullet"]
+        if (n := _clamp(src.get("indent"), 0, 40)) is not None:
+            out["indent"] = n
+    return out
+
+
+def _style_overrides(json_data: Optional[dict]) -> dict:
+    """Validated `json_data["style"]`: page margins (in), profile image size (px) and per-section
+    font / size (pt) / line height. Numbers are clamped to a sane range; unknown fonts, non-numbers
+    and unknown keys are dropped, so a missing value always means "template default"."""
+    raw = (json_data or {}).get("style")
+    if not isinstance(raw, dict):
+        return {}
+
+    def pick(src, spec):
+        out = {}
+        for k, (lo, hi) in spec.items():
+            v = src.get(k) if isinstance(src, dict) else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[k] = min(max(v, lo), hi)
+        return out
+
+    sections = {}
+    for key in _STYLE_SECTIONS:
+        src = (raw.get("sections") or {}).get(key) if isinstance(raw.get("sections"), dict) else None
+        s = pick(src, {"size": (6, 36), "line_height": (0.9, 2.5)})
+        if isinstance(src, dict) and isinstance(src.get("font"), str) and src["font"] in _STYLE_FONTS:
+            s["font"] = src["font"]
+        if s:
+            sections[key] = s
+    parts = {}
+    for key, src in (raw.get("parts") if isinstance(raw.get("parts"), dict) else {}).items():
+        if key in _STYLE_PARTS and isinstance(src, dict) and (props := _part_props(key, src)):
+            parts[key] = props
+    out = {
+        "parts": parts,
+        "page": pick(raw.get("page"), dict.fromkeys(("top", "right", "bottom", "left"), (0, 1.5))),
+        "image": pick(raw.get("image"), dict.fromkeys(("width", "height"), (40, 300))),
+        "sections": sections,
+    }
+    return {k: v for k, v in out.items() if v}
+
+
+def _style_css(ov: dict, footer_reserved_in: float = 0, margin_in=(0.41, 0.53)) -> str:
+    """CSS appended to a Professional template's own stylesheet for the `_style_overrides` values."""
+    css, page = [], ov.get("page", {})
+    if "top" in page or "bottom" in page:
+        top = page.get("top", margin_in[0])
+        css.append(f"@page {{ margin: {top:g}in 0 {max(page.get('bottom', 0), footer_reserved_in):g}in 0; }}")
+        css.append(f"@media screen {{ .page {{ padding-top: {top:g}in; padding-bottom: {page.get('bottom', margin_in[0]):g}in; }} }}")
+    sides = "".join(f" padding-{s}: {page[s]:g}in;" for s in ("left", "right") if s in page)
+    if sides:
+        css.append(f".page {{{sides} }}")
+    if "image" in ov:
+        css.append(f".header-profile-image {{ width: {ov['image'].get('width', 100):g}px; height: {ov['image'].get('height', 100):g}px; }}")
+    for key, s in ov.get("sections", {}).items():
+        root, main, small = _STYLE_SECTIONS[key]
+        if "font" in s:
+            css.append(f"{root} {{ font-family: {_STYLE_FONTS[s['font']]}; }}")
+        if "line_height" in s:
+            css.append(f"{', '.join([root, *main])} {{ line-height: {s['line_height']:g}; }}")
+        if "size" in s:
+            css.append(f"{', '.join(main)} {{ font-size: {s['size']:g}pt; }}")
+            if small:
+                css.append(f"{', '.join(small)} {{ font-size: {max(s['size'] - 1, 5):g}pt; }}")
+    for key, p in ov.get("parts", {}).items():
+        css.extend(_part_css(key, p))
+    return "\n".join(css)
+
+
+def _part_css(key: str, p: dict) -> list:
+    box, extras = _STYLE_PARTS[key]
+    css, text = [], []
+    if "font" in p:
+        text.append(f"font-family: {_STYLE_FONTS[p['font']]}")
+    if "size" in p:
+        text.append(f"font-size: {p['size']:g}pt")
+    if "color" in p:
+        text.append(f"color: {p['color']}")
+    if "bold" in p:
+        text.append(f"font-weight: {700 if p['bold'] else 400}")
+    if "italic" in p:
+        text.append(f"font-style: {'italic' if p['italic'] else 'normal'}")
+    if "case" in p:
+        text.append(f"text-transform: {'uppercase' if p['case'] == 'upper' else 'none'}")
+    if "letter_spacing" in p:
+        text.append(f"letter-spacing: {p['letter_spacing']:g}pt")
+    if text:
+        css.append(f"{', '.join([box, *extras])} {{ {'; '.join(text)}; }}")
+    boxed = []
+    if "line_height" in p:
+        boxed.append(f"line-height: {p['line_height']:g}")
+    if "align" in p:
+        boxed.append(f"text-align: {p['align']}")
+    boxed += [f"{k}-{s}: {p[f'{k}_{s}']:g}pt" for k in ("margin", "padding") for s in _SIDES if f"{k}_{s}" in p]
+    if key.endswith(".heading") and ("rule_width" in p or "rule_color" in p):
+        w, c = p.get("rule_width"), p.get("rule_color")
+        boxed.append("border-bottom: none" if w == 0 else f"border-bottom: {w:g}pt solid {c}" if w is not None and c
+                     else f"border-bottom-width: {w:g}pt" if w is not None else f"border-bottom-color: {c}")
+    if key in _INLINE_PARTS and any(f"{k}_{s}" in p for k in ("margin", "padding") for s in ("top", "bottom")):
+        boxed.append("display: inline-block")
+    if boxed:
+        css.append(f"{box} {{ {'; '.join(boxed)}; }}")
+    if key.endswith(".bullets"):
+        li = extras[0]
+        if "bullet" in p:
+            css.append(f"{li}::before {{ content: '{_BULLETS[p['bullet']]}'; }}")
+        if "indent" in p:
+            css.append(f"{li} {{ padding-left: {p['indent']:g}pt; text-indent: {-p['indent'] * 0.67:.1f}pt; }}")
+    return css
+
+
+def _crop_to_aspect(blob: bytes, w: float, h: float) -> bytes:
+    """Centre-crop an image to w:h, like the PDF's `object-fit: cover`; returns PNG bytes."""
+    from PIL import Image
+    with Image.open(io.BytesIO(blob)) as im:
+        iw, ih = im.size
+        cw, ch = (round(ih * w / h), ih) if iw * h > ih * w else (iw, round(iw * h / w))
+        left, top = (iw - cw) // 2, (ih - ch) // 2
+        out = io.BytesIO()
+        im.crop((left, top, left + cw, top + ch)).save(out, "PNG")
+        return out.getvalue()
+
+
+# Added to the editor's "Select" preview only: tag every part (see _STYLE_PARTS), hover-outline the
+# innermost [data-part] / [data-section] and report clicks to the parent editor (which owns the
+# properties panel); the parent can also push the current selection back.
+_SELECT_SCRIPT = """<style>[data-section],[data-part]{cursor:pointer}.rs-hover{outline:1.5px dashed #2563eb;outline-offset:2px}.rs-sel{outline:2px solid #2563eb;outline-offset:2px}</style>
+<script>
+(function () {
+  var PARTS = __PARTS__, hover = null, sel = [];
+  Object.keys(PARTS).forEach(function (k) {
+    document.querySelectorAll(PARTS[k]).forEach(function (el) { el.setAttribute('data-part', k); });
+  });
+  function mark(list, cls, on) { list.forEach(function (el) { el.classList[on ? 'add' : 'remove'](cls); }); }
+  function area(e) { return e.target.closest ? e.target.closest('[data-part],[data-section]') : null; }
+  document.addEventListener('mouseover', function (e) {
+    var a = area(e); if (a === hover) return;
+    mark(hover ? [hover] : [], 'rs-hover', false); hover = a; mark(a ? [a] : [], 'rs-hover', true);
+  });
+  document.addEventListener('click', function (e) {
+    var a = area(e); if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    parent.postMessage({ type: 'resume-select', area: a.getAttribute('data-part') || a.getAttribute('data-section') }, '*');
+  }, true);
+  window.addEventListener('message', function (e) {
+    if (e.source !== parent || !e.data || e.data.type !== 'resume-select-set') return;
+    mark(sel, 'rs-sel', false);
+    sel = e.data.area ? Array.prototype.slice.call(document.querySelectorAll('[data-part="' + e.data.area + '"],[data-section="' + e.data.area + '"]')) : [];
+    mark(sel, 'rs-sel', true);
+  });
+})();
+</script>"""
+
+
+def _with_select_script(html: str) -> str:
+    parts = json.dumps({k: box for k, (box, _) in _STYLE_PARTS.items()}).replace("</", "<\\/")
+    script = _SELECT_SCRIPT.replace("__PARTS__", parts)
+    head, sep, tail = html.rpartition("</body>")
+    return head + script + sep + tail if sep else html + script
+
+
+def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0, profile_image_path: Optional[str] = None, profile_image_enabled: bool = True, select_mode: bool = False) -> str:
     """Render a resume to HTML using its Jinja2 template.
 
     `footer_reserved_in` sets the template's own `@page` bottom margin (inches), so
@@ -326,6 +569,8 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     meta = next((t for t in _discover_templates() if t["id"] == template_name), {})
     defaults = {k.lower(): v for k, v in ((meta.get("docx") or {}).get("titles") or {}).items()}
     section_titles = {k: escape(v) for k, v in {**defaults, **_section_titles(json_data)}.items()}
+    docx_meta = meta.get("docx") or {}
+    style_css = _style_css(_style_overrides(json_data), footer_reserved_in, docx_meta.get("margin_in", (0.41, 0.53))) if docx_meta.get("style_overrides") else ""
     # dict(content, ...) so the explicit values win over a same-named key stored in json_data
     # (the editor saves profile_image_enabled there); `**content, k=v` raises on the duplicate.
     html = template.render(**dict(
@@ -337,11 +582,26 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
         profile_image_path=profile_image_path,
         profile_image_enabled=profile_image_enabled,
         section_titles=section_titles,
+        style_css=style_css,
     ))
-    return html
+    return _with_select_script(html) if select_mode else html
 
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+# CT_PPr is an xsd:sequence: Word rejects or ignores out-of-order children, which python-docx does not guard
+# once a child (the heading's pBdr) was appended by hand.
+_PPR_ORDER = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd",
+              "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi",
+              "adjustRightInd", "snapToGrid", "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection",
+              "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
+
+
+def _sort_ppr(p) -> None:
+    ppr = p._p.pPr
+    for child in sorted(ppr, key=lambda c: _PPR_ORDER.index(c.tag.split("}")[1])):
+        ppr.remove(child)
+        ppr.append(child)
 
 
 def _build_docx(
@@ -367,12 +627,15 @@ def _build_docx(
     d = json_data or {}
     st = style or {}
     ink, muted, accent = st.get("ink"), st.get("muted"), st.get("accent")
+    ov = _style_overrides(d) if st.get("style_overrides") else {}
+    secs, cur, parts = ov.get("sections", {}), {}, ov.get("parts", {})      # cur: the section being written (font / size / line_height)
     doc = Document()
     sec = doc.sections[0]
     sec.page_width, sec.page_height = (Emu(7560310), Emu(10692130)) if fmt.lower() == "a4" else (Inches(8.5), Inches(11))
     top_bottom, left_right = st.get("margin_in", (0.7, 0.7))
-    sec.top_margin = sec.bottom_margin = Inches(top_bottom)
-    sec.left_margin = sec.right_margin = Inches(left_right)
+    page = ov.get("page", {})
+    sec.top_margin, sec.bottom_margin = Inches(page.get("top", top_bottom)), Inches(page.get("bottom", top_bottom))
+    sec.left_margin, sec.right_margin = Inches(page.get("left", left_right)), Inches(page.get("right", left_right))
     body_width = sec.page_width - sec.left_margin - sec.right_margin
     normal = doc.styles["Normal"]
     normal.font.size = Pt(st.get("body_pt", 10.5))
@@ -390,28 +653,101 @@ def _build_docx(
         footer_run.font.color.rgb = RGBColor(153, 153, 153)
     meta_pt, entry_pt = st.get("meta_pt"), st.get("entry_pt")
 
-    def runs(par, text, bold=False, pt=None, color=None, italic=False):
+    def use(key):
+        cur.clear()
+        cur.update(secs.get(key, {}))
+
+    def props(par, part=None):
+        # the paragraph's own part, then a run-level part (a skills label inside a skills line)
+        return {**parts.get(getattr(par, "_part", None), {}), **parts.get(part, {})}
+
+    def fmt(r, pp):
+        if "font" in pp:
+            r.font.name = pp["font"]
+        if "size" in pp:
+            r.font.size = Pt(pp["size"])
+        if "color" in pp:
+            r.font.color.rgb = RGBColor.from_string(pp["color"][1:].upper())
+        if "bold" in pp:
+            r.bold = pp["bold"]
+        if "italic" in pp:
+            r.italic = pp["italic"]
+        if pp.get("case") == "upper":
+            r.font.all_caps = True
+        if "letter_spacing" in pp:      # points -> twentieths of a point, in schema order inside rPr
+            sp = OxmlElement("w:spacing")
+            sp.set(qn("w:val"), str(round(pp["letter_spacing"] * 20)))
+            r._r.get_or_add_rPr().insert_element_before(sp, "w:w", "w:kern", "w:position", "w:sz", "w:szCs", "w:highlight", "w:u",
+                                                        "w:effect", "w:bdr", "w:shd", "w:fitText", "w:vertAlign", "w:rtl", "w:cs", "w:em", "w:lang")
+
+    def box(p, part):
+        # CSS margin + padding have no Word twin without a background: both become paragraph spacing /
+        # indents, except a heading's bottom padding, which is the gap above its rule line.
+        pp = parts.get(part)
+        if not pp:
+            return
+        pf, heading = p.paragraph_format, part.endswith(".heading")
+        if "align" in pp:
+            p.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER,
+                           "right": WD_ALIGN_PARAGRAPH.RIGHT, "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}[pp["align"]]
+        if "line_height" in pp:
+            pf.line_spacing = pp["line_height"]
+
+        def side(s):
+            pad = 0 if heading and s == "bottom" else pp.get(f"padding_{s}", 0)
+            return (pp[f"margin_{s}"] if f"margin_{s}" in pp else 0) + pad, f"margin_{s}" in pp or (f"padding_{s}" in pp and not (heading and s == "bottom"))
+        if side("top")[1]:
+            pf.space_before = Pt(side("top")[0])
+        if side("bottom")[1]:
+            pf.space_after = Pt(side("bottom")[0])
+        if side("left")[1]:
+            pf.left_indent = Pt((pf.left_indent.pt if pf.left_indent else 0) + side("left")[0])
+        if side("right")[1]:
+            pf.right_indent = Pt((pf.right_indent.pt if pf.right_indent else 0) + side("right")[0])
+
+    def para(part=None, into=None, **kw):
+        p = (into or doc).add_paragraph(**kw)
+        p._part = part
+        if cur.get("line_height"):
+            p.paragraph_format.line_spacing = cur["line_height"]
+        box(p, part)
+        return p
+
+    def runs(par, text, bold=False, pt=None, color=None, italic=False, kind=None, part=None):
         # `**x**` is the bold markup the templates' `bold` filter understands.
-        for i, part in enumerate(re.split(r"\*\*(.+?)\*\*", text or "")):
-            if part:
-                r = par.add_run(part)
+        # A section's size override replaces the body size (kind "main", or no size given) and the
+        # secondary lines (kind "small") one point under it; headings pass their own `pt` and keep it.
+        if cur.get("size") and (kind or pt is None):
+            pt = cur["size"] - (kind == "small")
+        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", text or "")):
+            if chunk:
+                r = par.add_run(chunk)
+                if cur.get("font"):
+                    r.font.name = cur["font"]
                 r.bold = bold or bool(i % 2)
                 r.italic = italic or None
                 if pt:
                     r.font.size = Pt(pt)
                 if color:
                     r.font.color.rgb = RGBColor.from_string(color)
+                fmt(r, props(par, part))
 
     def link(par, text, url):
         href = url if url.startswith(("http", "mailto")) else "https://" + url
         h = OxmlElement("w:hyperlink")
         h.set(qn("r:id"), doc.part.relate_to(href, RT.HYPERLINK, is_external=True))
         r, rpr, c, t = (OxmlElement(n) for n in ("w:r", "w:rPr", "w:color", "w:t"))
+        pp = props(par)
+        if pp.get("font") or cur.get("font"):
+            fonts = OxmlElement("w:rFonts")
+            fonts.set(qn("w:ascii"), pp.get("font") or cur["font"])
+            fonts.set(qn("w:hAnsi"), pp.get("font") or cur["font"])
+            rpr.append(fonts)
         if st:      # the templates print links in the text colour, no underline
-            c.set(qn("w:val"), ink)
+            c.set(qn("w:val"), pp["color"][1:] if "color" in pp else ink)
             rpr.append(c)
             sz = OxmlElement("w:sz")
-            sz.set(qn("w:val"), str(int(st.get("contact_pt", 8) * 2)))
+            sz.set(qn("w:val"), str(int((pp.get("size") or st.get("contact_pt", 8)) * 2)))
             rpr.append(sz)
         else:
             c.set(qn("w:val"), "0563C1")
@@ -430,47 +766,69 @@ def _build_docx(
 
     def section(title):
         custom = custom_titles.get(title.lower())
+        use(title.lower())
         if not st:
             doc.add_heading(custom or title, level=2)
             return
-        p = doc.add_paragraph()
-        rule, bottom = OxmlElement("w:pBdr"), OxmlElement("w:bottom")     # first, so python-docx slots the other pPr children in schema order
-        for k, v in (("val", "single"), ("sz", "8"), ("space", "2"), ("color", accent)):
-            bottom.set(qn(f"w:{k}"), v)
-        rule.append(bottom)
-        p._p.get_or_add_pPr().append(rule)
+        part = f"{title.lower()}.heading"
+        pp = parts.get(part, {})
+        p = para(part)
+        if pp.get("rule_width") != 0:
+            rule, bottom = OxmlElement("w:pBdr"), OxmlElement("w:bottom")     # first, so python-docx slots the other pPr children in schema order
+            line = (("val", "single"), ("sz", str(round(pp.get("rule_width", 1) * 8))), ("space", str(min(round(pp.get("padding_bottom", 2)), 31))),
+                    ("color", pp["rule_color"][1:] if "rule_color" in pp else accent))
+            for k, v in line:
+                bottom.set(qn(f"w:{k}"), v)
+            rule.append(bottom)
+            p._p.get_or_add_pPr().append(rule)
         p.paragraph_format.space_before, p.paragraph_format.space_after = Pt(4.2), Pt(2.3)
         p.paragraph_format.keep_with_next = True
+        box(p, part)
+        _sort_ppr(p)
         runs(p, custom or st["titles"].get(title, title), bold=True, pt=st.get("section_pt"), color=accent)
 
-    def row(left, right="", bold=True, color=None, pt=None):
+    def row(left, right="", bold=True, color=None, pt=None, part=None, rpart=None):
         # left text, right-aligned text (dates / location) on the same line
-        p = doc.add_paragraph()
+        p = para(part)
         p.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
-        runs(p, left, bold=bold, color=color, pt=pt)
+        runs(p, left, bold=bold, color=color, pt=pt, kind="main" if pt else None)
         if right:
             r = p.add_run("\t" + right)
+            if cur.get("font"):
+                r.font.name = cur["font"]
             if st:
-                r.font.size = Pt(meta_pt)
+                r.font.size = Pt(cur["size"] - 1 if cur.get("size") else meta_pt)
                 r.font.color.rgb = RGBColor.from_string(muted)
+            fmt(r, {**props(p), **parts.get(rpart, {})})
 
-    def details(item):
+    def details(item, key):
         if item.get("description"):
-            runs(doc.add_paragraph(), item["description"], pt=meta_pt, color=muted, italic=bool(st))
+            runs(para(f"{key}.description"), item["description"], pt=meta_pt, color=muted, italic=bool(st), kind="small")
         for b in item.get("bullets") or []:
             if st:      # the reference uses a literal • with a hanging indent
-                p = doc.add_paragraph()
+                part = f"{key}.bullets"
+                pp = parts.get(part, {})
+                p = para(part)
                 pf = p.paragraph_format
-                pf.left_indent, pf.first_line_indent, pf.space_after = Pt(9.7), Pt(-6.5), Pt(0.45)
-                runs(p, "• " + b)
+                indent = pp.get("indent", 9.7)
+                pf.left_indent, pf.first_line_indent, pf.space_after = Pt(indent), Pt(-indent * 0.67 if "indent" in pp else -6.5), Pt(0.45)
+                box(p, part)
+                runs(p, (_BULLETS[pp["bullet"]] if "bullet" in pp else "• ") + b)
             else:
-                runs(doc.add_paragraph(style="List Bullet"), b)
+                runs(para(style="List Bullet"), b)
 
     header = d.get("header") or {}
-    add = doc.add_paragraph
+    use("header")
+    name_pt = cur.pop("size", None)     # a header size sets the name; title and contact keep theirs
+    target = None       # the header cell that holds the name block when there is a picture
+    add = lambda part=None: para(part, into=target)
     if image and st.get("image") in ("left", "right"):
         # Same header as the PDF: profile image beside the name block, on the template's side.
-        pic_w = Inches(100 / 96)    # the PDF's 100px
+        img_ov = ov.get("image", {})
+        pic_w = Inches(img_ov.get("width", 100) / 96)    # the PDF's 100px
+        pic_h = Inches(img_ov.get("height", 100) / 96) if img_ov else None
+        if img_ov:      # the PDF crops with object-fit: cover; Word would stretch
+            image = _crop_to_aspect(image, img_ov.get("width", 100), img_ov.get("height", 100))
         gap = Pt(16)
         table = doc.add_table(rows=1, cols=2)
         table.autofit = False
@@ -479,20 +837,24 @@ def _build_docx(
         for i, w in ((pic_i, pic_w + gap), (text_i, body_width - pic_w - gap)):
             table.columns[i].width = cells[i].width = w
         pic_par = cells[pic_i].paragraphs[0]
-        pic_par.add_run().add_picture(io.BytesIO(image), width=pic_w)
+        pic_par.add_run().add_picture(io.BytesIO(image), width=pic_w, height=pic_h)
         if st["image"] == "right":
             pic_par.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         cells[text_i]._tc.remove(cells[text_i].paragraphs[0]._p)
-        add = cells[text_i].add_paragraph
+        target = cells[text_i]
 
-    name = add().add_run(header.get("name") or "")
+    name_par = add("header.name")
+    name = name_par.add_run(header.get("name") or "")
     name.bold = True
-    name.font.size = Pt(st.get("name_pt", 20))
+    name.font.size = Pt(name_pt or st.get("name_pt", 20))
+    if cur.get("font"):
+        name.font.name = cur["font"]
     if st:
         name.font.color.rgb = RGBColor.from_string(ink)
+    fmt(name, props(name_par))
     if header.get("title"):
-        runs(add(), header["title"], bold=bool(st), pt=st.get("title_pt"))
-    contact = add()
+        runs(add("header.title"), header["title"], bold=bool(st), pt=st.get("title_pt"))
+    contact = add("header.contact")
     for i, item in enumerate(header.get("contact_items") or []):
         if i:
             runs(contact, " | ", pt=st.get("contact_pt"), color=ink)
@@ -502,52 +864,54 @@ def _build_docx(
             runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
 
     if d.get("summary"):
+        use("summary")
         if "Summary" in st.get("titles", {}) or "summary" in custom_titles:
             section("Summary")
-        runs(doc.add_paragraph(), d["summary"], color=ink)
+        runs(para("summary.text"), d["summary"], color=ink)
 
     skills = d.get("skills")
     if skills:
         section("Skills")
         pairs = skills.items() if isinstance(skills, dict) else [(s.get("category"), s.get("items")) for s in skills]
         for label, value in pairs:
-            p = doc.add_paragraph()
-            runs(p, f"{label}: ", bold=True, pt=meta_pt)
-            runs(p, str(value or ""), pt=meta_pt)
+            p = para("skills.line")
+            runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
+            runs(p, str(value or ""), pt=meta_pt, kind="main")
 
     if d.get("experience"):
         section("Experience")
         for job in d["experience"]:
             date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
             if st:
-                p = doc.add_paragraph()
+                p = para("experience.title")
                 p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
+                box(p, "experience.title")
                 title, company = job.get("title"), job.get("company")
-                runs(p, title or company or "", bold=True, pt=entry_pt, color=ink)
+                runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
                 if title and company:
-                    runs(p, " - " + company, pt=entry_pt, color=ink)
-                runs(doc.add_paragraph(), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted)
+                    runs(p, " - " + company, pt=entry_pt, color=ink, kind="main")
+                runs(para("experience.meta"), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
             else:
                 row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}", date)
                 if job.get("location"):
                     doc.add_paragraph(job["location"])
-            details(job)
+            details(job, "experience")
 
     if d.get("education"):
         section("Education")
         for edu in d["education"]:
-            row(edu.get("school") or "", edu.get("location") or "", color=ink)
+            row(edu.get("school") or "", edu.get("location") or "", color=ink, part="education.school", rpart="education.location")
             if edu.get("degree"):
-                runs(doc.add_paragraph(), edu["degree"], pt=meta_pt)
+                runs(para("education.degree"), edu["degree"], pt=meta_pt, kind="small")
 
     for key, title in (("projects", "Projects"), ("publications", "Publications")):
         if d.get(key):
             section(title)
             for item in d[key]:
-                row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt)
+                row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt, part=f"{key}.name")
                 if item.get("url"):
-                    link(doc.add_paragraph(), item["url"], item["url"])
-                details(item)
+                    link(para(f"{key}.url"), item["url"], item["url"])
+                details(item, key)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -1464,8 +1828,8 @@ def _footer_html_template(footer_text: str) -> str:
 # ── Preview & PDF ───────────────────────────────────────────────────────────
 
 @router.get("/{resume_id}/preview")
-def preview_resume(resume_id: str, db: Session = Depends(get_db)):
-    """Render resume as HTML for preview, using the same `_rewrite_urls_with_tracers` rewrite /pdf uses (reusing an existing link per owner+destination) so the preview and PDF always agree on contact URLs."""
+def preview_resume(resume_id: str, template: Optional[str] = None, format: Optional[str] = None, select: bool = False, db: Session = Depends(get_db)):
+    """Render resume as HTML for preview, using the same `_rewrite_urls_with_tracers` rewrite /pdf uses (reusing an existing link per owner+destination) so the preview and PDF always agree on contact URLs. `template`/`format` override the stored values like /pdf; `select` adds the editor's click-to-select script."""
     resume = db.query(Resume).filter(Resume.id == resume_id).first()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -1473,7 +1837,7 @@ def preview_resume(resume_id: str, db: Session = Depends(get_db)):
     profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
     json_data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
-    html = _render_html(json_data, resume.template, resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
+    html = _render_html(json_data, template or resume.template, format or resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled, select_mode=select)
     return HTMLResponse(content=html)
 
 
