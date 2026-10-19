@@ -155,7 +155,7 @@ async def test_dispatch_claude_api_still_uses_cache_control(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_lmstudio_routes_to_openai_client(monkeypatch):
+async def test_dispatch_lmstudio_routes_to_openai_client(test_db, monkeypatch):
     """lmstudio is OpenAI-API-compatible — routes to _call_openai with the :1234 base URL and a dummy key when none is set."""
     captured = {}
 

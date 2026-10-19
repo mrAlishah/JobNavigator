@@ -1,6 +1,7 @@
 """Editable, template-neutral Word export from résumé JSON."""
 import io
 import uuid
+from urllib.parse import urlparse
 
 import docx
 from docx.shared import Emu

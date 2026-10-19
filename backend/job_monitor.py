@@ -346,11 +346,14 @@ class ScheduledScrapeRunningError(JobAlreadyRunningError):
     code = "scheduled_scrape_running"
 
     def __init__(self, job_type: str, elapsed_seconds: float):
-        Exception.__init__(
-            self, f"{job_type} not started: the scheduled scrape is running "
-                  f"({elapsed_seconds:.0f}s elapsed); try again when it finishes")
+        Exception.__init__(self, _scheduled_scrape_message(job_type, elapsed_seconds))
         self.job_type = job_type
         self.elapsed_seconds = elapsed_seconds
+
+
+def _scheduled_scrape_message(job_type: str, elapsed_seconds: float) -> str:
+    return (f"{job_type} not started: the scheduled scrape is running "
+            f"({elapsed_seconds:.0f}s elapsed); try again when it finishes")
 
 
 def scheduled_scrape_run() -> Optional[RunningJob]:
@@ -375,8 +378,10 @@ def scheduled_scrape_conflict_response(e: JobAlreadyRunningError):
     case (the dashboard tells the user to wait), the usual text otherwise."""
     from fastapi.responses import JSONResponse
     if isinstance(e, ScheduledScrapeRunningError):
+        # Rebuilt from the fields, not str(e): no exception text goes to a client.
+        message = _scheduled_scrape_message(str(e.job_type), float(e.elapsed_seconds))
         return JSONResponse(status_code=409, content={
-            "detail": ScheduledScrapeRunningError.code, "message": str(e)})
+            "detail": ScheduledScrapeRunningError.code, "message": message})
     return JSONResponse(status_code=409, content={"detail": f"{e.job_type} is already running"})
 
 

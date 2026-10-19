@@ -5,7 +5,7 @@ Changes made in this fork on top of upstream JobNavigator. Upstream's own releas
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Last merged with `upstream/main` on 2026-10-17 (release 3.0, multi-tenancy). The fork branched at `3be5ab1` (2026-10-15, after upstream 2.2.0). Where the two sides disagreed, the fork's behaviour was kept and upstream's account scoping, sandboxed rendering and safe filenames were wired in around it. Everything below exists only in this fork.
+Last merged with `upstream/main` on 2026-10-19 (release 3.0, multi-tenancy, plus its 13 later commits: CodeQL fixes, the OpenCode Go headroom fix, SQLite UUID test fixes). The fork branched at `3be5ab1` (2026-10-15, after upstream 2.2.0). Where the two sides disagreed, the fork's behaviour was kept and upstream's account scoping, sandboxed rendering and safe filenames were wired in around it. Everything below exists only in this fork.
 
 ## [Unreleased]
 
@@ -33,5 +33,6 @@ Last merged with `upstream/main` on 2026-10-17 (release 3.0, multi-tenancy). The
 ### Fixed
 - **PDF page margins on every page:** all résumé templates keep their top and bottom margin in `@page` (and reserve the footer band there), so page 2 onward is no longer flush with the paper edge. Upstream's Modern Professional template got the same footer band and print rules, and upstream's print-layout test now checks this layout.
 - **Word exports include the footer** of a tailored résumé.
+- **Word export hardening from upstream 3.0:** a résumé whose header is null or a string, whose contact list is not a list, or whose contact text or address is a number no longer fails the export; a skills list prints as `Tools: Jira, SQL` instead of a Python list; and the file's author is the candidate, not "python-docx". Upstream's Word tests run against the fork's builder in `backend/tests/test_resume_docx_upstream.py`.
 - **Word export input checks:** an unknown template is rejected with 422, and an invalid stored profile image is skipped with a warning instead of failing the export.
 - **Deleting a job unlinks `job_runs.target_job_id` explicitly,** so SQLite, which does not enforce `ON DELETE SET NULL`, behaves like PostgreSQL.

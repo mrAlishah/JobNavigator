@@ -869,7 +869,7 @@ def _build_docx(
             else:
                 runs(para(style="List Bullet"), b)
 
-    header = d.get("header") or {}
+    header = d.get("header") if isinstance(d.get("header"), dict) else {}
     begin("sec", "header")
     use("header")
     name_pt = cur.pop("size", None)     # a header size sets the name; title and contact keep theirs
@@ -897,7 +897,7 @@ def _build_docx(
         target = cells[text_i]
 
     name_par = add("header.name")
-    name = name_par.add_run(header.get("name") or "")
+    name = name_par.add_run(_as_text(header.get("name")))
     name.bold = True
     name.font.size = Pt(name_pt or st.get("name_pt", 20))
     if cur.get("font"):
@@ -906,15 +906,17 @@ def _build_docx(
         name.font.color.rgb = RGBColor.from_string(ink)
     fmt(name, props(name_par))
     if header.get("title"):
-        runs(add("header.title"), header["title"], bold=bool(st), pt=st.get("title_pt"))
+        runs(add("header.title"), _as_text(header["title"]), bold=bool(st), pt=st.get("title_pt"))
     contact = add("header.contact")
-    for i, item in enumerate(header.get("contact_items") or []):
+    items = header.get("contact_items")
+    for i, item in enumerate(x for x in (items if isinstance(items, list) else []) if isinstance(x, dict)):
         if i:
             runs(contact, " | ", pt=st.get("contact_pt"), color=ink)
-        if item.get("url"):
-            link(contact, item.get("text") or item["url"], item["url"])
+        url, text = item.get("url"), _as_text(item.get("text"))
+        if isinstance(url, str) and url.strip():
+            link(contact, text or url, url)
         else:
-            runs(contact, item.get("text") or "", pt=st.get("contact_pt"), color=ink)
+            runs(contact, text, pt=st.get("contact_pt"), color=ink)
 
     if d.get("summary"):
         begin("sec", "summary")
@@ -930,7 +932,7 @@ def _build_docx(
         for label, value in pairs:
             p = para("skills.line")
             runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
-            runs(p, str(value or ""), pt=meta_pt, kind="main")
+            runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
 
     if d.get("experience"):
         section("Experience")
@@ -971,6 +973,9 @@ def _build_docx(
                 details(item, key)
 
     end("sec")
+    meta_props = doc.core_properties
+    meta_props.author = meta_props.last_modified_by = _as_text(header.get("name"))
+    meta_props.comments = ""
     for ppr in doc.element.body.iter(qn("w:pPr")):
         _sort_ppr(ppr)
     buf = io.BytesIO()
@@ -2126,7 +2131,8 @@ DOCX_MISSING_DETAIL = ("python-docx is missing from this image — pull or rebui
 
 # XML 1.0 forbids the C0 controls other than tab, LF and CR (plus U+FFFE/U+FFFF and lone
 # surrogates); lxml refuses them, and PDF imports can leave a \x0b or \x0c in the text.
-_XML_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿\ud800-\udfff]")
+_XML_ILLEGAL_CHARS = "".join(map(chr, (*range(0x09), 0x0b, 0x0c, *range(0x0e, 0x20), 0xfffe, 0xffff)))
+_XML_ILLEGAL_RE = re.compile("[" + re.escape(_XML_ILLEGAL_CHARS) + r"\ud800-\udfff]")
 
 # Link schemes a Word hyperlink may carry; anything else is printed as plain text.
 _DOCX_LINK_SCHEMES = ("http", "https", "mailto", "tel")

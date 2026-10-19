@@ -143,7 +143,9 @@ _PERIOD_WORDS = (
     r"|(?:per|an?|each|every|/)\s*(?:week|wk)s?\b|weekly\b|p\s*/\s*w\b|pw\b|/\s*w\b"
     r"|(?:per|an?|each|every|/)\s*(?:month|mo|mth)s?\b|monthly\b|p\s*/\s*m\b|pcm\b|/\s*m\b"
 )
-_TAG_PREFIX = r"\s*(?:\(?\s*(?:USD|US\s?\$|dollars?)\s*\)?)?\s*\(?\s*"
+# Same strings as r"\s*(?:\(?\s*(?:USD|US\s?\$|dollars?)\s*\)?)?\s*\(?\s*", written so no two
+# "\s*" touch: a long run of spaces after an amount made that one cubic.
+_TAG_PREFIX = r"\s*(?:(?:\(\s*)?(?:USD|US\s?\$|dollars?)(?:\s*\))?\s*)?(?:\(\s*)?"
 _PERIOD_AFTER_RE = re.compile(_TAG_PREFIX + r"(?:" + _PERIOD_WORDS + r")", re.IGNORECASE)
 _YEARLY_WORDS = (
     r"per\s*(?:year|annum)|annually\b|annual\b|yearly\b|an?\s*year\b|/\s*(?:yr|year|annum)\b"
@@ -176,9 +178,8 @@ _SHORT_PERIOD_RE = re.compile(r"hour|hr|da(?:y|ily)|week", re.IGNORECASE)
 # A non-USD code or a spaced country prefix right before the "$" ("CAD $150,000", "TT $180,000";
 # not "CA $", which is far more often California), or a code right after the amount.
 _CODE_BEFORE_RE = re.compile(r"\b(?:" + _NON_USD_CODES + r"|BDS|BD|AU|NZ|HK|SG|MX|NT|TT|EC|BZ|CI)\s*$")
-_CODE_AFTER_RE = re.compile(r"\s*\(?\s*(?:" + _NON_USD_CODES + r")\b")
-_USD_BEFORE_RE = re.compile(r"\bUSD?\s*$")
-_USD_AFTER_RE = re.compile(r"\s*\(?\s*USD\b")
+# "\s*\(?\s*X" written so a run of spaces has one way to match (no quadratic backtracking).
+_CODE_AFTER_RE = re.compile(r"\s*(?:\(\s*)?(?:" + _NON_USD_CODES + r")\b")
 
 
 def _period_before(text: str, start: int) -> bool:
@@ -225,8 +226,27 @@ def _foreign_near(text: str, start: int, end: int) -> bool:
 
 def _names_usd(text: str, start: int, end: int) -> bool:
     """True when the amount at text[start:end] says US dollars explicitly (USD, US$)."""
-    return bool(_USD_RE.search(text[start:end]) or _USD_BEFORE_RE.search(text[max(0, start - 6):start])
-                or _USD_AFTER_RE.match(text, end))
+    return bool(_USD_RE.search(text[start:end]) or _usd_before(text[max(0, start - 6):start])
+                or _usd_after(text[end:end + 40]))
+
+
+def _usd_after(chunk: str) -> bool:
+    """"USD" as a word right after the amount, optionally inside "("; a string check, not a regex."""
+    t = chunk.lstrip()
+    if t.startswith("("):
+        t = t[1:].lstrip()
+    return t.startswith("USD") and not (len(t) > 3 and (t[3].isalnum() or t[3] == "_"))
+
+
+def _usd_before(chunk: str) -> bool:
+    """"US" or "USD" as a word right before the amount (only spaces between); a string check, not a regex."""
+    t = chunk.rstrip()
+    for word in ("USD", "US"):
+        if t.endswith(word):
+            prev = t[-len(word) - 1] if len(t) > len(word) else ""
+            if not (prev.isalnum() or prev == "_"):
+                return True
+    return False
 
 
 def _to_int(amount: str) -> int:
@@ -238,7 +258,10 @@ def _to_int(amount: str) -> int:
 # "SalaryHK$"); a "$" after a longer or lower-case word is a missing space ("Compensation$102,460").
 _BARE = r"(?-i:(?<![A-Z])|(?<=[A-Z]{4}))\$"  # case-sensitive inside IGNORECASE patterns too
 _D = r"(?:(?:\b|(?-i:(?<=[a-z])))USD?\s?\$|" + _BARE + r")"
-_D_OPT = r"(?:US\s?\$|USD\s*\$?|" + _BARE + r")?"
+# An optional dollar marker with the spaces after it. The spaces sit inside the group (and
+# "USD $" keeps its "$" with its own spaces) so no two "\s*" touch: a long run of spaces
+# around an optional part makes a regex quadratic.
+_D_OPT = r"(?:(?:US\s?\$|USD(?:\s*\$)?|" + _BARE + r")\s*)?"
 _SEP = r"(?:[-–—/]+|(?:and\s+)?up\s+to|to)"
 
 # Each pattern yields (low, high) from a match; k-notation multiplies by 1000.
@@ -246,7 +269,7 @@ _PATTERNS = (
     # 1: $XXX,XXX - $XXX,XXX, e.g. $140,000 USD - $210,000 USD, USD$150,000 - USD$200,000,
     #    $122,550.00-$201,000.00. Cents are matched and dropped.
     (re.compile(
-        _D + r'\s*(\d{1,3}(?:,\d{3})*)(?:\.\d{1,2})?\s*(?:USD|per\s*year|per\s*annum|annually|/\s*yr|/\s*year|a\s*year)?\s*(?:[-–—/]+|(?:and\s+)?up\s+to|to|and)\s*' + _D_OPT + r'\s*(\d{1,3}(?:,\d{3})*)(?:\.\d{1,2})?'
+        _D + r'\s*(\d{1,3}(?:,\d{3})*)(?:\.\d{1,2})?\s*(?:(?:USD|per\s*year|per\s*annum|annually|/\s*yr|/\s*year|a\s*year)\s*)?(?:[-–—/]+|(?:and\s+)?up\s+to|to|and)\s*' + _D_OPT + r'(\d{1,3}(?:,\d{3})*)(?:\.\d{1,2})?'
     ), lambda m: (_to_int(m.group(1)), _to_int(m.group(2)))),
     # 1b: bare numbers with USD: 173,900.00 - 235,200.00 USD
     (re.compile(
@@ -297,6 +320,28 @@ def _find_yearly(description: str, explicit_usd: bool = False):
     return None
 
 
+def _strip_tags(text: str) -> str:
+    """re.sub(r'<[^>]+>', ' ', text) in linear time: the regex rescans to the end from every
+    '<' that has no '>' after it, which is quadratic on a run of '<'."""
+    out, i = [], 0
+    while True:
+        lt = text.find("<", i)
+        if lt == -1:
+            break
+        gt = text.find(">", lt + 1)
+        if gt == -1:          # no '>' after this '<', so none after any later '<' either
+            break
+        if gt == lt + 1:      # "<>" is no tag ([^>]+ needs a character); keep it and go on
+            out.append(text[i:gt])
+            i = gt
+            continue
+        out.append(text[i:lt])
+        out.append(" ")
+        i = gt + 1
+    out.append(text[i:])
+    return "".join(out)
+
+
 def extract_salary(description: str, h1b_median_salary: int = None, explicit_usd: bool = False) -> dict:
     """Extract salary range from job description text, falling back to H-1B LCA median if none
     found. With `explicit_usd`, a bare "$" does not count as US dollars (boards where "$" is
@@ -316,7 +361,7 @@ def extract_salary(description: str, h1b_median_salary: int = None, explicit_usd
 
     if "<" in description and ">" in description:
         import html as _html
-        description = _html.unescape(re.sub(r'<[^>]+>', ' ', description))
+        description = _html.unescape(_strip_tags(description))
 
     found = _find_yearly(description, explicit_usd=explicit_usd)
     if found:

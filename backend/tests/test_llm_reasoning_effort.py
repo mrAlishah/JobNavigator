@@ -176,7 +176,7 @@ async def test_openai_reasoning_that_fills_the_cap_is_not_retried(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_claude_code_passes_effort_flag(monkeypatch):
+async def test_claude_code_passes_effort_flag(test_db, monkeypatch):
     seen = {}
 
     async def fake_run_cli(cmd, stdin, env=None, timeout=None, cwd=None):

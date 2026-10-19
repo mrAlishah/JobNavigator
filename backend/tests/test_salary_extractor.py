@@ -452,3 +452,59 @@ def test_an_hourly_aside_does_not_reject_a_yearly_range(text, expected):
 ])
 def test_an_attached_or_monthly_period_word_still_rejects(text):
     assert _pair(text) == _NONE
+
+
+# ── linear-time rewrites (CodeQL py/polynomial-redos) ───────────────────────
+
+@pytest.mark.parametrize("text", [
+    "", "plain", "<b>x</b>", "a<>b<c>", "<<<x>", "<a <b>", "x<y", "<\n>", ">a<b", "<>", "<<>>",
+    "<p>$150,000 - $180,000</p>", "a<b>c<d", "<<", ">>", "<x>>y<<z>",
+])
+def test_strip_tags_matches_the_regex_it_replaces(text):
+    import re
+    from backend.analyzer.salary_extractor import _strip_tags
+    assert _strip_tags(text) == re.sub(r"<[^>]+>", " ", text)
+
+
+def test_strip_tags_matches_the_regex_on_random_markup():
+    import random
+    import re
+    from backend.analyzer.salary_extractor import _strip_tags
+    rng = random.Random(7)
+    for _ in range(2000):
+        text = "".join(rng.choice("<>ab \n$") for _ in range(rng.randint(0, 30)))
+        assert _strip_tags(text) == re.sub(r"<[^>]+>", " ", text), text
+
+
+@pytest.mark.parametrize("text", [
+    "$150,000 (USD)", "$150,000 ( USD )", "$150,000USD", "$150,000 \t (\tUSD", "$150,000 (US",
+    "$150,000 CAD", "$150,000 ( CAD)", "$150,000 (cad)", "$150,000 ((USD", "$150,000",
+])
+def test_the_after_amount_patterns_keep_their_matches(text):
+    import re
+    from backend.analyzer import salary_extractor as se
+    end = len("$150,000")
+    old_usd = re.compile(r"\s*\(?\s*USD\b")
+    old_code = re.compile(r"\s*\(?\s*(?:" + se._NON_USD_CODES + r")\b")
+    assert se._usd_after(text[end:end + 40]) == bool(old_usd.match(text, end))
+    assert bool(se._CODE_AFTER_RE.match(text, end)) == bool(old_code.match(text, end))
+
+
+@pytest.mark.parametrize("text", [
+    "<" * 30_000,                                    # every '<' without a '>' after it
+    "$150,000" + "\t" * 29_000 + "x",                # whitespace run after an amount
+    "$150,000 (" + " " * 29_000 + "x",
+    "$150,000 USD" + " " * 29_000 + "x",
+    "$150,000 -" + " " * 29_000 + "x",
+    "$150,000 - USD" + " " * 29_000 + "x",
+    "$1 " * 10_000,
+])
+def test_pathological_input_stays_fast(text):
+    import time
+    from backend.analyzer.salary_extractor import extract_salary, _names_usd, _foreign_near
+    t0 = time.perf_counter()
+    extract_salary(text + ">")
+    extract_salary(text)
+    _names_usd(text, 0, 8)
+    _foreign_near(text, 0, 8)
+    assert time.perf_counter() - t0 < 1.0

@@ -296,3 +296,17 @@ def mock_telegram(monkeypatch):
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client)
     return sent
+
+
+# SQLite gives a column typed UUID NUMERIC affinity, so a random hex id made only of digits
+# and one 'e' (e.g. '1234e567...') is stored as a float and reads back as inf. CHAR(32)
+# gives it TEXT affinity, which is what the hex strings are.
+from sqlalchemy.ext.compiler import compiles as _compiles  # noqa: E402
+from sqlalchemy.dialects.postgresql import UUID as _PGUUID  # noqa: E402
+from sqlalchemy.sql.sqltypes import Uuid as _SAUuidType  # noqa: E402
+
+
+@_compiles(_PGUUID, "sqlite")
+@_compiles(_SAUuidType, "sqlite")
+def _uuid_as_text_on_sqlite(type_, compiler, **kw):
+    return "CHAR(32)"
