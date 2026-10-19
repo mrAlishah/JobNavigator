@@ -72,20 +72,20 @@ async def test_other_errors_still_retry(monkeypatch):
         await llm_client._call_opencode_go("p", "s", "x", "sk", 10)
 
 
-def test_output_cap_gives_opencode_go_headroom_only_with_an_effort():
-    """Same rule as OpenAI/OpenRouter: headroom only when an effort is set, so a Go model whose
-    output ceiling is below max_tokens + 16,000 is not refused on every call."""
+def test_output_cap_always_gives_opencode_go_headroom():
+    """Go reasons by default and has no effort to lower, so the cap always gets the room; a
+    scoring call at 600 otherwise spends the whole cap on reasoning and returns no text."""
     from backend.analyzer.llm_client import _output_cap, REASONING_HEADROOM
-    assert _output_cap("opencode_go", 600, "") == 600
+    assert _output_cap("opencode_go", 600, "") == 600 + REASONING_HEADROOM
     assert _output_cap("opencode_go", 600, "none") == 600
-    assert _output_cap("opencode_go", 600, "high") == 600 + REASONING_HEADROOM
     assert _output_cap("openai", 600, "") == 600
     assert _output_cap("openai", 600, "high") == 600 + REASONING_HEADROOM
 
 
 @pytest.mark.asyncio
-async def test_dispatch_sends_the_plain_cap_to_go(monkeypatch):
-    """Go has no effort values, so a left-over effort is dropped and the cap goes out unpadded."""
+async def test_dispatch_sends_the_padded_cap_to_go(monkeypatch):
+    """Go has no effort values, so a left-over effort is dropped; the cap still gets the
+    reasoning headroom so a reasoning-default model answers instead of returning no text."""
     captured = {}
 
     async def fake_openai(prompt, system, model, api_key, max_tokens, base_url=None, extra_body=None, effort=""):
@@ -95,7 +95,7 @@ async def test_dispatch_sends_the_plain_cap_to_go(monkeypatch):
     monkeypatch.setattr(llm_client, "_call_openai", fake_openai)
     await llm_client._dispatch(provider="opencode_go", model="glm-5.3", api_key="sk-go",
                                prompt="p", system="s", max_tokens=600, effort="high")
-    assert captured == {"max_tokens": 600, "effort": ""}
+    assert captured == {"max_tokens": 600 + llm_client.REASONING_HEADROOM, "effort": ""}
 
 
 def test_client_sends_identity_and_session_headers(monkeypatch):

@@ -504,6 +504,13 @@ def _offline(monkeypatch):
     import jobspy
     monkeypatch.setattr(jobspy, "scrape_jobs", _no_network)
 
+    # The Gmail OAuth client comes from .env; pin it so /gmail/connect answers the same with
+    # or without one (CI has none and got a 503 that proves nothing).
+    from backend.email_monitor import gmail_client
+    monkeypatch.setattr(gmail_client, "GMAIL_CLIENT_ID", "leak-harness-client")
+    monkeypatch.setattr(gmail_client, "GMAIL_CLIENT_SECRET", "leak-harness-secret")
+    monkeypatch.setattr(gmail_client, "GMAIL_REFRESH_TOKEN", "")
+
 
 # ── The cases ────────────────────────────────────────────────────────────────
 

@@ -44,10 +44,11 @@ def test_search_config_error_names_the_missing_query():
     surfaces instead of "nothing ran"."""
     from backend.scraper import orchestrator
     err = orchestrator.search_config_error(Search(search_mode="caribbeanjobs"))
-    assert "CaribbeanJobs.com" in err and "search term or a URL" in err
+    assert err == "CaribbeanJobs.com needs a search term or a URL before it can run"
     assert orchestrator.search_config_error(Search(search_mode="caribbeanjobs", search_term="x")) is None
     assert orchestrator.search_config_error(Search(search_mode="caribbeanjobs", direct_url="https://www.caribbeanjobs.com/ShowResults.aspx?x=1")) is None
-    assert "freehire.me" in orchestrator.search_config_error(Search(search_mode="freehire"))
+    assert (orchestrator.search_config_error(Search(search_mode="freehire"))
+            == "freehire.me needs a search term or a URL before it can run")
     assert orchestrator.search_config_error(Search(search_mode="keyword")) is None
 
 

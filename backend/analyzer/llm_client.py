@@ -352,12 +352,15 @@ def _output_cap(provider: str, max_tokens: int, effort: str) -> int:
     REASONING_HEADROOM. OpenAI and OpenRouter get it only when an effort is set: with the
     empty default a non-reasoning model such as gpt-4o (16,384 output ceiling) would be
     sent max_completion_tokens=16,600 and refuse every call. "none" never reasons.
-    opencode_go follows the OpenAI rule: a Go model whose output ceiling is below the headroom
-    would refuse every call, and Go has no effort values yet, so today it gets none."""
+    opencode_go also reasons by default and its picker has no effort to lower, so it always
+    gets the room too. Without it a scoring call (600 tokens) spends the whole cap on
+    reasoning and returns no text; the Go models accept the larger cap (probed, #25)."""
     if effort == "none":
         return max_tokens
     if provider not in _CAPPED_PROVIDERS:
         return max_tokens
+    if provider == "opencode_go":
+        return max_tokens + REASONING_HEADROOM
     if provider != "claude_api" and not effort:
         return max_tokens
     return max_tokens + REASONING_HEADROOM
