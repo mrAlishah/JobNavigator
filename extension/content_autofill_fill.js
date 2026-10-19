@@ -471,10 +471,69 @@
     .pill.done .ck { display:inline-block; }
   `;
 
+  let _hostMountRoot = null, _hostMountPrevPosition = null, _placeObs = null;
+
+  function visibleBox(el) {
+    try {
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+    } catch (e) { return false; }
+  }
+
+  function autofillMountRoot() {
+    const candidates = Array.from(document.querySelectorAll(
+      'dialog[open], [role="dialog"], [aria-modal="true"], .artdeco-modal, .jobs-easy-apply-modal'
+    )).filter(visibleBox);
+    if (!candidates.length) return document.documentElement;
+
+    const fields = discoverFields();
+    const withFields = candidates.filter(root => fields.some(f => root.contains(f.el)));
+    return (withFields.length ? withFields : candidates).at(-1) || document.documentElement;
+  }
+
+  function restoreMountRootPosition() {
+    if (_hostMountRoot && _hostMountPrevPosition !== null) {
+      try { _hostMountRoot.style.position = _hostMountPrevPosition; } catch (e) { /* ignore */ }
+    }
+    _hostMountRoot = null;
+    _hostMountPrevPosition = null;
+  }
+
+  function placeButton() {
+    if (!_host) return;
+    const root = autofillMountRoot();
+    if (_host.parentElement !== root) {
+      restoreMountRootPosition();
+      root.appendChild(_host);
+    }
+    if (root === document.documentElement) {
+      restoreMountRootPosition();
+      _host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647;';
+      return;
+    }
+    const pos = getComputedStyle(root).position;
+    if (pos === 'static') {
+      _hostMountRoot = root;
+      _hostMountPrevPosition = root.style.position;
+      root.style.position = 'relative';
+    }
+    _host.style.cssText = 'position:absolute;bottom:16px;right:16px;z-index:2147483647;';
+  }
+
+  function unmountButton() {
+    if (_placeObs) { _placeObs.disconnect(); _placeObs = null; }
+    if (_host) _host.remove();
+    _host = null; _els = null; _started = false;
+    restoreMountRootPosition();
+  }
+
   function mountButton(initialDone) {
     if (!_host) {
       _host = document.createElement('div');
-      _host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647;';
+      ['pointerdown', 'mousedown', 'click'].forEach(type => {
+        _host.addEventListener(type, ev => ev.stopPropagation());
+      });
       const shadow = _host.attachShadow({ mode: 'open' });
       const style = document.createElement('style'); style.textContent = PILL_CSS;
       const row = document.createElement('div'); row.className = 'row';
@@ -489,9 +548,17 @@
       _els = { pill: shadow.getElementById('af-pill'), label: shadow.getElementById('af-label'), count: shadow.getElementById('af-count'), undo: shadow.getElementById('af-undo') };
       _els.pill.addEventListener('click', onFillClick);
       _els.undo.addEventListener('click', onUndoClick);
-      document.documentElement.appendChild(_host);
+      placeButton();
+      // A modal opened after mount (showModal makes the rest of the page inert) must
+      // re-home the button into it. placeButton is a no-op when the root is unchanged.
+      _placeObs = new MutationObserver(() => {
+        clearTimeout(_placeObs._t);
+        _placeObs._t = setTimeout(placeButton, 300);
+      });
+      try { _placeObs.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] }); } catch (e) { /* ignore */ }
       _setState('idle');
     }
+    placeButton();
     if (initialDone) _setState('done', initialDone);
   }
 
@@ -515,6 +582,20 @@
     _setState('done', { filled: r.filled.length, total: r.total });
   }
   function onUndoClick() { undo(_undoSnapshot); _setState('idle'); }
+
+  async function runFromShortcut() {
+    const cfg = await chrome.storage.sync.get([STRUCTURED_TOGGLE_KEY, STRUCTURED_TRIGGER_KEY]);
+    if (!cfg[STRUCTURED_TOGGLE_KEY]) return { ok: false, reason: 'disabled' };
+    if (!looksLikeApplication()) return { ok: false, reason: 'no-application-form' };
+    const config = await ensureConfig();
+    if (!config) return { ok: false, reason: 'no-config' };
+    const hasFillable = buildPlan(discoverFields(), config).some(p => p.action === 'fill' || p.action === 'combobox');
+    if (!hasFillable) return { ok: false, reason: 'no-fillable-fields' };
+    _started = true;
+    mountButton();
+    await onFillClick();
+    return { ok: true };
+  }
 
   async function autoFill() {
     const r = await runFill();
@@ -569,6 +650,12 @@
   if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', initStructured);
   else initStructured();
 
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.type !== 'structured_autofill_run') return;
+    runFromShortcut().then(sendResponse).catch(e => sendResponse({ ok: false, reason: e.message }));
+    return true;
+  });
+
   // React to the popup toggling the mode (Off / On click / Auto) without needing
   // a page reload: mount the button when enabled, remove it when turned Off.
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -576,7 +663,7 @@
     if (!changes[STRUCTURED_TOGGLE_KEY] && !changes[STRUCTURED_TRIGGER_KEY]) return;
     chrome.storage.sync.get([STRUCTURED_TOGGLE_KEY, STRUCTURED_TRIGGER_KEY], (cfg) => {
       _trigger = cfg[STRUCTURED_TRIGGER_KEY] === 'auto' ? 'auto' : 'click';
-      if (!cfg[STRUCTURED_TOGGLE_KEY]) { if (_host) { _host.remove(); _host = null; } _els = null; _started = false; return; }
+      if (!cfg[STRUCTURED_TOGGLE_KEY]) { unmountButton(); return; }
       tryMount();
     });
   });

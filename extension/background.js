@@ -82,6 +82,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // Also run immediately in case service worker restarts
 setupFrameRules();
 
+// Keyboard shortcut: invoke structured ATS autofill in the active tab. The
+// content script still checks the user's Fill ATS forms setting before writing.
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== 'run-structured-autofill') return;
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs && tabs[0];
+    if (!tab || !tab.id) return;
+    chrome.tabs.sendMessage(tab.id, { type: 'structured_autofill_run' }, () => {
+      // No content script on chrome:// pages, unloaded tabs, etc. is fine.
+      void chrome.runtime.lastError;
+    });
+  });
+});
+
 // --- LinkedIn Capture ---
 
 const capturedIds = new Set();

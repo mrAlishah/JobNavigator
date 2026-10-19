@@ -16,6 +16,15 @@
   "background": {
     "service_worker": "background.js"
   },
+  "commands": {
+    "run-structured-autofill": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Run Fill ATS forms on the current page"
+    }
+  },
   "content_scripts": [
     {
       "matches": [

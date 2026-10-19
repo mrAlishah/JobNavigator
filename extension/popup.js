@@ -68,7 +68,12 @@ function detectCompany(url) {
     if (!detected && hostname === 'jobs.apple.com') detected = 'Apple';
     if (!detected && hostMatches(url, 'metacareers.com')) detected = 'Meta';
     if (!detected && hostMatches(url, 'google.com') && parsed.pathname.includes('/careers')) detected = 'Google';
-    if (!detected) {
+    // A domain explicitly mapped to '' above (LinkedIn, Indeed, Greenhouse, ...) is a
+    // known job board/ATS, not a company -- the generic hostname guess below must not
+    // override that "don't guess" signal, or e.g. linkedin.com silently becomes "Linkedin".
+    const isKnownNonCompanyDomain = Object.entries(COMPANY_DOMAINS)
+      .some(([domain, company]) => company === '' && hostMatches(url, domain));
+    if (!detected && !isKnownNonCompanyDomain) {
       const parts = hostname.split('.');
       const skip = ['www', 'jobs', 'careers', 'apply', 'boards', 'hire', 'recruiting', 'talent'];
       const tlds = ['com', 'org', 'net', 'co', 'io', 'ai', 'dev', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'au', 'jobs'];
