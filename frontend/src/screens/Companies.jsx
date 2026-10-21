@@ -189,7 +189,7 @@ export default function Companies() {
   // tier counts, bulk buttons and subtitle never render in a staggered, half-loaded order.
   const { ready } = useSettled([
     () => fetchCompanies(),
-    () => api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setResumes(Array.isArray(data) ? data : [])).catch(() => { /* silent: the résumé chips are decoration on this screen; the list load has its own error state */ }),
+    () => api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setResumes(Array.isArray(data) ? data : [])).catch(() => { /* silent: the résumé chips are decoration on this screen; the list load has its own error state */ }),
     () => api.get('/persona').then(({ data }) => setPersonaPopulated(Object.keys(data?.resume_content || {}).length > 0)).catch(() => { /* silent: one optional chip — absent Persona simply isn't offered */ }),
     () => api.get('/monitor/active').then(({ data }) => setScraping(runMap(data))).catch(() => { /* silent: poller — the 3s tick below retries, a toast per tick would be worse */ }),
   ], reload)

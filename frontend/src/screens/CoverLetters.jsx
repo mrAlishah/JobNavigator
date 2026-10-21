@@ -160,7 +160,7 @@ export default function CoverLetters() {
     () => load(),
     // The generate panel is the point of this screen; a disabled button alone doesn't explain
     // why. Same for the job picker and voice list below.
-    () => api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setResumes(mergeKeep(data || []))).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — there is nothing to generate from.' }) }),
+    () => api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setResumes(mergeKeep(data || []))).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — there is nothing to generate from.' }) }),
     () => api.get('/persona').then(({ data }) => setPersonaAvailable(Object.keys(data?.resume_content || {}).length > 0)).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your Persona — it will not be offered as a source.' }) }),
     // saved AND applied — v1 fetched only saved, so a ?job= from an applied job
     // landed on an id with no matching option and the field rendered blank

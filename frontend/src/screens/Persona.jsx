@@ -459,7 +459,7 @@ function ImportModal({ busy, onClose, onRun, pushToast }) {
 
   useEffect(() => {
     // The panel stays open on failure — the PDF half still works when the résumé list failed to load.
-    api.get('/resumes', { params: { is_base: true } })
+    api.get('/resumes', { params: { is_base: true, active: true } })
       .then(({ data }) => setBases(Array.isArray(data) ? data : []))
       .catch((e) => {
         console.error('persona import: list résumés', e)

@@ -196,7 +196,7 @@ describe('STAGE_CLASS', () => {
     expect(new Set(Object.values(STAGE_CLASS)).size).toBe(Object.keys(STAGE_CLASS).length)
   })
   it('is a plain lookup: an unknown stage yields undefined, not a wrong colour', () => {
-    expect(STAGE_CLASS.ghosted).toBeUndefined()
+    expect(STAGE_CLASS.screening).toBeUndefined()
     expect(STAGE_CLASS.saved).toBeUndefined()
   })
 })

@@ -71,7 +71,7 @@ def _check_default_resume(db, value) -> None:
     except (ValueError, TypeError, AttributeError):
         rid = None
     found = rid is not None and db.query(Resume.id).filter(
-        Resume.id == rid, Resume.is_base == True).first() is not None  # noqa: E712 (scoped)
+        Resume.id == rid, Resume.is_base == True, Resume.active.is_not(False)).first() is not None  # noqa: E712 (scoped)
     if not found:
         raise HTTPException(status_code=422, detail="default_resume_id must be \"\", \"persona\" or the id of one of your base résumés")
 

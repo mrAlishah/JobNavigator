@@ -308,7 +308,7 @@ export default function Stats() {
 
   // ── derived ───────────────────────────────────────────────────────────────
   const st = stats?.application_statuses || {}
-  const inPlay = Math.max(0, (stats?.total_applications || 0) - ((st.rejected || 0) + (st.ghosted || 0) + (st.withdrawn || 0)))
+  const inPlay = Math.max(0, (stats?.total_applications || 0) - (st.rejected || 0))
   // cv_scores can be {} (unscored); Math.max() of an empty list is -Infinity,
   // which rendered as the literal string "-Infinity" in the tile.
   const bestScore = useMemo(() => {
@@ -366,7 +366,7 @@ export default function Stats() {
   }, [stats, st, reached])
   const conv = (a, b) => (a ? `${Math.round((b / a) * 100)}%` : '—')
 
-  const RANK = { new: 0, saved: 1, applied: 2, interview: 3, offer: 4, rejected: 5, ghosted: 5, withdrawn: 5 }
+  const RANK = { new: 0, saved: 1, applied: 2, interview: 3, offer: 4, rejected: 5 }
   const sankey = useMemo(() => {
     const fwd = flows.filter((d) => d.source && d.target && d.source !== d.target && (RANK[d.source] ?? 99) < (RANK[d.target] ?? 99))
     if (!fwd.length) return null
@@ -455,7 +455,7 @@ export default function Stats() {
             ['Total jobs', int(stats?.total_jobs), '', 'All jobs ever found, excluding ones removed by cleanup'],
             ['New this week', int(timeline ? weekly.now : null), timeline && weekly.prev ? `${weekly.now - weekly.prev >= 0 ? '+' : ''}${weekly.now - weekly.prev} vs previous period` : '', 'Discovered in the last 7 days'],
             ['Saved', int(stats?.saved_jobs), '', 'In your feed shortlist'],
-            ['Applications', int(stats?.total_applications), `${inPlay} open`, 'Open = not rejected, ghosted or withdrawn'],
+            ['Applications', int(stats?.total_applications), `${inPlay} open`, 'Open = not rejected'],
             ['Best open score', bestScore, bestScore === '—' ? '' : (best?.company || ''), 'Highest-scoring posting you haven’t applied to'],
           ].map(([label, value, sub, hint], i, arr) => (
             <div key={label} title={hint} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 11, padding: '14px 20px 10px', borderRight: `1px solid ${i === arr.length - 1 ? 'transparent' : 'var(--line-soft)'}` }}>
@@ -799,8 +799,6 @@ function Spark({ series, peak }) {
 const STAGE_FILL = {
   new: 'var(--stage-new)', saved: 'var(--stage-new)', applied: 'var(--stage-applied)',
   interview: 'var(--stage-interview)', offer: 'var(--stage-offer)', rejected: 'var(--stage-rejected)',
-  // ghosted/withdrawn have no stage of their own — they group under Rejected
-  ghosted: 'var(--stage-rejected)', withdrawn: 'var(--stage-rejected)',
 }
 function SankeyNode({ x, y, width, height, payload }) {
   return (

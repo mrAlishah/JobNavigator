@@ -231,7 +231,7 @@ def _checked_resume_ids(db, value, stored=()) -> list:
             parsed[v] = None
     wanted = [u for u in parsed.values() if u is not None]
     own = {str(r) for (r,) in db.query(Resume.id).filter(
-        Resume.id.in_(wanted), Resume.is_base == True).all()} if wanted else set()  # noqa: E712 (scoped)
+        Resume.id.in_(wanted), Resume.is_base == True, Resume.active.is_not(False)).all()} if wanted else set()  # noqa: E712 (scoped)
     stored = {str(s) for s in (stored or [])}
     out, invalid = [], []
     for v in value:

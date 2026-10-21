@@ -80,6 +80,12 @@ export default function V2Resumes() {
       setLoadErr(false)
     } catch (e) { console.error('shelf load failed', e); setLoadErr(true) }
   }, [])
+
+  // Inactive bases drop out of every picker (tailor, score, default, cover letters…); the card stays here to re-enable.
+  const toggleActive = async (b) => {
+    try { await api.patch(`/resumes/${b.id}`, { active: !b.active }); load(); window.dispatchEvent(new CustomEvent('jn:counts-changed')) }
+    catch (e) { console.error(e); pushToast({ kind: 'error', msg: `Could not update ${b.name}` }) }
+  }
   // One loader for the whole screen: shelf and subtitle appear together instead of
   // "0 bases · 0 copies" jumping to the real numbers a moment later.
   const { ready } = useSettled([() => load()], reload)
@@ -250,16 +256,20 @@ export default function V2Resumes() {
                 const copies = b.copies || []
                 const baseInflight = inflight.filter((f) => String(f.baseId) === String(b.id))
                 return (
-                  <Card key={b.id} onClick={() => openResume(b.id)} title={`Open ${b.name} — the base résumé`} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 11 }}>
+                  <Card key={b.id} onClick={() => openResume(b.id)} title={`Open ${b.name} — the base résumé`} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 11, opacity: b.active ? 1 : 0.6 }}>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, lineHeight: '28px' }}>
                       <Heading strong size={19} title={b.name} style={{ flex: '0 1 auto', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.name}</Heading>
                       <Helper>{[b.copy_count > 0 ? `${b.copy_count} recent cop${b.copy_count === 1 ? 'y' : 'ies'}` : (b.archived_count > 0 ? 'no recent copies' : 'no copies'), `edited ${timeAgo(b.updated_at)}`].join(' · ')}</Helper>
-                      {b.avg_fit != null && (
-                        /* ui: keep — serif numeral + nested sans-10 unit; unit needs lineHeight 1 or it inherits the row's 28px line-height and pushes the numeral off (29px, 31px alt). */
-                        <span title="Average fit across this base's scored copies (archived included)" style={{ marginLeft: 'auto', fontFamily: 'var(--serif)', fontSize: 17, color: scoreColor(b.avg_fit) }}>
-                          {b.avg_fit}<span style={{ fontFamily: 'var(--sans)', fontSize: 10, lineHeight: 1, color: 'var(--muted)' }}> avg fit</span>
-                        </span>
-                      )}
+                      <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        {b.avg_fit != null && (
+                          /* ui: keep — serif numeral + nested sans-10 unit; unit needs lineHeight 1 or it inherits the row's 28px line-height and pushes the numeral off (29px, 31px alt). */
+                          <span title="Average fit across this base's scored copies (archived included)" style={{ fontFamily: 'var(--serif)', fontSize: 17, color: scoreColor(b.avg_fit) }}>
+                            {b.avg_fit}<span style={{ fontFamily: 'var(--sans)', fontSize: 10, lineHeight: 1, color: 'var(--muted)' }}> avg fit</span>
+                          </span>
+                        )}
+                        <Pill size="xs" on={b.active} onClick={(e) => { e.stopPropagation(); toggleActive(b) }}
+                          title={b.active ? 'Click to hide this résumé from every picker' : 'Click to make this résumé selectable again'}>{b.active ? 'Active' : 'Inactive'}</Pill>
+                      </div>
                     </div>
                     {(copies.length > 0 || baseInflight.length > 0) && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
