@@ -1279,6 +1279,7 @@ def _resume_to_dict(r: Resume, include_json_data: bool = False) -> dict:
         "id": str(r.id),
         "name": r.name,
         "is_base": r.is_base,
+        "active": r.active is not False,
         "parent_id": str(r.parent_id) if r.parent_id else None,
         "job_id": str(r.job_id) if r.job_id else None,
         "template": r.template,
@@ -1302,11 +1303,13 @@ def list_templates():
 # ── CRUD ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_resumes(is_base: Optional[bool] = None, db: Session = Depends(get_db)):
-    """List all resumes. Optional filter: is_base=true for base resumes only."""
+def list_resumes(is_base: Optional[bool] = None, active: Optional[bool] = None, db: Session = Depends(get_db)):
+    """List all resumes. Optional filters: is_base=true for base resumes only; active=true/false for the active flag (a NULL flag counts as active)."""
     q = db.query(Resume).order_by(Resume.updated_at.desc())
     if is_base is not None:
         q = q.filter(Resume.is_base == is_base)
+    if active is not None:
+        q = q.filter(Resume.active.is_not(False) if active else Resume.active.is_(False))
     resumes = q.all()
     return [_resume_to_dict(r) for r in resumes]
 
@@ -1414,12 +1417,14 @@ def resume_shelf(db: Session = Depends(get_db)):
         out.append({
             "id": str(b.id),
             "name": b.name,
+            "active": b.active is not False,
             "updated_at": b.updated_at.isoformat() if b.updated_at else None,
             "copy_count": len(copies_out),
             "archived_count": len(clist) - len(copies_out),
             "avg_fit": int(round(sum(scores) / len(scores))) if scores else None,
             "copies": copies_out,
         })
+    out.sort(key=lambda b: not b["active"])   # stable: active bases first, newest-edited order kept within each group
     # Persona group: tailored copies with no base parent (base_resume_id == "persona")
     persona_copies_out, persona_scores = [], []
     for c in sorted(by_parent.get(None, []), key=lambda c: c.updated_at or now, reverse=True):
@@ -1494,6 +1499,8 @@ def copy_resume_for_job(body: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, "base_resume_id and job_id are required")
 
     base = get_owned_or_404(db, Resume, base_resume_id, "Base resume not found")
+    if base.active is False:
+        raise HTTPException(400, "Base resume is inactive")
     job = get_owned_or_404(db, Job, job_id)
 
     job_name = f"{job.company} \u2014 {job.title}" if job.company else job.title or ""
@@ -1546,6 +1553,8 @@ async def tailor_resume(body: dict, db: Session = Depends(get_db)):
         base_name = "Persona"
     else:
         base = get_owned_or_404(db, Resume, base_resume_id, "Base resume not found")
+        if base.active is False:
+            raise HTTPException(400, "Base resume is inactive")
         base_name = base.name
 
     # Fast-fail: job must exist and have some JD source; the worker resolves the actual
@@ -1855,7 +1864,7 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    allowed = {"name", "is_base", "parent_id", "job_id", "template", "page_format", "json_data"}
+    allowed = {"name", "is_base", "active", "parent_id", "job_id", "template", "page_format", "json_data"}
     # Validate before the first setattr so a bad template can't be half-applied
     # (it is also the value every later render reads — R4-T5-01).
     if "template" in body:

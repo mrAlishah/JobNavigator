@@ -395,7 +395,7 @@ export default function Settings() {
   const { ready } = useSettled([
     () => load(),
     // This is the Default résumé picker's entire option list — empty, it looks like a setting with nothing to choose.
-    () => api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); flash('Could not load your résumés — the default-résumé picker is empty', true) }),
+    () => api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); flash('Could not load your résumés — the default-résumé picker is empty', true) }),
     () => api.get('/persona').then(({ data }) => setPersonaAvailable(Object.keys(data?.resume_content || {}).length > 0)).catch(() => { /* silent: Persona is one optional entry in that picker */ }),
     () => api.get('/linkedin/session').then(({ data }) => setLi(data)).catch(() => { /* silent: the LinkedIn row reads “unknown” and its own actions report their failures */ }),
     () => loadAccounts(),

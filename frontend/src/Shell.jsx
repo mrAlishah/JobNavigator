@@ -244,7 +244,7 @@ export default function Shell() {
     // failed request leaves its cached number in place rather than blanking.
     Promise.allSettled([
       api.get('/jobs', { params: { status: 'new', limit: 1 } }),
-      api.get('/resumes', { params: { is_base: true } }),
+      api.get('/resumes', { params: { is_base: true, active: true } }),
       // /applications returns {applications, total} — ask for one row, read total
       api.get('/applications', { params: { limit: 1 } }),
       api.get('/companies'),

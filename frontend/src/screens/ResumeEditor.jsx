@@ -808,7 +808,7 @@ function RetailorModal({ doc, job, chain, onClose, onRun, pushToast }) {
 
   useEffect(() => {
     // an empty list with a disabled button says nothing about why, so surface load failures via toast
-    api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setBases(data || [])).catch((e) => { console.error(e); pushToast?.({ kind: 'error', msg: 'Could not load your base résumés — there is nothing to re-tailor from.' }) })
+    api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setBases(data || [])).catch((e) => { console.error(e); pushToast?.({ kind: 'error', msg: 'Could not load your base résumés — there is nothing to re-tailor from.' }) })
     api.get('/persona').then(({ data }) => setPersona(Object.keys(data?.resume_content || {}).length > 0)).catch((e) => { console.error(e); pushToast?.({ kind: 'error', msg: 'Could not load your Persona — it will not be offered as a source.' }) })
   }, [pushToast])
 

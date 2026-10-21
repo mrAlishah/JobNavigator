@@ -115,7 +115,7 @@ export default function CoverLetterEditor() {
   // (with doc) gates the preview toolbar so the Template trigger never flashes a raw id. Each keeps its own catch so a failure explains itself instead of leaving a silent empty picker.
   const { ready: metaReady } = useSettled([
     () => api.get('/cover-letters/templates').then(({ data }) => setTemplates(data || [])).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load the layouts — the picker is empty.' }) }),
-    () => api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — Regenerate has no source to pick.' }) }),
+    () => api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — Regenerate has no source to pick.' }) }),
     () => api.get('/persona').then(({ data }) => setPersonaAvailable(Object.keys(data?.resume_content || {}).length > 0)).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your Persona — it will not be offered as a source.' }) }),
     () => api.get('/settings').then(({ data }) => {
       let p = data.cover_letter_voice_presets

@@ -154,7 +154,7 @@ def _get_resume_texts(db) -> dict:
     """Return {Resume.name: flattened_text} for every base Resume + Persona (if populated, always last), ordered by Resume.id for stable cache keys."""
     from backend.models.db import Resume
     out = {}
-    for r in db.query(Resume).filter(Resume.is_base == True).order_by(Resume.id).all():
+    for r in db.query(Resume).filter(Resume.is_base == True, Resume.active.is_not(False)).order_by(Resume.id).all():
         text = _flatten_resume(r.json_data or {})
         if text:
             out[r.name] = text
@@ -179,7 +179,7 @@ def _get_default_resume(db) -> dict:
     except ValueError:
         logger.warning("default_resume_id %r is not a résumé id; ignored", default_id)
         return {}
-    r = db.query(Resume).filter(Resume.id == rid, Resume.is_base == True).first()
+    r = db.query(Resume).filter(Resume.id == rid, Resume.is_base == True, Resume.active.is_not(False)).first()
     if not r:
         return {}
     text = _flatten_resume(r.json_data or {})
@@ -196,7 +196,7 @@ def _get_resume_texts_for_company(db, company) -> dict:
         out = {}
         resume_ids = [s for s in selected if s != _PERSONA_KEY]
         if resume_ids:
-            for r in db.query(Resume).filter(Resume.is_base == True, Resume.id.in_(resume_ids)).order_by(Resume.id).all():
+            for r in db.query(Resume).filter(Resume.is_base == True, Resume.active.is_not(False), Resume.id.in_(resume_ids)).order_by(Resume.id).all():
                 text = _flatten_resume(r.json_data or {})
                 if text:
                     out[r.name] = text

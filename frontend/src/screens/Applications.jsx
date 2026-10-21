@@ -913,7 +913,7 @@ function LogModal({ onClose, onSaved, onJobSaved, pushToast, onDirty }) {
 
   // The chips are the modal's only way to attach a résumé; an empty list must not read as
   // "you have no résumés" when the user is just here to log an application.
-  useEffect(() => { api.get('/resumes', { params: { is_base: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — log it now and attach one later.' }) }) }, [pushToast])
+  useEffect(() => { api.get('/resumes', { params: { is_base: true, active: true } }).then(({ data }) => setResumes(data || [])).catch((e) => { console.error(e); pushToast({ kind: 'error', msg: 'Could not load your résumés — log it now and attach one later.' }) }) }, [pushToast])
 
   // title/company captured in readUrl's closure at call time were often still empty, so a late
   // response overwrote what the user had typed; read the live draft off a ref, and drop stale responses.

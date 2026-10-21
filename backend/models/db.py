@@ -615,6 +615,7 @@ class Resume(AccountScoped, Base):
     account_id = _account_fk()
     name = Column(String, nullable=False)
     is_base = Column(Boolean, default=True)
+    active = Column(Boolean, default=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     template = Column(String, default=lambda: first_template("resume_templates"))
@@ -805,6 +806,7 @@ def create_tables():
         conn.execute(text(
             "ALTER TABLE searches ADD COLUMN IF NOT EXISTS exclude_active_companies BOOLEAN DEFAULT FALSE"
         ))
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE"))
         conn.commit()
 
 

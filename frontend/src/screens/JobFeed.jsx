@@ -353,7 +353,7 @@ export default function V2JobFeed() {
   // The screen-level facets settle as one, so the header doesn't flash "0 open roles" before each answers.
   const { ready: facetsReady } = useSettled([
     loadFacets,
-    () => api.get('/resumes?is_base=true').then(({ data }) => { setResumes(data || []); setResumesLoaded(true) }).catch(() => { /* silent: only names the résumés in the score modal; scoring reports its own failures */ }),
+    () => api.get('/resumes?is_base=true&active=true').then(({ data }) => { setResumes(data || []); setResumesLoaded(true) }).catch(() => { /* silent: only names the résumés in the score modal; scoring reports its own failures */ }),
     () => api.get('/jobs/feed-stats').then(({ data }) => setStats(data)).catch(() => { /* silent: the header counters; refreshStats re-runs them after every action */ }),
   ])
   // One trailing timer shared by both callers (a filter change and a triage refresh),
@@ -648,7 +648,7 @@ export default function V2JobFeed() {
   const loadRescoreOpts = useCallback(async (preferDepth) => {
     setRescoreDepth(preferDepth || defaultDepth)
     try {
-      const [rz, st] = await Promise.all([api.get('/resumes?is_base=true'), api.get('/settings')])
+      const [rz, st] = await Promise.all([api.get('/resumes?is_base=true&active=true'), api.get('/settings')])
       const opts = (rz.data || []).map((r) => ({ id: r.id, name: r.name, note: 'base' }))
       if (personaAvailable) opts.push({ id: 'persona', name: 'Persona', note: 'from Persona' })
       setRescoreOpts(opts)

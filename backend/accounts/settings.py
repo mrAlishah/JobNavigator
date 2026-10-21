@@ -242,7 +242,7 @@ def default_resume_ids(db) -> list:
         rid = uuid.UUID(value)
     except ValueError:
         return []
-    found = db.query(Resume.id).filter(Resume.id == rid, Resume.is_base == True).first()  # noqa: E712 (scoped)
+    found = db.query(Resume.id).filter(Resume.id == rid, Resume.is_base == True, Resume.active.is_not(False)).first()  # noqa: E712 (scoped)
     return [value] if found else []
 
 
