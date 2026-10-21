@@ -11,6 +11,7 @@ import { useUndoRemove, BandRule } from './ResumeSections'
 import { Button, Card as UiCard, DashedAdd, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Link, Menu, MenuItem, ModalPanel, MoveArrows, NavLink, RemoveX, SectionHead, Spinner, Surface, ToolbarTrigger } from '../ui'
 import '../theme.css'
 import { useTitle } from '../useTitle'
+import { loadDemo } from '../demoHooks'
 import { fetchRunOutcome, runFailed, runFailureReason, useSettled, useSingleOpen, NBSP } from '../hooks'
 
 const EMPTY = {
@@ -166,7 +167,7 @@ export default function CoverLetterEditor() {
     pdfTimer.current = setTimeout(async () => {
       try {
         const r = await api.get(`/cover-letters/${id}/pdf`, { responseType: 'arraybuffer', signal: ac.signal })
-        const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }))
+        const url = URL.createObjectURL(new Blob([r.data], { type: __DEMO__ ? 'text/html' : 'application/pdf' }))
         if (prevBlob.current) URL.revokeObjectURL(prevBlob.current)
         prevBlob.current = url
         setPdfUrl(url)
@@ -186,6 +187,10 @@ export default function CoverLetterEditor() {
   const download = async () => {
     try {
       const r = await api.get(`/cover-letters/${id}/pdf`, { responseType: 'blob' })
+      if (__DEMO__) {   // the demo prints the rendered template through the browser
+        const { printHtml, blobText } = await loadDemo('pdf.js')
+        await printHtml(await blobText(r.data)); return
+      }
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
       a.href = url; a.download = downloadName(r.headers?.['content-disposition'], 'CoverLetter.pdf')

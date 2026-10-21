@@ -7,8 +7,12 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 const appVersion = pkg.version.split('.').slice(0, 2).join('.')
 
 export default defineConfig({
+  base: process.env.VITE_DEMO === '1' ? '/JobNavigator-demo/' : '/',
   plugins: [react()],
-  define: { __APP_VERSION__: JSON.stringify(appVersion) },
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+    __DEMO__: JSON.stringify(process.env.VITE_DEMO === '1'),
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8000',

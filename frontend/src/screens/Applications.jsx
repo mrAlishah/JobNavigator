@@ -11,6 +11,15 @@ import { useApifyBoards, apifySourceLabel } from '../apifyBoards'
 import '../theme.css'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+// Demo build: a plain /api link would load the SPA, so fetch the snapshot and open it as a page.
+async function openDemoSnapshot(jobId) {
+  const w = window.open('', '_blank')
+  try {
+    const { data } = await api.get(`/jobs/${jobId}/cached-page`, { responseType: 'text', transformResponse: (r) => r })
+    if (w) w.location.href = URL.createObjectURL(new Blob([data], { type: 'text/html' }))
+  } catch { if (w) w.close() }
+}
+
 const ts = (iso) => (iso ? new Date(iso).getTime() : 0)
 const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : 0)
 const ago = (iso) => {
@@ -50,7 +59,7 @@ const STAGES = [
   { id: 'rejected', label: 'Rejected', dot: 'var(--stage-rejected)', hint: 'Closed — kept in Stats' },
 ]
 const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]))
-// legacy rows (ghosted / withdrawn) have no stage of their own — closed, so they list under Rejected
+// a status outside the four stages is closed, so it lists under Rejected
 const groupOf = (status) => (STAGE[status] ? status : 'rejected')
 // The Log modal writes one of two rows. `new`/`saved` are Job.status values and go to
 // POST /jobs/manual as a feed job with no application; the rest are Application.status
@@ -704,7 +713,8 @@ function Detail({ d, history, menuOpen, setMenuOpen, onStage, onNotes, onDelete,
                 --pill-on-* trio is exactly what the open state drew by
                 hand. Height is the one override (this header's 30, not sm's 33);
                 the padding is now sm's 15px rather than ACT_BTN's 14. */}
-            {d.has_cached_page && <Button variant="secondary" size="sm" href={`/api/jobs/${d.job_id}/cached-page`} target="_blank"
+            {d.has_cached_page && <Button variant="secondary" size="sm"
+              {...(__DEMO__ ? { onClick: () => openDemoSnapshot(d.job_id) } : { href: `/api/jobs/${d.job_id}/cached-page`, target: '_blank' })}
               title="Snapshot of the posting from application day" style={{ height: 30 }}>Cached</Button>}
             {d.url && <Button variant="secondary" size="sm" href={d.url} target="_blank"
               title="Open the live posting" style={{ height: 30 }}>Live ↗</Button>}

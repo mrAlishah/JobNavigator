@@ -14,6 +14,9 @@ process.env.TZ = 'UTC'
 
 export default defineConfig({
   plugins: [react()],
+  define: { __DEMO__: false },
+  // the demo bundles the backend's template files from the sibling directory
+  server: { fs: { allow: ['..'] } },
   test: {
     environment: 'jsdom',
     globals: true,

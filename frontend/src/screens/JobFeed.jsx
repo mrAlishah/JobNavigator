@@ -15,6 +15,8 @@ const UI_KEY = 'v2_feed_ui'   // persisted panel open/collapse prefs
 const loadUI = () => { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {} } catch { return {} } }
 // A grab-line above the detail header folds the whole right-side top (metadata header + score/report band) away.
 // Its own key, deliberately not part of UI_KEY — survives reloads and job selection.
+// The server's reason for a refused start (409 already running, 400 nothing to score with…), when it gave one.
+const detailSuffix = (e) => (typeof e?.response?.data?.detail === 'string' ? ' — ' + e.response.data.detail : '')
 const ANA_KEY = 'jn_feed_analysis_collapsed'
 const loadAnaCollapsed = () => { try { return localStorage.getItem(ANA_KEY) === '1' } catch { return false } }
 // Per-host frame-check cache ({host: 1 embeddable | 0 blocked}). A known host answers instantly;
@@ -208,11 +210,11 @@ export default function V2JobFeed() {
   const [reportTab, setReportTab] = useState(0)   // per-job: reports differ per résumé, so this resets
   const [reqFilter, setReqFilter] = useState(() => loadUI().reqFilter ?? 'all')
   const [showMatched, setShowMatched] = useState(() => loadUI().showMatched ?? false)
-  const [breakdownOpen, setBreakdownOpen] = useState(() => loadUI().breakdownOpen ?? false)
-  const [keywordOpen, setKeywordOpen] = useState(() => loadUI().keywordOpen ?? false)
-  const [reqOpen, setReqOpen] = useState(() => loadUI().reqOpen ?? false)
+  const [breakdownOpen, setBreakdownOpen] = useState(() => loadUI().breakdownOpen ?? true)
+  const [keywordOpen, setKeywordOpen] = useState(() => loadUI().keywordOpen ?? true)
+  const [reqOpen, setReqOpen] = useState(() => loadUI().reqOpen ?? true)
   useEffect(() => { try { localStorage.setItem(UI_KEY, JSON.stringify({ headOpen, reportOpen, breakdownOpen, keywordOpen, reqOpen, reqFilter, showMatched })) } catch {} }, [headOpen, reportOpen, breakdownOpen, keywordOpen, reqOpen, reqFilter, showMatched])
-  const [viewCached, setViewCached] = useState(false)
+  const [viewCached, setViewCached] = useState(__DEMO__)
   const [cachedHtml, setCachedHtml] = useState(null)
   // Posting zoom. `postZoom` is what the frames render at whether or not the
   // floater is shown — turning the control off hides the affordance, it does not
@@ -470,7 +472,7 @@ export default function V2JobFeed() {
     pinnedRef.current = null                 // picking from the list releases a ?job= pin
     deadPinRef.current = false
     setSel(idx); lastIdx.current = idx
-    setDetail(j); setReportTab(0); setViewCached(false); setCachedHtml(null); setFrameOk(frameGuess(j.url)); setFrameDeadId(null)
+    setDetail(j); setReportTab(0); setViewCached(__DEMO__); setCachedHtml(null); setFrameOk(frameGuess(j.url)); setFrameDeadId(null)
     api.get(`/jobs/${j.id}`).then(({ data }) => setDetail((c) => (c && c.id === data.id ? data : c))).catch(() => { /* silent: a background refresh of an already-rendered panel — the row data stays */ })
   }, [frameGuess])
   const focusAt = useCallback((idx) => {
@@ -637,7 +639,7 @@ export default function V2JobFeed() {
     // the one-click path sends no cv_ids, so the run covers every base résumé
     api.post(`/analyze/${job.id}?depth=${defaultDepth}`, {}).then(() => {
       markFlight(job.id, ANALYZE, { resume_names: resumes.map((r) => r.name).filter(Boolean), depth: defaultDepth })
-    }).catch((e) => { delete pendingRef.current[job.id]; pushToast({ kind: 'error', msg: `Scoring failed for "${job.title}"` }); console.error(e) })
+    }).catch((e) => { delete pendingRef.current[job.id]; pushToast({ kind: 'error', msg: `Scoring failed for "${job.title}"${detailSuffix(e)}` }); console.error(e) })
   }, [pushToast, defaultDepth, resumes, markFlight])
 
   // rescoreJob holds { label, jobs:[...] } — one job or a bulk set
@@ -691,7 +693,7 @@ export default function V2JobFeed() {
           await api.post('/resumes/tailor', { base_resume_id: baseId, job_id: job.id })
           markFlight(job.id, TAILOR, { base_name: baseName, replaces: !!job.tailored_resume_id })
         }
-      } catch (e) { delete pendingRef.current[job.id]; pushToast({ kind: 'error', msg: `${mode === 'copy' ? 'Copy' : 'Tailor'} failed for "${job.title}"` }); console.error(`${mode} failed`, e.response?.data?.detail || e.message) }
+      } catch (e) { delete pendingRef.current[job.id]; pushToast({ kind: 'error', msg: `${mode === 'copy' ? 'Copy' : 'Tailor'} failed for "${job.title}"${detailSuffix(e)}` }); console.error(`${mode} failed`, e.response?.data?.detail || e.message) }
     }
     setChecked(new Set())
   }, [pushToast, resumes, markFlight, navigate])
@@ -844,7 +846,7 @@ export default function V2JobFeed() {
 
   // The src the live posting frame gets. Any route away from it (cached snapshot, confirmed block,
   // a load that never arrived) makes it null, and the pane renders the cached or fallback branch.
-  const cachedAvail = !!(detail && detail.status === 'applied' && detail.has_cached_page)
+  const cachedAvail = __DEMO__ ? !!detail : !!(detail && detail.status === 'applied' && detail.has_cached_page)
   const frameJobId = detail?.id || null
   const frameSrc = (detail?.url && !(viewCached && cachedAvail) && (extActive || frameOk !== false) && frameDeadId !== detail.id) ? detail.url : null
   // Cover goes up when a frame mounts/src changes, down on load/error or the safety timeout (closed-over id
@@ -900,7 +902,7 @@ export default function V2JobFeed() {
     pinnedRef.current = jid
     api.get(`/jobs/${jid}`).then(({ data }) => {
       if (pinnedRef.current !== jid) return
-      setDetail(data); setReportTab(0); setViewCached(false); setCachedHtml(null); setFrameOk(frameGuess(data.url)); setFrameDeadId(null)
+      setDetail(data); setReportTab(0); setViewCached(__DEMO__); setCachedHtml(null); setFrameOk(frameGuess(data.url)); setFrameDeadId(null)
     }).catch(() => {
       if (pinnedRef.current !== jid) return
       pinnedRef.current = null; deadPinRef.current = true   // don't fall through to an unrelated job
@@ -1391,7 +1393,7 @@ export default function V2JobFeed() {
                         <>
                           <div onClick={() => setRowMenu(null)} style={{ position: 'fixed', inset: 0, zIndex: 59 }} />
                           <Menu ariaLabel="Job actions" style={{ position: 'fixed', left: rowMenu.left, top: rowMenu.top, bottom: rowMenu.bottom, zIndex: 60, width: 228 }}>
-                            {[['Mark applied', 'a', () => applyJob(j)], ['Tailor résumé', 't', () => setPicker({ mode: 'tailor', jobs: [j] })], ['Rescore', 'r', () => openRescore(j)], ['Open posting ↗', 'e', () => j.url && window.open(j.url, '_blank', 'noopener,noreferrer')]].map(([label, key, act]) => (
+                            {[['Mark applied', 'a', () => applyJob(j)], ['Tailor résumé', 't', () => setPicker({ mode: 'tailor', jobs: [j] })], ['Rescore', 'r', () => openRescore(j)], [__DEMO__ ? 'Open posting ↗ · original may have expired' : 'Open posting ↗', 'e', () => j.url && window.open(j.url, '_blank', 'noopener,noreferrer')]].map(([label, key, act]) => (
                               <MenuItem key={label} hint={key} hintMono onClick={() => { setRowMenu(null); act() }}
                                 style={label === 'Tailor résumé' ? { fontWeight: 600 } : undefined}>{label}</MenuItem>
                             ))}
@@ -1722,7 +1724,7 @@ export default function V2JobFeed() {
               <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: reportCovers ? 'none' : 'flex', flexDirection: 'column' }} className="v2-scroll">
                   {/* live / cached posting — full-bleed iframe */}
                   <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                    {dCached && (
+                    {dCached && !__DEMO__ && (
                       <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 30px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
                         <span style={{ fontSize: 12, color: viewCached ? 'var(--accent)' : 'var(--muted)' }}>{viewCached ? 'Cached snapshot · captured when you applied' : 'Live posting'}</span>
                         <Segmented variant="inset" ariaLabel="Posting view" value={viewCached ? 'cached' : 'live'}
@@ -1782,7 +1784,7 @@ export default function V2JobFeed() {
                             {/* round 9: `Button href` renders the real anchor this
                                 needed, on the primary button's own paint (which is
                                 the --accent / --accent-ink pair it drew by hand) */}
-                            <Button size="sm" href={d.url} target="_blank" style={{ height: 34 }}>Open in new tab ↗</Button>
+                            <Button size="sm" href={d.url} target="_blank" style={{ height: 34 }}>Open in new tab ↗{__DEMO__ ? ' · original may have expired' : ''}</Button>
                             {/* ui: keep — h34 to match the native anchor it sits beside (which stays inline) */}
                             {dCached && <Button variant="secondary" size="sm" hover="v2-act" onClick={() => setViewCached(true)} style={{ height: 34 }}>View cached snapshot</Button>}
                           </div>

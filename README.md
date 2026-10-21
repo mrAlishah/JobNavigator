@@ -1,5 +1,7 @@
 # JobNavigator
 
+<h3 align="center"><a href="https://vesaias.github.io/JobNavigator-demo/">JobNavigator Demo</a></h3>
+
 **Self-hosted, multi-account job-hunt automation.**
 
 Scrape career pages and aggregators, score jobs against your résumés with an LLM, tailor résumés and cover letters, auto-fill applications from your persona, get Telegram alerts, track every application. One install serves one person or a household: up to five accounts, each with its own jobs, résumés, settings and optional PIN, sharing one scrape.

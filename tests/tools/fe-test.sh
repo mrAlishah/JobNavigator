@@ -21,6 +21,7 @@
 #
 # Exits non-zero when a test fails.
 #
+# The backend directory is mounted read-only at /backend (the demo bundles its template files).
 # Flags: --fresh   wipe the node_modules volume and reinstall from scratch.
 set -e
 
@@ -50,8 +51,10 @@ echo "frontend: $FRONTEND"
 "$DOCKER" run --rm \
   -e TZ=UTC \
   -e CI=1 \
+  -e DEMO_PARITY_OUT="${DEMO_PARITY_OUT:-}" \
   -v "$FRONTEND:/app" \
   -v "$VOLUME:/app/node_modules" \
+  -v "$ROOT/backend:/backend:ro" \
   -w /app \
   "$IMAGE" \
   sh -c 'npm install --no-audit --no-fund --no-package-lock --loglevel=error >/dev/null && exec npx vitest run "$@"' _ "${ARGS[@]}"

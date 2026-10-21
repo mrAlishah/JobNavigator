@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
 import ConfirmDialog, { PromptDialog } from '../ConfirmDialog'
 import { useEscape, useSettled, useSingleOpen, NBSP } from '../hooks'
 import { Button, FooterRow, GlyphBadge, Heading, HeaderRow, Helper, IconButton, Input, Label, Link, Menu, MenuHead, MenuItem, ModalPanel, Mono, PageTitle, Pill, Select, Spinner, Surface, Switch, Textarea, ToolbarTrigger, VisuallyHidden } from '../ui'
@@ -13,18 +13,20 @@ import {
   LockCard, PolicyToggle, ScopeTag, UnlockPill, hhmm, indexSections, memberGroup, rowLocked, scopeTag,
 } from './SettingsAccounts'
 import '../theme.css'
+import { loadDemo } from '../demoHooks'
 
 // QA F7 / R6-06: a locked row stays in the accessibility tree (read-only, aria-disabled);
 // its controls are taken out of the tab order and marked read-only, and given back
 // when the row unlocks. `data-jn-tab` remembers a control's own tabindex.
 const LOCKABLE = 'a[href], button, input, select, textarea, [tabindex]'
-function lockControls(el, locked) {
+function lockControls(el, locked, hard) {
   el.querySelectorAll(LOCKABLE).forEach((c) => {
     if (locked) {
       if (!c.hasAttribute('data-jn-tab')) c.setAttribute('data-jn-tab', c.getAttribute('tabindex') ?? '')
       c.setAttribute('tabindex', '-1')
       c.setAttribute('aria-disabled', 'true')
       if ('readOnly' in c && c.tagName !== 'BUTTON') c.readOnly = true
+      if (hard && 'disabled' in c) c.disabled = true   // the demo: nothing is written
     } else if (c.hasAttribute('data-jn-tab')) {
       const t = c.getAttribute('data-jn-tab')
       if (t === '') c.removeAttribute('tabindex'); else c.setAttribute('tabindex', t)
@@ -33,6 +35,10 @@ function lockControls(el, locked) {
     }
   })
 }
+
+// demo build only: the not-affiliated line (dead code, so left out, in the normal build)
+let demoNote
+const getDemoNote = () => (demoNote ||= lazy(() => loadDemo('DemoMarker.jsx').then((m) => ({ default: m.DemoNote }))))
 
 const CAP_TEXT = (n) => `This install already has ${n} accounts — remove one to add another.`
 
@@ -928,15 +934,16 @@ export default function Settings() {
                   // `_meta.set_by_owner` (the value is blanked); the row says so, read-only.
                   const r = member && r0.key && meta?.[r0.key]?.set_by_owner ? { ...r0, kind: 'ownerset', ownerName } : r0
                   const row = <Row key={r.label} r={r} ctx={{ S, val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, effortsFor, li, setLi, flash, defaults, narrow }} />
-                  if (!member && !meErr) return row
+                  const demo = !!S._demo && id !== 'appearance'   // the demo build's read-only settings (Display is browser-only, so it stays live)
+                  if (!member && !meErr && !demo) return row
                   // MT-14: a row the member cannot edit shows its (owner's) value, dimmed and
                   // read-only. R6-06: not `inert` — that hid the value from screen readers; the
                   // row is aria-disabled and its controls leave the tab order instead.
                   // R6-10: with no answer from /auth/me every row is read-only.
-                  const locked = meErr || rowLocked(r, lockCtx)
+                  const locked = meErr || demo || rowLocked(r, lockCtx)
                   return (
                     <div key={r.label} data-locked={locked ? 'true' : undefined} aria-disabled={locked || undefined}
-                      ref={(el) => { if (el) lockControls(el, locked) }}
+                      ref={(el) => { if (el) lockControls(el, locked, demo) }}
                       style={locked ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>{row}</div>
                   )
                 })}
@@ -969,6 +976,7 @@ export default function Settings() {
                   style={{ color: 'var(--muted)', fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 400, textDecoration: 'none' }}>viktoresadze.com ↗</Link>
               </span>
             </Helper>
+            {__DEMO__ && <Suspense fallback={null}>{React.createElement(getDemoNote())}</Suspense>}
           </div>
         </div>
       </div>

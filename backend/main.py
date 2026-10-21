@@ -1353,7 +1353,7 @@ def get_scheduler_jobs():
         "h1b_refresh": "Refresh H-1B / LCA data",
         "db_backup": "Back up database (pg_dump)",
         "job_cleanup": "Clean up stale skipped jobs",
-        "auto_reject": "Auto-reject ghosted applications",
+        "auto_reject": "Auto-reject stale applications",
     }
 
     jobs = scheduler.get_jobs()

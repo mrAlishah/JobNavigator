@@ -8,6 +8,7 @@ import ConfirmDialog, { PromptDialog } from '../ConfirmDialog'
 import { downloadName } from '../download'
 import { useEscape, useSingleOpen, setFlashToast, fetchRunOutcome, runFailed, runFailureReason, useSettled, NBSP } from '../hooks'
 import { useTitle } from '../useTitle'
+import { loadDemo } from '../demoHooks'
 // The résumé-content editors are shared with /persona (a Persona's
 // resume_content is the same shape as a Resume's json_data).
 import {
@@ -447,7 +448,7 @@ export default function ResumeEditor() {
       const ac = new AbortController(); pdfAbort.current = ac
       try {
         const r = await api.get(`/resumes/${id}/pdf`, { responseType: 'arraybuffer', params: { template, format }, signal: ac.signal })
-        const url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }))
+        const url = URL.createObjectURL(new Blob([r.data], { type: __DEMO__ ? 'text/html' : 'application/pdf' }))
         setPdfUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return url })
         setPdfErr(false)
       } catch (e) {
@@ -766,6 +767,10 @@ export function DownloadMenu({ id, template, format, onError }) {
     setOpen(false); setBusy(true)
     try {
       const r = await api.get(`/resumes/${id}/${kind}`, { responseType: 'blob', params: { template, format } })
+      if (__DEMO__ && kind === 'pdf') {   // the demo prints the rendered template through the browser
+        const { printHtml, blobText } = await loadDemo('pdf.js')
+        await printHtml(await blobText(r.data)); return
+      }
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
       a.href = url; a.download = downloadName(r.headers?.['content-disposition'], `Resume.${kind}`)
