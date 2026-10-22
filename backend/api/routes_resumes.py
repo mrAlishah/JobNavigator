@@ -20,6 +20,7 @@ from backend.accounts.owned import get_owned, get_owned_or_404, get_persona, own
 from backend.models.db import get_db, Resume, TracerLink, TracerClickEvent, Job, Application, SessionLocal, utcnow, Persona
 from backend.accounts.settings import get_setting
 from backend.api._input import str_field
+from backend import resume_template_overrides as _template_overrides
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
 from backend.job_monitor import launch_background, JobAlreadyRunningError
 
@@ -598,6 +599,13 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
         section_titles=section_titles,
         style_css=style_css,
     ))
+    # A template that reads `footer_reserved_in` / `section_titles` does that itself (see resume_template_overrides.py);
+    # an official one, which does not, gets the fork's print layout and custom headings applied to its output.
+    source = (template_dir / "template.html.j2").read_text(encoding="utf-8")
+    if "footer_reserved_in" not in source:
+        html = _template_overrides.print_layout(html, footer_reserved_in)
+    if "section_titles" not in source:
+        html = _template_overrides.section_titles(html, _section_titles(json_data))
     return _with_select_script(html) if select_mode else html
 
 

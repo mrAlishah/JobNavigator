@@ -14,10 +14,7 @@
 
 @page {
   size: {{ 'letter' if page_format == 'letter' else 'A4' }};
-  /* The vertical breathing room lives in @page, the only margin Chromium re-applies on every page it
-     paginates into; .page keeps its side padding. Bottom is 0 unless a job-linked tailored PDF footer
-     needs its own reserved band (see _render_html's footer_reserved_in). */
-  margin: 0.55in 0 {{ footer_reserved_in | default(0) }}in 0;
+  margin: 0.55in 0.6in;
 }
 
 html, body {
@@ -219,7 +216,7 @@ ul.bullets li {
 @media print {
   /* The preview uses .page padding. Printed pages use @page margins so every
      continuation page receives the same whitespace. */
-  .page { padding-top: 0; padding-bottom: 0; }
+  .page { width: auto; padding: 0; margin: 0; }
 
   .entry:last-child,
   .edu-entry:last-child,
@@ -230,10 +227,6 @@ ul.bullets li {
   .section-title {
     break-after: avoid;
   }
-
-  /* A wrapped bullet/entry that doesn't fit before a page break moves whole to the next page
-     instead of painting its tail into the footer's reserved band. */
-  ul.bullets li, .entry, .edu-entry { break-inside: avoid; }
 }
 </style>
 </head>
@@ -278,7 +271,9 @@ ul.bullets li {
   {% if summary %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.summary or 'Summary' }}</div>
+    <div class="section-title">
+      Summary
+    </div>
 
     <div class="summary-text">
       {{ summary }}
@@ -292,7 +287,9 @@ ul.bullets li {
   {% if experience %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.experience or 'Experience' }}</div>
+    <div class="section-title">
+      Experience
+    </div>
 
     {% for job in experience %}
 
@@ -348,7 +345,9 @@ ul.bullets li {
   {% if skills %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.skills or 'Skills' }}</div>
+    <div class="section-title">
+      Skills
+    </div>
 
     {% for label, value in skills.items() %}
 
@@ -367,7 +366,9 @@ ul.bullets li {
   {% if education %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.education or 'Education' }}</div>
+    <div class="section-title">
+      Education
+    </div>
 
     {% for edu in education %}
 
@@ -403,7 +404,9 @@ ul.bullets li {
   {% if projects %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.projects or 'Projects' }}</div>
+    <div class="section-title">
+      Projects
+    </div>
 
     {% for project in projects %}
 
@@ -449,7 +452,9 @@ ul.bullets li {
   {% if publications %}
   <div class="section">
 
-    <div class="section-title">{{ section_titles.publications or 'Publications' }}</div>
+    <div class="section-title">
+      Publications
+    </div>
 
     {% for pub in publications %}
 
