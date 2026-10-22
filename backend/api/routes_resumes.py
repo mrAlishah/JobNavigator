@@ -931,13 +931,14 @@ def _build_docx(
 
     def skills_section():
         skills = d.get("skills")
-        if skills:
+        pairs = list(skills.items()) if isinstance(skills, dict) else [
+            (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
+        if pairs:
             section("Skills")
-            pairs = skills.items() if isinstance(skills, dict) else [
-                (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
             for label, value in pairs:
                 p = para("skills.line")
-                runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
+                if label:
+                    runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
                 runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
 
     def experience_section():

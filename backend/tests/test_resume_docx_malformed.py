@@ -31,6 +31,7 @@ MALFORMED = {
     "publications hold strings": ({**GOOD, "publications": ["Paper", GOOD["publications"][0]]}, "Cited"),
     "skills is a list of strings": ({**GOOD, "skills": ["Jira", "SQL"]}, "Product leader."),
     "skills mixes strings and objects": ({**GOOD, "skills": ["Jira", {"category": "Tools", "items": "SQL"}]}, "Tools: SQL"),
+    "skills object has no category": ({**GOOD, "skills": [{"items": "SQL"}]}, "SQL"),
     "summary is a number": ({**GOOD, "summary": 12}, "12"),
     "experience fields are numbers": ({**GOOD, "experience": [{"title": 7, "company": 5, "location": 3, "date": 2020, "description": 9, "bullets": [1, 2]}]}, "2020"),
     "education fields are numbers": ({**GOOD, "education": [{"school": 5, "location": 6, "degree": 7}]}, "5"),
@@ -56,6 +57,13 @@ def test_word_export_prints_what_it_can_read(data, expected, style):
     text = _text(data, style)
     assert "Dana Okonkwo" in text
     assert expected in text
+    assert "None" not in text           # a missing value prints nothing, not its repr
+
+
+@pytest.mark.parametrize("style", STYLES.values(), ids=STYLES.keys())
+def test_skills_heading_needs_something_to_print(style):
+    text = _text({**GOOD, "skills": ["Jira", "SQL"]}, style)
+    assert "Skills" not in text and "SKILLS" not in text
 
 
 @pytest.mark.parametrize("style", STYLES.values(), ids=STYLES.keys())
