@@ -10,11 +10,11 @@ const harness = (data = {}) => {
 }
 
 describe('résumé style settings', () => {
-  it('keeps only the two checkboxes in the Settings section', () => {
+  it('keeps only the two switches in the Settings section', () => {
     render(<SectionEditor name="Settings" data={{}} setField={vi.fn()} mutate={vi.fn()} hasProfileImage />)
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2)
-    expect(screen.getByRole('checkbox', { name: /Show profile image/ })).toBeTruthy()
-    expect(screen.getByRole('checkbox', { name: /Show footer/ })).toBeTruthy()
+    expect(screen.getAllByRole('switch')).toHaveLength(2)
+    expect(screen.getByRole('switch', { name: /Profile image/ })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: /Page footer/ })).toBeTruthy()
     expect(screen.queryByLabelText('Margin top (in)')).toBeNull()
     expect(screen.queryByLabelText('Experience size (pt)')).toBeNull()
     expect(screen.queryByLabelText('Image width (px)')).toBeNull()

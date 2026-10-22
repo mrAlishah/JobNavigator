@@ -8,7 +8,7 @@ describe('résumé footer settings', () => {
     expect(PERSONA_SECTIONS).not.toContain('Settings')
     const setField = vi.fn()
     render(<SectionEditor name="Settings" data={{}} setField={setField} />)
-    fireEvent.click(screen.getByRole('checkbox', { name: /Show footer/ }))
+    fireEvent.click(screen.getByRole('switch', { name: /Page footer/ }))
     expect(setField).toHaveBeenCalledWith('footer_enabled', false)
   })
 })

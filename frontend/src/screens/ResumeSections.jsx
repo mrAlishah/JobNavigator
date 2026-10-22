@@ -4,7 +4,7 @@
 // Real data is looser than the EMPTY skeleton (unknown keys, missing sections). Every mutation
 // goes through mutate(), which deep-clones and writes one path, so unknown keys survive.
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
-import { Band, Button, Card, Check, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Select, Textarea } from '../ui'
+import { Band, Button, Card, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Select, Switch, Textarea } from '../ui'
 
 // The résumé sections' add-line IS ui.jsx's DashedAdd (accent ink · 1px dashed
 // --dashadd-border · r6 · 11.5 · h28, `big` = 32/12/500) — re-exported under the
@@ -177,14 +177,19 @@ function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHi
   }
 }
 
+// Both switches read ON until the field says false (upstream's footer is opt-in: `=== true`).
 export function SettingsEditor({ data, setField, hasProfileImage }) {
-  return <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 10 }}>
-    <Check checked={data.profile_image_enabled !== false} onChange={(value) => setField('profile_image_enabled', value)}
-      disabled={hasProfileImage === false} label="Show profile image"
-      title={hasProfileImage === false ? 'The selected template has no profile image' : 'Show the profile image in templates that support it.'} />
-    <Check checked={data.footer_enabled !== false} onChange={(value) => setField('footer_enabled', value)}
-      label="Show footer" title="Show name, job title and company at the bottom of each tailored PDF page." />
-  </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 10 }}>
+      <Switch on={data.profile_image_enabled !== false} onChange={(v) => setField('profile_image_enabled', v)} label="Profile image"
+        disabled={hasProfileImage === false}
+        title={hasProfileImage === false ? 'The selected template has no profile image' : 'Show the profile image in templates that support it.'} />
+      <Helper>Shows the picture from Settings › Résumés in templates that support one.</Helper>
+      <Switch on={data.footer_enabled !== false} onChange={(v) => setField('footer_enabled', v)} label="Page footer"
+        title="Print your name, the job title and the company at the foot of every page of this résumé's PDF and Word downloads." />
+      <Helper>Adds “name - job title - company” in small type at the foot of every page.</Helper>
+    </div>
+  )
 }
 
 // Mirrors backend _STYLE_FONTS; the API drops anything else.
