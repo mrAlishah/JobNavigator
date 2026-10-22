@@ -1,9 +1,10 @@
 """Fork behaviour the renderer layers on the official (upstream-owned) résumé templates.
 
 Those template files stay as JobNavigator ships them, so an updated or newly added upstream template needs no
-patch. `_render_html` passes `footer_reserved_in` and `section_titles` to every template; a template that
-reads one of them (the Professional templates, helvetica) handles that part itself, and the matching function
-here is not applied (the same "does the template mention it" check as `has_profile_image`). Otherwise:
+patch. `_render_html` passes `footer_reserved_in` and `section_titles` to every template. A template that reads
+one of them (the Professional templates, helvetica) handles that part itself and the matching function here is
+not applied. "Reads" is what Jinja's own parser says (`reads`): a mention in a comment or in text is not a read,
+a `{% include %}`d or imported partial is. Otherwise:
 
 * print_layout: the footer's reserved band at the bottom of every printed page, the template's own top and
   side `@page` margins kept, and entries kept whole across a page break;
@@ -14,14 +15,36 @@ A template without the expected structure is left as it is, which is upstream's 
 """
 import re
 
+from jinja2 import TemplateNotFound, meta
 from markupsafe import escape
 
+VARIABLES = ("footer_reserved_in", "section_titles")
 # `@page { ... margin: <top> <sides>; ... }` as the official templates write it
 _PAGE_MARGIN = re.compile(r"@page\s*\{[^}]*?\bmargin:\s*(\S+)\s+(\S+)\s*;")
 _HEADINGS = (("summary", "Summary"), ("experience", "Experience"), ("skills", "Skills"),
              ("education", "Education"), ("projects", "Projects"), ("publications", "Publications"))
+_HEADING = re.compile(r'(<div class="section-title">)\s*(' + "|".join(d for _, d in _HEADINGS) + r')\s*(</div>)')
 # a section whose first child is the summary text: this template prints no Summary heading
 _HEADINGLESS_SUMMARY = re.compile(r'(<div class="section"[^>]*>\s*)(<div class="summary-text">)')
+
+
+def reads(env, name: str, _seen=None) -> set:
+    """Which of `VARIABLES` the template `name` reads, by Jinja's parser, following includes, imports and extends.
+    A partial that cannot be found or whose name is only known at render time is not followed (it cannot be
+    told), which leaves the overrides on: they only touch the structures they recognise."""
+    seen = _seen if _seen is not None else set()
+    if name in seen:
+        return set()
+    seen.add(name)
+    tree = env.parse(env.loader.get_source(env, name)[0])
+    found = set(VARIABLES) & meta.find_undeclared_variables(tree)
+    for partial in meta.find_referenced_templates(tree):
+        if partial:
+            try:
+                found |= reads(env, partial, seen)
+            except TemplateNotFound:
+                pass
+    return found
 
 
 def print_layout(html: str, bottom_in: float) -> str:
@@ -38,13 +61,22 @@ def print_layout(html: str, bottom_in: float) -> str:
 
 def section_titles(html: str, titles: dict) -> str:
     """Replace the default text of each section heading (`<div class="section-title">Skills</div>`) with the
-    résumé's own title, HTML-escaped. A template with no Summary heading gets one when a summary title is set."""
-    for key, default in _HEADINGS:
-        if not titles.get(key):
-            continue
-        text = str(escape(titles[key]))
-        html, replaced = re.subn(rf'(<div class="section-title">)\s*{default}\s*(</div>)',
-                                 lambda m, text=text: m.group(1) + text + m.group(2), html)
-        if key == "summary" and not replaced:
-            html = _HEADINGLESS_SUMMARY.sub(lambda m, text=text: f'{m.group(1)}<div class="section-title">{text}</div>\n    {m.group(2)}', html, count=1)
+    résumé's own title, HTML-escaped, in one pass: a title that is another section's default name stays as
+    written. A template with no Summary heading gets one when a summary title is set."""
+    custom = {default: str(escape(titles[key])) for key, default in _HEADINGS if titles.get(key)}
+    if not custom:
+        return html
+    swapped = set()
+
+    def swap(match):
+        text = custom.get(match.group(2))
+        if text is None:
+            return match.group(0)
+        swapped.add(match.group(2))
+        return match.group(1) + text + match.group(3)
+
+    html = _HEADING.sub(swap, html)
+    if "Summary" in custom and "Summary" not in swapped:
+        html = _HEADINGLESS_SUMMARY.sub(
+            lambda m: f'{m.group(1)}<div class="section-title">{custom["Summary"]}</div>\n    {m.group(2)}', html, count=1)
     return html
