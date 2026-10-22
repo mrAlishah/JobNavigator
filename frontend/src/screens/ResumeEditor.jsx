@@ -725,7 +725,7 @@ export default function ResumeEditor() {
             {selectOn
               ? <>
                 {selectHtml && <iframe ref={selectFrame} title="Select preview" srcDoc={selectHtml} sandbox="allow-scripts" onLoad={pushSelection}
-                  style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />}
+                  style={{ width: '100%', height: '100%', border: 'none', background: 'var(--iframe-bg)' }} />}
                 {selected && (
                   <Surface key={selected} style={{ position: 'absolute', top: 12, right: 12, width: 330, maxHeight: 'calc(100% - 24px)', overflow: 'auto', padding: 12, zIndex: 5 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>

@@ -237,6 +237,7 @@ function PartProperties({ data, mutate, partKey }) {
   const num = (prop, label, placeholder) => <StyleNumber key={`${round}${prop}`} label={label} value={cur[prop]} placeholder={placeholder} onValue={(v) => set(prop, v)} />
   const choice = (prop, label, options, flag) => <Select width="120px" ariaLabel={label} value={flag ? FLAG(cur[prop]) : cur[prop] ?? ''}
     options={[['', 'Default'], ...options]} onPick={(v) => set(prop, v === '' ? undefined : flag ? v === '1' : v)} />
+  // lint: allow — a native colour input takes only a #rrggbb value (no CSS variable); black is its empty-state swatch, not a style
   const color = (prop, label) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
     <input type="color" aria-label={label} title={label} value={cur[prop] || '#000000'} onChange={(e) => set(prop, e.target.value)} />
     {cur[prop] && <Button size="sm" title={`Clear ${label}`} onClick={() => set(prop, undefined)}>×</Button>}
