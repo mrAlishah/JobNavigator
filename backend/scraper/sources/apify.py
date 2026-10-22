@@ -46,6 +46,7 @@ from backend.countries import (
 from backend.accounts.settings import get_setting
 from backend.models.db import SessionLocal, Job, Search, get_existing_external_ids
 from backend.analyzer.salary_extractor import extract_salary
+from backend.analyzer.work_arrangement import HYBRID, ONSITE, REMOTE, extract_arrangement
 from backend.scraper._shared.analysis import analyze_inline, prefetch_h1b
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
 from backend.scraper._shared.filters import (build_search_exclude_sets, company_included,
@@ -147,7 +148,13 @@ def _indeed_input(search: Search, limit: int) -> dict:
 
 def _linkedin_input(search: Search, limit: int) -> dict:
     """LinkedIn search params pass through `urlParam`, the way JobSpy builds them: `f_TPR`
-    takes any age in seconds (the actor's own datePosted has three steps), `f_WT=2` is remote."""
+    takes any age in seconds (the actor's own datePosted has three steps).
+
+    `f_WT=2` is LinkedIn's remote filter, and LinkedIn ignores it without login: on
+    2026-10-22 the guest endpoint and the public /jobs/search page returned the same rows
+    with and without it. It stays in the input because it costs nothing and a logged-in
+    LinkedIn applies it. `_not_remote` is the filter that works: it drops the rows that
+    the posting itself calls hybrid or on-site."""
     params = []
     if search.hours_old:
         params.append({"key": "f_TPR", "value": f"r{int(search.hours_old) * 3600}"})
@@ -333,7 +340,8 @@ PRESETS = {
         _indeed_input, _parse_indeed, 6.0),
     "apify_linkedin": Preset(
         "valig/linkedin-jobs-scraper", "LinkedIn",
-        "LinkedIn public job search. Hours old is exact; Remote only uses LinkedIn's remote filter.",
+        "LinkedIn public job search. Hours old is exact. LinkedIn ignores Remote without login, "
+        "so Remote only drops the rows that the posting calls hybrid or on-site.",
         _linkedin_input, _parse_linkedin, 0.40),
     "apify_glassdoor": Preset(
         "valig/glassdoor-jobs-scraper", "Glassdoor",
@@ -512,8 +520,23 @@ async def _collect(search: Search, limit: int) -> tuple[list, dict]:
     return jobs, breakdown
 
 
+# Boards that return on-site rows to a Remote-only search (see _linkedin_input).
+_REMOTE_IGNORED = {"apify_linkedin"}
+
+
+def _not_remote(j: dict) -> str | None:
+    """The reason to drop a row that the work-arrangement cascade reads as hybrid or on-site
+    only. A row that the cascade cannot read stays: the cascade never guesses, and a
+    remote posting often says "remote" in words that no pattern matches."""
+    found = extract_arrangement(j.get("location"), j.get("title"), j.get("description"),
+                                j.get("arrangement"))["arrangements"]
+    if not found or REMOTE in found:
+        return None
+    return "Not remote: " + ", ".join(v for v in (HYBRID, ONSITE) if v in found)
+
+
 def _rejection(j: dict, include_kw, exclude_kw, global_ex: set, search_ex: set,
-               company_filter=None) -> str | None:
+               company_filter=None, remote_only: bool = False) -> str | None:
     ok, reason = title_kept(j["title"], include_kw, exclude_kw)
     if not ok:
         return reason
@@ -527,6 +550,8 @@ def _rejection(j: dict, include_kw, exclude_kw, global_ex: set, search_ex: set,
         return f"Company excluded (global): {company}"
     if company in search_ex:
         return f"Company excluded: {company}"
+    if remote_only and j.get("source") in _REMOTE_IGNORED:
+        return _not_remote(j)
     return None
 
 
@@ -562,16 +587,19 @@ async def run(search: Search) -> dict:
             include_kw, exclude_kw = search_title_filters(search, db)
             global_ex, search_ex = build_search_exclude_sets(db, search)
             existing_ids = get_existing_external_ids(db)
+            remote_only = search.is_remote is True
 
             # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
             await prefetch_h1b([
                 j.get("company") for j in unique
-                if not _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter)
+                if not _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                                  search.company_filter, remote_only)
                 and make_external_id(j["company"], j["title"], j["url"]) not in existing_ids
             ])
 
             for j in unique:
-                if _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter):
+                if _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                              search.company_filter, remote_only):
                     # Counted so the Run-history line says "N filtered out" instead of a bare "0 seen".
                     row = breakdown[j["source"]]
                     row["filtered"] = row.get("filtered", 0) + 1
@@ -659,12 +687,14 @@ async def preview(search: Search, db) -> dict:
         include_kw, exclude_kw = search_title_filters(search, db)
         global_ex, search_ex = build_search_exclude_sets(db, search)
         phrases = _body_phrases(db)
+        remote_only = search.is_remote is True
 
         from collections import Counter
         from backend.analyzer.h1b_checker import scan_jd_for_h1b_flags
         results = []
         for j in unique:
-            reason = _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter)
+            reason = _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                                search.company_filter, remote_only)
             # run() drops these through analyze_inline; the preview names the phrase.
             if reason is None and phrases and j.get("description"):
                 hit = scan_jd_for_h1b_flags(j["description"], phrases)

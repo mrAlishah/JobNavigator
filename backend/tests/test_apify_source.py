@@ -123,6 +123,13 @@ def test_linkedin_input_passes_exact_age_and_remote_as_url_params():
     assert "datePosted" not in body                  # three fixed steps; urlParam is exact
 
 
+def test_linkedin_hint_says_remote_is_not_applied_by_linkedin():
+    """LinkedIn returns the same rows with and without f_WT=2 when not logged in (2026-10-22)."""
+    hint = apify.PRESETS["apify_linkedin"].hint
+    assert "ignores Remote without login" in hint
+    assert "remote filter" not in hint
+
+
 def test_glassdoor_input_always_has_a_location_and_whole_days():
     body = apify._glassdoor_input(_search(hours_old=25, is_remote=True), 30)
     assert body["location"] == "United States"       # required by the actor
@@ -432,6 +439,52 @@ async def test_preview_caps_the_fetch_and_explains_rejections(monkeypatch, test_
     assert by["Senior Engineer"]["reason"].startswith("Body exclusion")
     assert r["source_breakdown"] == {"apify_indeed": 3}
     assert r["source_errors"] == {"apify_greenhouse": "HTTP 402"}
+
+
+# ── Remote only on LinkedIn ─────────────────────────────────────────────────
+
+_HYBRID_JD = "You work 3 days per week in the office in Austin."
+_ONSITE_JD = "This role is fully on-site in Austin."
+_REMOTE_JD = "This is a fully remote role across the US."
+
+
+@pytest.mark.parametrize("source,desc,remote_only,expected", [
+    ("apify_linkedin", _HYBRID_JD, True, "Not remote: hybrid"),
+    ("apify_linkedin", _ONSITE_JD, True, "Not remote: onsite"),
+    ("apify_linkedin", _REMOTE_JD, True, None),
+    ("apify_linkedin", "Great role", True, None),        # unknown stays: the cascade never guesses
+    ("apify_linkedin", _HYBRID_JD, False, None),         # Any: nothing to enforce
+    ("apify_indeed", _HYBRID_JD, True, None),            # Indeed applies Remote itself
+])
+def test_remote_only_drops_linkedin_rows_the_posting_calls_hybrid_or_onsite(source, desc, remote_only, expected):
+    j = _job("SRE", "Acme", "https://www.linkedin.com/jobs/view/1", source=source, desc=desc)
+    assert apify._rejection(j, [], [], set(), set(), None, remote_only) == expected
+
+
+@pytest.mark.asyncio
+async def test_remote_only_linkedin_rows_are_filtered_in_run_and_preview(monkeypatch, test_db):
+    search = Search(name="t", search_mode="apify", search_term="sre", sources=["apify_linkedin"],
+                    is_remote=True, results_wanted=10, company_exclude=[])
+    test_db.add(search)
+    test_db.commit()
+
+    async def fake_collect(_search, limit):
+        return [_job("SRE", "Acme", "https://www.linkedin.com/jobs/view/1", source="apify_linkedin", desc=_REMOTE_JD),
+                _job("SRE", "Initech", "https://www.linkedin.com/jobs/view/2", source="apify_linkedin", desc=_HYBRID_JD)],             {"apify_linkedin": {"seen": 0, "new": 0, "returned": 2}}
+    monkeypatch.setattr(apify, "_collect", fake_collect)
+    monkeypatch.setattr("backend.activity.log_activity", lambda *a, **k: None)
+
+    async def no_analysis(job, db=None, arrangement=None):
+        pass
+    monkeypatch.setattr(apify, "analyze_inline", no_analysis)
+
+    r = await apify.preview(search, test_db)
+    assert {j["company"]: j["reason"] for j in r["jobs"]} == {"Acme": None, "Initech": "Not remote: hybrid"}
+
+    res = await apify.run(search)
+    assert res["source_breakdown"]["apify_linkedin"] == {"seen": 1, "new": 1, "returned": 2, "filtered": 1}
+    test_db.expire_all()
+    assert [j.company for j in test_db.query(Job).all()] == ["Acme"]
 
 
 # ── wiring ──────────────────────────────────────────────────────────────────

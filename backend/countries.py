@@ -136,9 +136,12 @@ def compose_location(location, country) -> str:
 
     So the country costs Indeed nothing, and on LinkedIn neither spelling is a
     remote search — but only the composed one honours the country the user
-    picked. `is_remote` is the field that works: an empty location with
-    `is_remote` on returned 40 US-wide remote rows across both boards. The forms
-    say so.
+    picked. On Indeed, `is_remote` is the field that works: an empty location
+    with `is_remote` on returns US-wide remote rows. LinkedIn has no remote field
+    that works without login. JobSpy 1.3.0 drops `is_remote` for LinkedIn
+    ("LinkedIn: is_remote isn't supported, ignoring it"), and on 2026-10-22 the
+    guest endpoint and the public /jobs/search page returned the same rows with
+    and without `f_WT=2`. The forms say so.
     """
     place, _ = split_country_suffix(location)
     labels = dict(supported_countries())

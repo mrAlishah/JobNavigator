@@ -290,7 +290,8 @@ function ConfigForm({ d, set }) {
         sub="A city or a region. Country adds the country. For remote work set Remote and leave this empty." />,
       <Cell key="ctry" label="Country" value={d.country} options={countries} onChange={(v) => set({ country: v })}
         sub="The only country source. Every board receives it." />,
-      <Cell key="rem" label="Remote" value={d.is_remote} options={[['', 'Any'], ['true', 'Remote only'], ['false', 'On-site only']]} onChange={(v) => set({ is_remote: v })} />,
+      <Cell key="rem" label="Remote" value={d.is_remote} options={[['', 'Any'], ['true', 'Remote only'], ['false', 'On-site only']]} onChange={(v) => set({ is_remote: v })}
+        sub="Indeed, Glassdoor and Google apply it. LinkedIn ignores it without login, so LinkedIn rows can be on-site." />,
       <Cell key="jt" label="Job type" value={d.job_type} options={[['fulltime', 'Full-time'], ['parttime', 'Part-time'], ['contract', 'Contract']]} onChange={(v) => set({ job_type: v })} />,
       <Cell key="ho" label="Hours old · 0–720" mono type="number" min={BOUNDS.hours_old[0]} max={BOUNDS.hours_old[1]} value={d.hours_old} onChange={(v) => set({ hours_old: v })} />,
       <Cell key="rw" label="Results wanted · 1–500" mono type="number" min={BOUNDS.results_wanted[0]} max={BOUNDS.results_wanted[1]} value={d.results_wanted} onChange={(v) => set({ results_wanted: v })} />,
@@ -322,7 +323,8 @@ function ConfigForm({ d, set }) {
       <Cell key="loc" label="Location" value={d.location} onChange={(v) => set({ location: v })} placeholder="e.g. Austin"
         sub="A city or a region. Empty = the whole country." />,
       <Cell key="ctry" label="Country" value={d.country} options={countries} onChange={(v) => set({ country: v })} />,
-      <Cell key="rem" label="Remote" value={d.is_remote} options={[['', 'Any'], ['true', 'Remote only']]} onChange={(v) => set({ is_remote: v })} />,
+      <Cell key="rem" label="Remote" value={d.is_remote} options={[['', 'Any'], ['true', 'Remote only']]} onChange={(v) => set({ is_remote: v })}
+        sub="LinkedIn ignores it without login. On LinkedIn, Remote only drops the postings that say hybrid or on-site." />,
       <Cell key="ho" label="Hours old · 0–720" mono type="number" min={BOUNDS.hours_old[0]} max={BOUNDS.hours_old[1]} value={d.hours_old} onChange={(v) => set({ hours_old: v })}
         sub="Rounded up to the steps of each board (see Boards)" />,
       <Cell key="rw" label="Results wanted · 1–200 per board" mono type="number" min={BOUNDS.results_wanted_apify[0]} max={BOUNDS.results_wanted_apify[1]} value={d.results_wanted} onChange={(v) => set({ results_wanted: v })} />,
