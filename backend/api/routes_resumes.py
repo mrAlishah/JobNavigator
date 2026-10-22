@@ -601,7 +601,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     ))
     # A template that reads `footer_reserved_in` / `section_titles` does that itself (see resume_template_overrides.py);
     # an official one, which does not, gets the fork's print layout and custom headings applied to its output.
-    read = _template_overrides.reads(env, "template.html.j2")
+    read = _template_overrides.reads(template_dir, env.filters)
     if "footer_reserved_in" not in read:
         html = _template_overrides.print_layout(html, footer_reserved_in)
     if "section_titles" not in read:

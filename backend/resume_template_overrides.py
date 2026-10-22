@@ -15,7 +15,7 @@ A template without the expected structure is left as it is, which is upstream's 
 """
 import re
 
-from jinja2 import TemplateNotFound, meta
+from jinja2 import Environment, FileSystemLoader, TemplateNotFound, meta
 from markupsafe import escape
 
 VARIABLES = ("footer_reserved_in", "section_titles")
@@ -28,11 +28,18 @@ _HEADING = re.compile(r'(<div class="section-title">)\s*(' + "|".join(d for _, d
 _HEADINGLESS_SUMMARY = re.compile(r'(<div class="section"[^>]*>\s*)(<div class="summary-text">)')
 
 
-def reads(env, name: str, _seen=None) -> set:
-    """Which of `VARIABLES` the template `name` reads, by Jinja's parser, following includes, imports and extends.
-    A partial that cannot be found or whose name is only known at render time is not followed (it cannot be
-    told), which leaves the overrides on: they only touch the structures they recognise."""
-    seen = _seen if _seen is not None else set()
+def reads(template_dir, filters, name: str = "template.html.j2") -> set:
+    """Which of `VARIABLES` the template `name` in `template_dir` reads, by Jinja's parser, following includes,
+    imports and extends. It parses with an environment of its own (`filters` are the renderer's, so the template
+    compiles), not the one that renders. A partial that cannot be found or whose name is only known at render
+    time is not followed (it cannot be told), which leaves the overrides on: they only touch the structures
+    they recognise."""
+    env = Environment(loader=FileSystemLoader(str(template_dir)))
+    env.filters.update(filters)
+    return _reads(env, name, set())
+
+
+def _reads(env, name: str, seen: set) -> set:
     if name in seen:
         return set()
     seen.add(name)
@@ -41,7 +48,7 @@ def reads(env, name: str, _seen=None) -> set:
     for partial in meta.find_referenced_templates(tree):
         if partial:
             try:
-                found |= reads(env, partial, seen)
+                found |= _reads(env, partial, seen)
             except TemplateNotFound:
                 pass
     return found

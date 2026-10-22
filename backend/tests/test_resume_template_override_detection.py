@@ -53,6 +53,13 @@ def test_the_layout_is_added_once_to_an_official_template_and_never_to_the_other
     assert html.count("break-inside: avoid") == own + (1 if name in UPSTREAM else 0)
 
 
+@pytest.mark.parametrize("name,expected", [("inter", set()), ("helvetica", set(overrides.VARIABLES)),
+                                           ("professional-top-left-image", set(overrides.VARIABLES)),
+                                           ("professional-top-right-image", set(overrides.VARIABLES))])
+def test_reads_reports_what_each_real_template_reads(name, expected):
+    assert overrides.reads(TEMPLATES_DIR / name, {"bold": lambda text: text}) == expected
+
+
 # ── detection: comments and includes ────────────────────────────────────────────────────────────────────────────
 
 TITLES = {"experience": "Career"}
