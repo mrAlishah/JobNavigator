@@ -80,7 +80,7 @@ def test_docx_contains_every_section_in_order(api_client, test_db):
     for heading in ("Experience", "Skills", "Education", "Projects"):
         assert heading in text
     assert "Publications" not in text
-    assert text.index("Skills") < text.index("Experience") < text.index("Education") < text.index("Projects")
+    assert text.index("Experience") < text.index("Skills") < text.index("Education") < text.index("Projects")
     joined = "\n".join(text)
     for expected in ("Senior Product Manager", "Product leader.", "PM at Acme", "2020 - 2024", "Ran the platform.",
                      "Languages", "Go, Python", "TU Berlin", "BSc CS", "Side", "A thing"):

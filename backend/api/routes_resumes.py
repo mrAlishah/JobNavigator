@@ -929,35 +929,44 @@ def _build_docx(
             section("Summary")
         runs(para("summary.text"), d["summary"], color=ink)
 
-    skills = d.get("skills")
-    if skills:
-        section("Skills")
-        pairs = skills.items() if isinstance(skills, dict) else [
-            (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
-        for label, value in pairs:
-            p = para("skills.line")
-            runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
-            runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
+    def skills_section():
+        skills = d.get("skills")
+        if skills:
+            section("Skills")
+            pairs = skills.items() if isinstance(skills, dict) else [
+                (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
+            for label, value in pairs:
+                p = para("skills.line")
+                runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
+                runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
 
-    if entries("experience"):
-        section("Experience")
-        for job in entries("experience"):
-            begin("card", "experience.entry")
-            date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
-            if st:
-                p = para("experience.title")
-                p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
-                box(p, "experience.title")
-                title, company = job.get("title"), job.get("company")
-                runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
-                if title and company:
-                    runs(p, " - " + _as_text(company), pt=entry_pt, color=ink, kind="main")
-                runs(para("experience.meta"), " | ".join(_as_text(x) for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
-            else:
-                row(f"{_as_text(job.get('title'))}{' at ' + _as_text(job['company']) if job.get('company') else ''}", date)
-                if job.get("location"):
-                    doc.add_paragraph(_as_text(job["location"]))
-            details(job, "experience")
+    def experience_section():
+        if entries("experience"):
+            section("Experience")
+            for job in entries("experience"):
+                begin("card", "experience.entry")
+                date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
+                if st:
+                    p = para("experience.title")
+                    p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
+                    box(p, "experience.title")
+                    title, company = job.get("title"), job.get("company")
+                    runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
+                    if title and company:
+                        runs(p, " - " + _as_text(company), pt=entry_pt, color=ink, kind="main")
+                    runs(para("experience.meta"), " | ".join(_as_text(x) for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
+                else:
+                    row(f"{_as_text(job.get('title'))}{' at ' + _as_text(job['company']) if job.get('company') else ''}", date)
+                    if job.get("location"):
+                        doc.add_paragraph(_as_text(job["location"]))
+                details(job, "experience")
+
+    # The template's own order: docx.titles is written in it (Professional: Skills before Experience); a template
+    # without it gets the generic one, Experience before Skills, as the PDF templates and upstream print them.
+    order = list(st.get("titles", {}))
+    skills_first = "Skills" in order and "Experience" in order and order.index("Skills") < order.index("Experience")
+    for build in (skills_section, experience_section) if skills_first else (experience_section, skills_section):
+        build()
 
     if entries("education"):
         section("Education")

@@ -1,6 +1,6 @@
 {
  "garamond_alt|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -96,44 +96,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -240,6 +202,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -370,7 +370,7 @@
   "tables": 0
  },
  "garamond_alt|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -456,44 +456,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -600,6 +562,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -730,7 +730,7 @@
   "tables": 0
  },
  "helvetica|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -826,44 +826,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -970,6 +932,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -1100,7 +1100,7 @@
   "tables": 0
  },
  "helvetica|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -1186,44 +1186,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -1330,6 +1292,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -1460,7 +1460,7 @@
   "tables": 0
  },
  "inter|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -1556,44 +1556,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -1700,6 +1662,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -1830,7 +1830,7 @@
   "tables": 0
  },
  "inter|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -1916,44 +1916,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2060,6 +2022,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2190,7 +2190,7 @@
   "tables": 0
  },
  "modern|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -2286,44 +2286,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2430,6 +2392,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2560,7 +2560,7 @@
   "tables": 0
  },
  "modern|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -2646,44 +2646,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2790,6 +2752,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -2920,7 +2920,7 @@
   "tables": 0
  },
  "montserrat|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -3016,44 +3016,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -3160,6 +3122,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -3290,7 +3290,7 @@
   "tables": 0
  },
  "montserrat|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -3376,44 +3376,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -3520,6 +3482,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -3650,7 +3650,7 @@
   "tables": 0
  },
  "palatino|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -3746,44 +3746,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -3890,6 +3852,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -4020,7 +4020,7 @@
   "tables": 0
  },
  "palatino|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -4106,44 +4106,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -4250,6 +4212,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -5900,7 +5900,7 @@
   "tables": 0
  },
  "raleway|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -5996,44 +5996,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -6140,6 +6102,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -6270,7 +6270,7 @@
   "tables": 0
  },
  "raleway|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -6356,44 +6356,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -6500,6 +6462,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -6630,7 +6630,7 @@
   "tables": 0
  },
  "traditional|full": {
-  "document_sha256": "449f34bcd43516e9337b9eb0b9cdb1938adf94c1811f1ffc8124629545f00d20",
+  "document_sha256": "2b2557baec706c5772aef6ef3030c42eac8f962ac9d5a9a175db340d798cc23a",
   "footer": [
    "Dana Okonkwo - Senior Product Manager - Acme"
   ],
@@ -6726,44 +6726,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Stack"
-     }
-    ],
-    "text": "Stack"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -6870,6 +6832,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -7000,7 +7000,7 @@
   "tables": 0
  },
  "traditional|plain": {
-  "document_sha256": "f45b76f01e339c050fe17599ba2e3985bad2b950c036ab6326cdb1497451dc75",
+  "document_sha256": "318e8728298beed69630b6a814914f6ad096723ba9c64353922c89ca6b5905c4",
   "footer": [
    ""
   ],
@@ -7086,44 +7086,6 @@
      }
     ],
     "text": "Product leader with ten years in platforms."
-   },
-   {
-    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
-    "runs": [
-     {
-      "rPr": "",
-      "text": "Skills"
-     }
-    ],
-    "text": "Skills"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Languages: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Go, Python"
-     }
-    ],
-    "text": "Languages: Go, Python"
-   },
-   {
-    "pPr": "",
-    "runs": [
-     {
-      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
-      "text": "Tools: "
-     },
-     {
-      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
-      "text": "Jira, SQL"
-     }
-    ],
-    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
@@ -7230,6 +7192,44 @@
      }
     ],
     "text": "Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": "Skills"
+     }
+    ],
+    "text": "Skills"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
    },
    {
     "pPr": "<w:pPr><w:pStyle w:val=\"Heading2\"></w:pStyle></w:pPr>",
