@@ -768,7 +768,7 @@ def _build_docx(
         # secondary lines (kind "small") one point under it; headings pass their own `pt` and keep it.
         if cur.get("size") and (kind or pt is None):
             pt = cur["size"] - (kind == "small")
-        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", text or "")):
+        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", str(text or ""))):
             if chunk:
                 r = par.add_run(chunk)
                 if cur.get("font"):
@@ -845,7 +845,7 @@ def _build_docx(
         p.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
         runs(p, left, bold=bold, color=color, pt=pt, kind="main" if pt else None)
         if right:
-            r = p.add_run("\t" + right)
+            r = p.add_run("\t" + str(right))
             if cur.get("font"):
                 r.font.name = cur["font"]
             if st:
@@ -865,9 +865,13 @@ def _build_docx(
                 indent = pp.get("indent", 9.7)
                 pf.left_indent, pf.first_line_indent, pf.space_after = Pt(indent), Pt(-indent * 0.67 if "indent" in pp else -6.5), Pt(0.45)
                 box(p, part)
-                runs(p, (_BULLETS[pp["bullet"]] if "bullet" in pp else "• ") + b)
+                runs(p, (_BULLETS[pp["bullet"]] if "bullet" in pp else "• ") + str(b))
             else:
                 runs(para(style="List Bullet"), b)
+
+    def entries(key):
+        # A tailored or imported résumé can hold a string or null where an entry belongs: skip it, print the rest.
+        return [e for e in (d.get(key) if isinstance(d.get(key), list) else []) if isinstance(e, dict)]
 
     header = d.get("header") if isinstance(d.get("header"), dict) else {}
     begin("sec", "header")
@@ -928,15 +932,16 @@ def _build_docx(
     skills = d.get("skills")
     if skills:
         section("Skills")
-        pairs = skills.items() if isinstance(skills, dict) else [(s.get("category"), s.get("items")) for s in skills]
+        pairs = skills.items() if isinstance(skills, dict) else [
+            (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
         for label, value in pairs:
             p = para("skills.line")
             runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
             runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
 
-    if d.get("experience"):
+    if entries("experience"):
         section("Experience")
-        for job in d["experience"]:
+        for job in entries("experience"):
             begin("card", "experience.entry")
             date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
             if st:
@@ -946,30 +951,30 @@ def _build_docx(
                 title, company = job.get("title"), job.get("company")
                 runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
                 if title and company:
-                    runs(p, " - " + company, pt=entry_pt, color=ink, kind="main")
-                runs(para("experience.meta"), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
+                    runs(p, " - " + _as_text(company), pt=entry_pt, color=ink, kind="main")
+                runs(para("experience.meta"), " | ".join(_as_text(x) for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
             else:
-                row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}", date)
+                row(f"{_as_text(job.get('title'))}{' at ' + _as_text(job['company']) if job.get('company') else ''}", date)
                 if job.get("location"):
-                    doc.add_paragraph(job["location"])
+                    doc.add_paragraph(_as_text(job["location"]))
             details(job, "experience")
 
-    if d.get("education"):
+    if entries("education"):
         section("Education")
-        for edu in d["education"]:
+        for edu in entries("education"):
             begin("card", "education.entry")
             row(edu.get("school") or "", edu.get("location") or "", color=ink, part="education.school", rpart="education.location")
             if edu.get("degree"):
                 runs(para("education.degree"), edu["degree"], pt=meta_pt, kind="small")
 
     for key, title in (("projects", "Projects"), ("publications", "Publications")):
-        if d.get(key):
+        if entries(key):
             section(title)
-            for item in d[key]:
+            for item in entries(key):
                 begin("card", f"{key}.entry")
                 row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt, part=f"{key}.name")
                 if item.get("url"):
-                    link(para(f"{key}.url"), item["url"], item["url"])
+                    link(para(f"{key}.url"), _as_text(item["url"]), _as_text(item["url"]))
                 details(item, key)
 
     end("sec")
