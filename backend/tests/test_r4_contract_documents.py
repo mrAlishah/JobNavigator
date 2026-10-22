@@ -84,6 +84,21 @@ def test_patch_resume_drops_keys_outside_the_allow_list(client, test_db):
     assert str(r.id) != MISSING_UUID
 
 
+def test_patch_resume_renames_with_a_stripped_name(client, test_db):
+    r = make_resume(test_db)
+    body = assert_clean(client.patch(f"/api/resumes/{r.id}", json={"name": "  Backend v4  "}), 200).json()
+    assert body["name"] == "Backend v4"
+
+
+@pytest.mark.parametrize("name", ["", "   ", None, 5, [], {}])
+def test_patch_resume_rejects_a_blank_or_wrongly_typed_name(client, test_db, name):
+    r = make_resume(test_db)
+    before = r.name
+    assert_clean(client.patch(f"/api/resumes/{r.id}", json={"name": name}), 400)
+    test_db.refresh(r)
+    assert r.name == before
+
+
 def test_patch_resume_empty_body_is_a_noop_200(client, test_db):
     r = make_resume(test_db)
     assert_clean(client.patch(f"/api/resumes/{r.id}", json={}), 200)

@@ -37,7 +37,7 @@ Everything that scores, tailors or writes needs a language model. Choose one pri
 | Antigravity CLI | a Google Antigravity subscription, see below | subscription |
 | OpenCode Go | a Go subscription key; OpenAI-compatible endpoint, no login | subscription |
 
-Pick the model from the list (or search the provider's catalog under Model catalog). Save.
+Pick the model from the list (or search the provider's catalog under Model catalog). Save. The API key box under the Primary (and on each override) holds one key per provider: paste the Anthropic key once and every slot on Claude API uses it; switching a slot to OpenAI shows the OpenAI key instead, and switching back brings the Anthropic key back. An empty box uses the provider's variable from `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY`) for the owner and for members who inherit Models.
 
 **Ollama or LM Studio on the host, backend in Docker.** Inside the container `localhost` is the container itself, so the default addresses (`http://localhost:11434` for Ollama, `http://localhost:1234/v1` for LM Studio) do not reach your host. Set the address under **Settings › AI › Models** (the Ollama and LM Studio address boxes appear while some model uses that provider), e.g. `http://host.docker.internal:11434` for Ollama and `http://host.docker.internal:1234/v1` for LM Studio, or put `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` in `.env` and run `docker compose up -d backend`. The addresses are install-wide: only the owner edits them.
 

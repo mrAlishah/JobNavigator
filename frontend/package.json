@@ -30,8 +30,5 @@
     "jsdom": "^25.0.1",
     "@testing-library/react": "^16.1.0",
     "@testing-library/dom": "^10.4.0"
-  },
-  "overrides": {
-    "vite": "$vite"
   }
 }

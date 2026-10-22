@@ -19,7 +19,7 @@ docker compose up --build -d          # dashboard at http://localhost, blank key
 
 ```bash
 docker compose exec -T backend sh -c "cd /app && python -m pytest backend/tests -q -p no:cacheprovider -m 'not live'"
-bash tests/tools/fe-test.sh           # frontend Vitest (node:20-alpine one-off)
+bash tests/tools/fe-test.sh           # frontend Vitest (node:24-alpine one-off)
 bash tests/e2e/run.sh [case-filter]   # Playwright e2e, see tests/e2e/README.md
 ```
 

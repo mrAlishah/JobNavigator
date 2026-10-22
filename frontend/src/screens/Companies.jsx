@@ -173,7 +173,7 @@ export default function Companies() {
 
   // only company_scrape runs belong on this screen; /monitor/active also carries scoring/search runs
   // keyed by job/search id. Prefer company_id when present; scope_key is the fallback for older runs.
-  const runMap = (data) => { const m = {}; (data || []).forEach((r) => { if (r.job_type !== 'company_scrape') return; const id = r.company_id || r.scope_key; if (id) m[id] = true }); return m }
+  const runMap = (data) => { const m = {}; (data || []).forEach((r) => { if (r.job_type !== 'company_scrape') return; const id = r.company_id || r.scope_key; if (id) m[id] = r.waiting ? 'waiting' : true }); return m }
   // health is refetched with the list, so a run that clears (or causes)
   // a failure updates the row ▲, the header count and the sort without a reload.
   const fetchHealth = useCallback(async () => {
@@ -350,7 +350,7 @@ export default function Companies() {
     return `${ids.length} selected`
   }
   const healthOf = (c) => {
-    if (scraping[c.id]) return { dot: 'var(--accent)', fg: 'var(--accent)', text: 'scraping now…' }
+    if (scraping[c.id]) return { dot: 'var(--accent)', fg: 'var(--accent)', text: scraping[c.id] === 'waiting' ? 'waiting for another scrape…' : 'scraping now…' }
     const warn = warnTextOf(c, downMap[c.id])
     // paused or acknowledged: keep the verdict, drop the alarm colours
     if (warn && warnMuted(c)) return { dot: 'var(--edge)', fg: 'var(--muted)',
@@ -536,11 +536,11 @@ export default function Companies() {
                   raise the cell itself while its menu is open: 28 clears the sticky head (3)/rows, stays under drawer (29/30). */}
               <span className="v2-cactions" style={{ flex: '0 0 190px', display: 'flex', alignSelf: 'stretch', alignItems: 'center', justifyContent: 'flex-end', gap: 4, position: 'sticky', right: 0, paddingLeft: 8, zIndex: menuId === c.id ? 28 : undefined }} onClick={(e) => e.stopPropagation()}>
                 <Pill size="xs" line="inherit" disabled={testBusy} onClick={() => runScrape(c.id)}
-                  title={testBusy ? 'A test is already running' : 'Scrape this company now'}>
+                  title={testBusy ? 'A test is already running' : scraping[c.id] === 'waiting' ? 'Queued: another scrape is running, this one starts when it finishes' : 'Scrape this company now'}>
                   {scraping[c.id]
                     ? <Spinner />
                     : <span style={{ fontSize: 11 }}>↻</span>}
-                  {scraping[c.id] ? 'Running' : 'Run'}
+                  {scraping[c.id] === 'waiting' ? 'Waiting' : scraping[c.id] ? 'Running' : 'Run'}
                 </Pill>
                 {/* the running test names itself; every other pill goes quiet, so the running one keeps full opacity while un-clickable */}
                 <Pill size="xs" line="inherit" on={testingId === c.id} disabled={testBusy} onClick={() => runTest(c.id)}

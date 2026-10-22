@@ -15,36 +15,20 @@ router = APIRouter(prefix="/llm", tags=["settings"])
 _CACHE_TTL = 3600  # 1 hour
 _cache = {}  # provider -> {"at": float, "models": list}
 
-# Provider setting slots to scan for a usable API key, in priority order.
-_KEY_SLOTS = [
-    ("llm_provider", "llm_api_key"),
-    ("llm_fallback_provider", "llm_fallback_api_key"),
-    ("cv_tailor_llm_provider", "cv_tailor_llm_api_key"),
-    ("cover_letter_llm_provider", "cover_letter_llm_api_key"),
-    ("autofill_llm_provider", "autofill_llm_api_key"),
-    ("email_llm_provider", "email_llm_api_key"),
-]
-_ENV_KEY = {"openai": "OPENAI_API_KEY", "claude_api": "ANTHROPIC_API_KEY",
-            "opencode_go": "OPENCODE_API_KEY"}
-
-
-def _get(db, key: str) -> str:
-    return get_setting(db, key) or ""
-
-
 def _resolve_key(db, provider: str) -> str:
-    """Find an API key already configured for `provider` in any slot, else env. A member on
-    its own Models section sees only its own slots (get_setting never falls back to the
-    owner's there, QA F5) and never the `.env` key, which is the owner's (R3-02)."""
-    for pkey, kkey in _KEY_SLOTS:
-        if _get(db, pkey) == provider:
-            val = _get(db, kkey)
-            if val:
-                return val
+    """The provider's API key (one per provider, so a key set while only Scoring used that
+    provider counts too, R30 B4), else its env var. A member on its own Models section sees only
+    its own key (get_setting never falls back to the owner's there, QA F5) and never the `.env`
+    key, which is the owner's (R3-02)."""
+    from backend.accounts.settings import PROVIDER_KEY_SETTINGS
+    from backend.analyzer.llm_client import provider_api_key
+    key = provider_api_key(db, provider)
+    if key or provider not in PROVIDER_KEY_SETTINGS:
+        return key
     from backend.accounts.credentials import own_login_account
     if own_login_account(db) is not None:
         return ""
-    return os.getenv(_ENV_KEY.get(provider, ""), "")
+    return os.getenv(PROVIDER_KEY_SETTINGS[provider].upper(), "")
 
 
 def _builtin_models(provider: str) -> list:

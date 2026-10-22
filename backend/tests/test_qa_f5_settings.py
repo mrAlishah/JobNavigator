@@ -139,15 +139,15 @@ def test_effective_rows_matches_resolve_setting_for_a_member(test_db, owner_cred
     a, b = owner_creds
     _own(test_db, b, "linkedin_email", "me@li.example")
     _policy(test_db, b, "models", "own")
-    set_setting(test_db, "llm_api_key", "sk-owner")
+    set_setting(test_db, "anthropic_api_key", "sk-owner")
     for k, v in (("title_exclude_global", '["x"]'), ("scoring_rubric", "r"), ("telegram_chat_id", "1")):
         set_setting(test_db, k, v)    # every seeded key has an install row in a real DB
     with use_account(b):
         rows = {k: (v, src) for k, v, src in S.effective_rows(test_db)}
-        for key in ("linkedin_email", "linkedin_password", "jobright_email", "llm_api_key",
+        for key in ("linkedin_email", "linkedin_password", "jobright_email", "anthropic_api_key",
                     "title_exclude_global", "scoring_rubric", "telegram_chat_id"):
             assert rows[key] == S.resolve_setting(test_db, key), key
-    assert rows["llm_api_key"] == ("", "default")
+    assert rows["anthropic_api_key"] == ("", "default")
 
 
 # ── R3-01 / R6-02 / R3-03: what a member's GET /api/settings shows ───────────
@@ -225,7 +225,7 @@ def test_owner_response_has_no_set_by_owner_flags(client, test_db, owner_creds):
 @pytest.fixture
 def owner_key(test_db, accounts, monkeypatch):
     set_setting(test_db, "llm_provider", "claude_api")
-    set_setting(test_db, "llm_api_key", "sk-owner")
+    set_setting(test_db, "anthropic_api_key", "sk-owner")
     set_setting(test_db, "llm_fallback_provider", "")
     set_setting(test_db, "llm_fallback_model", "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-owner")
@@ -296,7 +296,7 @@ async def test_owner_and_inherit_keep_the_env_key_fallback(test_db, owner_key, m
         return {"text": "ok", "usage": {}}
 
     monkeypatch.setattr(L, "_call_claude_api", fake)
-    set_setting(test_db, "llm_api_key", "")
+    set_setting(test_db, "anthropic_api_key", "")
     with use_account(a):
         await L.call_llm("p", "s", 10)
     with use_account(b):                          # inherit: the owner's (empty) key, env fallback allowed
@@ -311,7 +311,7 @@ async def test_member_own_models_with_its_key_dispatches_it(test_db, owner_key, 
     a, b = owner_key
     _policy(test_db, b, "models", "own")
     _own(test_db, b, "llm_provider", "claude_api")
-    _own(test_db, b, "llm_api_key", "sk-member")
+    _own(test_db, b, "anthropic_api_key", "sk-member")
     seen = []
 
     async def fake(prompt, system, model, api_key, max_tokens, cached_prefix=None, effort=""):
@@ -334,7 +334,7 @@ async def test_opencode_go_env_key_reaches_owner_and_inherit_never_a_member_on_o
     monkeypatch.setenv("OPENCODE_API_KEY", "sk-env-go")
     set_setting(test_db, "llm_provider", "opencode_go")
     set_setting(test_db, "llm_model", "glm-5.3")
-    set_setting(test_db, "llm_api_key", "")
+    set_setting(test_db, "opencode_api_key", "")
     set_setting(test_db, "autofill_llm_provider", "")
     seen = []
 
@@ -370,7 +370,7 @@ async def test_opencode_go_env_key_reaches_owner_and_inherit_never_a_member_on_o
         assert rl._resolve_key(test_db, "opencode_go") == "sk-env-go"
     assert seen == []
 
-    _own(test_db, b, "llm_api_key", "sk-member-go")
+    _own(test_db, b, "opencode_api_key", "sk-member-go")
     with use_account(b):
         await L.call_llm("p", "s", 10)
     assert seen == [("sk-member-go", L.OPENCODE_GO_BASE_URL)]
@@ -386,7 +386,7 @@ def test_model_catalog_never_uses_the_owner_key_for_a_member_on_own(test_db, own
         assert rl._resolve_key(test_db, "claude_api") == ""          # not sk-owner, not the env
         assert rl._resolve_key(test_db, "openai") == ""
     _own(test_db, b, "llm_provider", "openai")
-    _own(test_db, b, "llm_api_key", "sk-member-oa")
+    _own(test_db, b, "openai_api_key", "sk-member-oa")
     with use_account(b):
         assert rl._resolve_key(test_db, "openai") == "sk-member-oa"
     with use_account(a):

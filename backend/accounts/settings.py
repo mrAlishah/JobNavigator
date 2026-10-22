@@ -42,13 +42,24 @@ POLICY_MODES = (INHERIT, OWN)
 _LLM_FEATURES = ("", "llm_fallback_", "scoring_", "cv_tailor_", "cover_letter_", "autofill_", "email_")
 
 
+# One API key per provider (3.1): every model slot on a provider uses its key, so switching a
+# slot's provider back and forth never loses or mis-sends a key. Setting = env var in lower case.
+PROVIDER_KEY_SETTINGS = {"claude_api": "anthropic_api_key", "openai": "openai_api_key",
+                         "openrouter": "openrouter_api_key", "opencode_go": "opencode_api_key"}
+# The per-slot keys they replace: migrated once (seed.migrate_llm_provider_keys), then neither
+# served nor writable nor read; the rows stay one release for a downgrade.
+LEGACY_LLM_KEY_SETTINGS = ("llm_api_key", "llm_fallback_api_key", "scoring_llm_api_key",
+                           "cv_tailor_llm_api_key", "cover_letter_llm_api_key",
+                           "autofill_llm_api_key", "email_llm_api_key")
+
+
 def _llm_keys() -> list:
     keys = []
     for f in _LLM_FEATURES:
         base = "llm_fallback" if f == "llm_fallback_" else f"{f}llm"
-        for part in ("provider", "model", "api_key", "effort"):
+        for part in ("provider", "model", "effort"):
             keys.append(f"{base}_{part}")
-    return keys
+    return keys + list(PROVIDER_KEY_SETTINGS.values())
 
 
 # (id, label, scope, default mode, Settings-screen sections it appears in, keys)
@@ -64,12 +75,12 @@ _SECTIONS = [
         "scoring_rubric", "scoring_output_light", "scoring_output_full"]),
     # A résumé id belongs to one account: never inherited (MT-4 leftover).
     ("default_resume", "Default résumé", OWN_ALWAYS, OWN, ["scoring"], ["default_resume_id"]),
-    # Process-wide semaphores: one value for the install.
     # The résumé profile photo belongs to one person: never inherited, so a member's résumés never
     # print the owner's picture (the fork's Professional templates, Settings › Resumes).
     ("resumes", "Résumés", OWN_ALWAYS, OWN, ["resumes"], ["profile_image_path"]),
-    ("limits", "Parallel limits", OWNER_ONLY, INHERIT, ["scoring", "tailoring"], [
-        "scoring_max_concurrent", "tailoring_max_concurrent"]),
+    # Process-wide semaphores: one value for the install.
+    ("limits", "Parallel limits", OWNER_ONLY, INHERIT, ["scoring", "tailoring", "scheduler"], [
+        "scoring_max_concurrent", "tailoring_max_concurrent", "scrape_max_concurrent"]),
     ("tailoring", "Tailoring", POLICY, INHERIT, ["tailoring"], [
         "cv_tailor_prompt", "persona_tailor_prompt", "tailor_auto_quick_score"]),
     ("letters", "Cover letters", POLICY, INHERIT, ["letters"], [

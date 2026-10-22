@@ -20,7 +20,9 @@ _REDACT_KEYS = {"dashboard_api_key", "gmail_refresh_token", "claude_code_oauth_t
                 "telegram_bot_token"}
 # Server-side only, never listed (not even redacted) and not writable (not a known key).
 _HIDDEN_KEYS = {"account_cookie_secret", "telegram_own_webhook_secret", "gmail_token_status",
-                "llm_local_seed_cleared"}
+                "llm_local_seed_cleared", "llm_provider_keys_migrated",
+                # the per-slot API keys replaced by one key per provider (kept one release for a downgrade)
+                *acct_settings.LEGACY_LLM_KEY_SETTINGS}
 
 
 def _is_secret(key: str) -> bool:
@@ -254,6 +256,12 @@ def update_settings(updates: dict, db: Session = Depends(get_db)):
 
     if "scoring_max_concurrent" in install_updated:
         _reconfigure("reset_scoring_semaphore", reset_scoring_semaphore)
+
+    if "scrape_max_concurrent" in install_updated:
+        def _reset_scraping():
+            from backend.job_monitor import reset_limiter
+            reset_limiter("scraping")
+        _reconfigure("reset_scrape_gate", _reset_scraping)
 
     if "tailoring_max_concurrent" in install_updated:
         def _reset_tailoring():

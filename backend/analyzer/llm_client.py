@@ -37,6 +37,15 @@ def _get_setting(db, key, default=""):
     return get_setting(db, key) or default
 
 
+def provider_api_key(db, provider: str) -> str:
+    """The API key setting of `provider` (one per provider, 3.1), or "" for a keyless provider or
+    an empty box. The env fallback is applied at dispatch (`_anthropic_key` & co.), where a member
+    on its own Models section is kept off the owner's env key."""
+    from backend.accounts.settings import PROVIDER_KEY_SETTINGS
+    setting = PROVIDER_KEY_SETTINGS.get(provider)
+    return (_get_setting(db, setting, "") or "").strip() if setting else ""
+
+
 def resolve_llm_config(feature: str = "", db=None) -> dict:
     """Resolve the provider/model/api_key/effort a feature dispatches with: `<feature>_llm_*` setting -> primary `llm_*` setting -> shipped default. Single source of truth for both dispatch and logging."""
     own_db = db is None
@@ -46,26 +55,25 @@ def resolve_llm_config(feature: str = "", db=None) -> dict:
         prefix = f"{feature}_" if feature else ""
         provider = _get_setting(db, f"{prefix}llm_provider", "")
         model = _get_setting(db, f"{prefix}llm_model", "")
-        # L-01: a slot's own key belongs to the slot's own provider. With no provider of its own
-        # the slot follows the Primary, so a key left in it (an override switched off) is stale
-        # and must not reach the Primary's provider.
-        api_key = _get_setting(db, f"{prefix}llm_api_key", "") if (provider or not feature) else ""
         effort = _get_setting(db, f"{prefix}llm_effort", "")
         provider = provider or _get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER
         if feature:
-            model = model or _get_setting(db, "llm_model", "")
-            # Keys and effort values are per provider, so the Primary's carry over only to a slot
-            # on the same provider: a slot on another provider with no key of its own gets "" and
-            # dispatch then applies that provider's env fallback (B1: never another provider's key).
+            # Models and effort values are per provider, so the Primary's carry over only to a slot
+            # on the same provider (R30 L-05: an OpenAI override with no model sent the Primary's
+            # Claude model name to OpenAI). Elsewhere an empty model stays empty and dispatch
+            # names it.
             same_provider = provider == (_get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER)
-            if not api_key and same_provider:
-                api_key = _get_setting(db, "llm_api_key", "")
+            if not model and same_provider:
+                model = _get_setting(db, "llm_model", "")
             if not effort and same_provider:
                 effort = _get_setting(db, "llm_effort", "")
+            if not model and not same_provider:
+                return {"provider": provider, "model": "", "api_key": provider_api_key(db, provider),
+                        "effort": effort}
         return {
             "provider": provider,
             "model": model or DEFAULT_MODEL,
-            "api_key": api_key,
+            "api_key": provider_api_key(db, provider),
             "effort": effort,
         }
     finally:
@@ -94,10 +102,7 @@ async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
             effort = primary["effort"] if provider == primary["provider"] else ""
         fallback_provider = _get_setting(db, "llm_fallback_provider", "")
         fallback_model = _get_setting(db, "llm_fallback_model", "")
-        fb_api_key = _get_setting(db, "llm_fallback_api_key", "")
-        # B2: like a feature slot, the fallback reuses the Primary's key only on the same provider.
-        if not fb_api_key and fallback_provider == primary["provider"]:
-            fb_api_key = primary["api_key"]
+        fb_api_key = provider_api_key(db, fallback_provider)
         fb_effort = _get_setting(db, "llm_fallback_effort", "")
     finally:
         db.close()
@@ -219,6 +224,7 @@ async def call_autofill_llm_stream(prompt: str, system: str, max_tokens: int = 4
 
     if provider in _KEYED_PROVIDERS:
         _require_own_key(provider, api_key)
+    _require_model(provider, model)
     if provider == "opencode_go":
         api_key = _opencode_go_key(api_key)
     elif provider == "openai":
@@ -384,6 +390,7 @@ _KEYED_PROVIDERS = {"claude_api": "Claude API", "openai": "OpenAI", "openrouter"
 OPENCODE_GO_KEY_ENV = "OPENCODE_API_KEY"
 OPENAI_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
 
 def _env_key(env_name: str) -> str:
@@ -425,11 +432,14 @@ def _anthropic_key(api_key: str) -> str:
 
 
 def _openrouter_key(api_key: str) -> str:
-    """The OpenRouter key to send. OpenRouter has no env fallback, so an empty key used to send
-    an empty bearer and retry the 401 (L-02); it is a config error instead."""
-    if not api_key:
-        raise NonRetryableLLMError("No API key for OpenRouter — set it in Settings › Models")
-    return api_key
+    """The OpenRouter key to send: the resolved setting, else OPENROUTER_API_KEY for the owner and
+    members on 'inherit'. An empty key used to send an empty bearer and retry the 401 (L-02); no
+    key at all is a config error instead."""
+    key = api_key or _env_key(OPENROUTER_KEY_ENV)
+    if not key:
+        raise NonRetryableLLMError(
+            "No API key for OpenRouter — set it in Settings › Models (or OPENROUTER_API_KEY in .env)")
+    return key
 
 
 def _require_own_key(provider: str, api_key: str) -> None:
@@ -445,11 +455,25 @@ def _require_own_key(provider: str, api_key: str) -> None:
         f"No API key for {_KEYED_PROVIDERS[provider]} — set it in Settings › Models")
 
 
+# Providers that cannot run without a model name (the subscription CLIs fall back to their own default).
+_MODEL_REQUIRED = {**_KEYED_PROVIDERS, "ollama": "Ollama", "lmstudio": "LM Studio"}
+
+
+def _require_model(provider: str, model: str) -> None:
+    """R30 L-05: an override on another provider with no model of its own no longer borrows the
+    Primary's model; an API provider without one fails once, naming the fix, instead of four
+    retries of an unknown-model error."""
+    if not model and provider in _MODEL_REQUIRED:
+        raise NonRetryableLLMError(
+            f"No model picked for {_MODEL_REQUIRED[provider]} — pick one in Settings › Models")
+
+
 async def _dispatch(provider: str, model: str, api_key: str,
                     prompt: str, system: str, max_tokens: int,
                     cached_prefix: str | None = None, effort: str = "") -> dict:
     """Route to the correct provider; only `claude_api` supports prompt caching, others get cached_prefix concatenated into the prompt (no cache discount). `effort` reaches only the providers in REASONING_EFFORTS."""
     _require_own_key(provider, api_key)
+    _require_model(provider, model)
     effort = _supported_effort(provider, effort)
     max_tokens = _output_cap(provider, max_tokens, effort)
     if provider == "claude_api":
@@ -593,8 +617,15 @@ async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: in
     }
 
 
-class CLITimeoutError(RuntimeError):
-    """A CLI that outran its wall clock, carrying whatever it printed before the kill."""
+class NonRetryableLLMError(RuntimeError):
+    """A failure a retry cannot fix (not logged in, usage limit); call_llm goes straight to the fallback."""
+
+
+class CLITimeoutError(NonRetryableLLMError):
+    """A CLI that outran its wall clock, carrying whatever it printed before the kill.
+
+    Non-retryable: the same prompt on the same model very likely times out again, and each
+    retry holds the CLI gate and the caller's slot for one more full timeout (300-450 s)."""
 
     def __init__(self, message: str, stdout: bytes = b"", stderr: bytes = b""):
         super().__init__(message)
@@ -602,11 +633,11 @@ class CLITimeoutError(RuntimeError):
         self.stderr = stderr
 
 
-class NonRetryableLLMError(RuntimeError):
-    """A failure a retry cannot fix (not logged in, usage limit); call_llm goes straight to the fallback."""
-
-
 CLI_TIMEOUT = 300   # seconds one subscription-CLI completion may take before it is killed
+# agy -high models can think for 5 minutes and more on one tailoring (gemini-3.8-flash-high:
+# 11k-56k thinking tokens, 86-368 s over six runs), so 300 s cut off answers that were on the
+# way. It stays under Caddy's 480 s read_timeout, so the synchronous PDF import gets its reply.
+AGY_TIMEOUT = 450
 # codex exec processes share one auth.json and rewrite it on token refresh; OpenAI's docs say not
 # to run many against the same file, so at most two at a time whatever the scoring limiter allows.
 # QA F8 / R5-12 (decision, no change): the gates stay process-wide although members on own
@@ -620,8 +651,14 @@ _QUOTA_RE = re.compile(r"usage limit|rate limit|quota|too many requests|\b429\b"
 # gets; process-wide on purpose, see R5-12 above.
 _agy_gate = asyncio.Semaphore(2)
 _AGY_LOGIN_HINT = "run `docker compose exec -it backend agy` and sign in"
-_AGY_AUTH_RE = re.compile(r"authentication (required|failed)|not logged in|sign in", re.I)
+# 1.3.3+ reports an expired or revoked token as "Authentication expired. Please log back in."
+_AGY_AUTH_RE = re.compile(r"authentication (required|failed|expired)|not logged in|sign in|log back in", re.I)
 _AGY_STATE = "~/.gemini/antigravity-cli"
+# agy is an agent and offers its ~60 tools whatever the deny list says; a -high model spent
+# two turns (~45 s) on `ls` and read_file in the empty workdir before it answered. The deny
+# list blocks those calls, this line stops the model from making them.
+_AGY_NO_TOOLS = ("Answer in this one reply, from the text below only. Do not call any tool: "
+                 "there are no files to read and no commands to run.")
 # The deny list the image ships. It lives outside the state directory because agy rewrites
 # settings.json on every start, and a read-only copy there only makes that write fail.
 _AGY_SETTINGS_SOURCE = "/opt/antigravity-settings.json"
@@ -912,7 +949,8 @@ async def _agy_run(prompt: str, system: str, model: str, env: dict, login_hint: 
     import tempfile
 
     message = _json.dumps({"event": "user",
-                           "message": {"role": "user", "content": f"{system}\n\n{prompt}"}})
+                           "message": {"role": "user",
+                                       "content": f"{_AGY_NO_TOOLS}\n\n{system}\n\n{prompt}"}})
 
     denied = _agy_install_settings()
     stdout = b""
@@ -924,12 +962,12 @@ async def _agy_run(prompt: str, system: str, model: str, env: dict, login_hint: 
                 log_path = os.path.join(workdir, "cli.log")
                 # `-p` always swallows the next token, so it goes last with an attached empty value.
                 cmd = ["agy", "--input-format", "stream-json", "--output-format", "stream-json",
-                       "--print-timeout", f"{int(CLI_TIMEOUT)}s", "--log-file", log_path]
+                       "--print-timeout", f"{int(AGY_TIMEOUT)}s", "--log-file", log_path]
                 if model:
                     cmd.extend(["--model", model])
                 cmd.append("-p=")
                 rc, stdout, stderr = await _run_cli(cmd, (message + "\n").encode(),
-                                                    env=env, cwd=workdir)
+                                                    env=env, timeout=AGY_TIMEOUT, cwd=workdir)
                 _agy_assert_denied(log_path, denied)
     except CLITimeoutError as e:
         stdout = e.stdout
@@ -1046,6 +1084,10 @@ def _opencode_go_error(e: Exception, model: str):
                 f"{model} is an OpenCode Go contributor model that trains on request data; Go refuses "
                 "it until paid endpoints that train are allowed in your OpenCode account — allow "
                 "that there or pick another model")
+    # R30 L-07: Go is a subscription with usage limits, like the CLIs: a 429 or a limit
+    # message does not clear within the 14 s of retries, so go to the fallback at once.
+    if getattr(e, "status_code", None) == 429 or _QUOTA_RE.search(message):
+        return NonRetryableLLMError(f"OpenCode Go usage limit reached: {message}")
     return None
 
 
@@ -1090,19 +1132,32 @@ async def _call_openrouter(prompt: str, system: str, model: str, api_key: str, m
 async def _call_ollama(prompt: str, system: str, model: str, max_tokens: int) -> dict:
     """Call local Ollama instance. Returns {text, usage}."""
     import httpx
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(
-            f"{local_base_url('ollama')}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "system": system,
-                "stream": False,
-                "options": {"num_predict": max_tokens},
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{local_base_url('ollama')}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "system": system,
+                    "stream": False,
+                    "options": {"num_predict": max_tokens},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPStatusError as e:
+        # R30 L-08: httpx names the URL, which is the owner's server address; a member on
+        # inherit sees this text in toasts and the LLM log, so it carries the status only.
+        detail = ""
+        try:
+            detail = str((e.response.json() or {}).get("error") or "")[:200]
+        except Exception:
+            pass
+        raise RuntimeError(f"Ollama answered HTTP {e.response.status_code}"
+                           + (f": {detail}" if detail else "")) from None
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Ollama is not reachable ({type(e).__name__})") from None
     return {
         "text": data["response"].strip(),
         "usage": {

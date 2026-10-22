@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import api from '../api'
-import { downloadName } from '../download'
+import { downloadErrorReason, downloadName } from '../download'
 import { useFlushBeforeSwitch } from '../accounts'
 import { Picker, VoicePicker, LengthPicker, LENGTHS, STAGE_CLASS } from './CoverLetters'
 import ConfirmDialog from '../ConfirmDialog'
@@ -186,6 +186,8 @@ export default function CoverLetterEditor() {
   // whenever a dashboard key is set — go through axios and save the blob.
   const download = async () => {
     try {
+      // the edit the debounced save still owes goes first, so the PDF has it (R30 D-06)
+      clearTimeout(saveTimer.current); await sendPending()
       const r = await api.get(`/cover-letters/${id}/pdf`, { responseType: 'blob' })
       if (__DEMO__) {   // the demo prints the rendered template through the browser
         const { printHtml, blobText } = await loadDemo('pdf.js')
@@ -196,7 +198,11 @@ export default function CoverLetterEditor() {
       a.href = url; a.download = downloadName(r.headers?.['content-disposition'], 'CoverLetter.pdf')
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch (e) { console.error(e); pushToast({ kind: 'error', msg: 'Could not download the PDF.' }) }   // a download failure is not a save failure
+    } catch (e) {   // a download failure is not a save failure
+      console.error(e)
+      const reason = await downloadErrorReason(e)
+      pushToast({ kind: 'error', msg: 'Could not download the PDF' + (reason ? ` — ${reason}` : '.') })
+    }
   }
 
   const remove = () => {

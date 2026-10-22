@@ -655,7 +655,7 @@ export default function Stats() {
                     /* ui: keep — 7px scheduler status dot (Dot role, migrates with Tag/Dot) */
                     : <span style={{ flex: '0 0 auto', width: 7, height: 7, borderRadius: 'var(--radius-control)', background: j.pending ? 'var(--warn)' : 'var(--funnel-low)' }} />)}
                   {showStatus && <span style={{ minWidth: 0, fontSize: 11.5, lineHeight: '18px', color: running ? 'var(--accent)' : 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {running ? `Running · ${dur(j.running?.elapsed_seconds || 0)}` : j.pending ? 'Pending' : 'Scheduled'}
+                    {running ? (j.running?.waiting ? 'Waiting for another scrape' : `Running · ${dur(j.running?.elapsed_seconds || 0)}`) : j.pending ? 'Pending' : 'Scheduled'}
                   </span>}
                 </span>
                 <span style={{ flex: '0 0 110px', display: 'flex', justifyContent: 'flex-end' }}>

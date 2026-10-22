@@ -2,7 +2,7 @@
 # Run the v2 frontend unit tests (Vitest). Node is not installed on the host, and
 # the `frontend` compose service builds to an NGINX image with no /app and no
 # node_modules — `docker compose run frontend` lands in that image, so this uses a
-# one-off node:20-alpine container with the frontend directory bind-mounted instead.
+# one-off node:24-alpine container with the frontend directory bind-mounted instead.
 #
 #   bash tests/tools/fe-test.sh              # whole suite
 #   bash tests/tools/fe-test.sh time         # only files matching "time"
@@ -29,7 +29,7 @@ DOCKER="/c/Program Files/Docker/Docker/resources/bin/docker.exe"
 export MSYS_NO_PATHCONV=1                       # keep /app from being mangled into a Windows path
 
 VOLUME=jn_fe_node_modules
-IMAGE=node:20-alpine
+IMAGE=node:24-alpine
 
 # Repo root from this script's own location, as a path the Docker daemon accepts
 # (D:/src/JobNavigator, not the MSYS /d/src/JobNavigator).

@@ -134,11 +134,11 @@ cp .env.example .env
 docker compose pull && docker compose up -d      # prebuilt images from GHCR
 ```
 
-Open `http://localhost`. To build from source instead (or on ARM), use `docker compose up --build -d`; every release is also published as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=3.0` in `.env`. On first run sign in with a blank key, then set one in Settings › System › Advanced.
+Open `http://localhost`. To build from source instead, use `docker compose up --build -d`; every release is also published for `linux/amd64` and `linux/arm64` as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=3.0` in `.env`. On first run sign in with a blank key, then set one in Settings › System › Advanced.
 
 **2. Connect a model**
 
-Any API key goes straight into Settings › AI. A subscription needs one login inside the container first (OpenCode Go needs none):
+Any API key goes straight into Settings › AI, once per provider: every model slot on that provider uses it, and switching a slot to another provider and back keeps it. A subscription needs one login inside the container first (OpenCode Go needs none):
 
 | Subscription | Once after the containers start |
 |---|---|

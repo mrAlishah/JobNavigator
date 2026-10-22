@@ -27,7 +27,7 @@ needs_apscheduler = pytest.mark.skipif(
 
 # ── the derived key sets ────────────────────────────────────────────────────
 
-def test_int_keys_match_the_nine_rows_settings_marks_int():
+def test_int_keys_match_the_ten_rows_settings_marks_int():
     """Derived from the seeded defaults; must equal what Settings.jsx types as numeric."""
     assert INT_SETTING_KEYS == {
         "fit_score_threshold",
@@ -37,6 +37,7 @@ def test_int_keys_match_the_nine_rows_settings_marks_int():
         "auto_reject_after_days",
         "scoring_max_concurrent",
         "tailoring_max_concurrent",
+        "scrape_max_concurrent",
         "email_llm_confidence_threshold",
         "autofill_default_length",
     }
@@ -219,6 +220,6 @@ def test_patch_accepts_valid_values(api_client, test_db):
 def test_patch_ignores_the_redacted_placeholder(api_client, test_db):
     """A GET returns '••••••' for secrets; PATCHing that back must not be validated or written as a real value."""
     _seed_first_run(test_db)
-    resp = api_client.patch("/api/settings", json={"llm_api_key": "•" * 6})
+    resp = api_client.patch("/api/settings", json={"anthropic_api_key": "•" * 6})
     assert resp.status_code == 200
     assert resp.json()["updated"] == []

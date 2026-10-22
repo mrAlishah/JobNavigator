@@ -45,16 +45,16 @@ def _models_own(db, account_id):
 
 @pytest.fixture
 def two_configs(test_db, accounts):
-    """Owner: claude_api / owner-model / sk-owner (+ fallback). B: openai / member-model /
-    sk-member (+ its own fallback), stored as B's rows but only read once B owns 'models'."""
+    """Owner: claude_api / owner-model / sk-owner (+ an OpenRouter fallback). B: openai /
+    member-model / sk-member (+ an OpenAI fallback, so the same key), stored as B's rows but only
+    read once B owns 'models'. Keys are per provider (3.1)."""
     a, b = accounts
-    for k, v in {"llm_provider": "claude_api", "llm_model": "owner-model", "llm_api_key": "sk-owner",
+    for k, v in {"llm_provider": "claude_api", "llm_model": "owner-model", "anthropic_api_key": "sk-owner",
                  "llm_fallback_provider": "openrouter", "llm_fallback_model": "owner-fb",
-                 "llm_fallback_api_key": "or-owner"}.items():
+                 "openrouter_api_key": "or-owner"}.items():
         set_setting(test_db, k, v)
-    for k, v in {"llm_provider": "openai", "llm_model": "member-model", "llm_api_key": "sk-member",
-                 "llm_fallback_provider": "openai", "llm_fallback_model": "member-fb",
-                 "llm_fallback_api_key": "sk-member-fb"}.items():
+    for k, v in {"llm_provider": "openai", "llm_model": "member-model", "openai_api_key": "sk-member",
+                 "llm_fallback_provider": "openai", "llm_fallback_model": "member-fb"}.items():
         _own(test_db, b, k, v)
     return a, b
 
@@ -143,7 +143,7 @@ async def test_owner_entry_points_unchanged_by_a_member_own_config(test_db, two_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("own,expected", [
-    (True, ("openai", "member-fb", "sk-member-fb")),
+    (True, ("openai", "member-fb", "sk-member")),
     (False, ("openrouter", "owner-fb", "or-owner")),
 ])
 async def test_fallback_follows_the_member_policy(test_db, two_configs, monkeypatch, own, expected):
@@ -163,7 +163,8 @@ async def test_streaming_autofill_uses_the_member_policy(test_db, two_configs, m
     a, b = two_configs
     set_setting(test_db, "llm_provider", "claude_api")
     _own(test_db, b, "autofill_llm_provider", "claude_api")   # stream natively in both cases
-    _own(test_db, b, "autofill_llm_api_key", "sk-member-autofill")
+    _own(test_db, b, "autofill_llm_model", "member-claude")   # its own model: not the OpenAI Primary's (L-05)
+    _own(test_db, b, "anthropic_api_key", "sk-member-autofill")
     if own:
         _models_own(test_db, b)
     seen = []
@@ -176,7 +177,7 @@ async def test_streaming_autofill_uses_the_member_policy(test_db, two_configs, m
     with use_account(b):
         out = [c async for c in L.call_autofill_llm_stream("p", "s")]
     assert out == ["hi"]
-    assert seen == [("member-model", "sk-member-autofill") if own else ("owner-model", "sk-owner")]
+    assert seen == [("member-claude", "sk-member-autofill") if own else ("owner-model", "sk-owner")]
 
 
 def test_streaming_route_over_http_runs_as_the_member(client, test_db, two_configs, monkeypatch):
@@ -184,6 +185,7 @@ def test_streaming_route_over_http_runs_as_the_member(client, test_db, two_confi
     a, b = two_configs
     _models_own(test_db, b)
     _own(test_db, b, "llm_provider", "claude_api")
+    _own(test_db, b, "anthropic_api_key", "sk-member-ant")   # its key for the provider it now uses
     set_setting(test_db, "autofill_prompt", "Answer {question} for {company} as {persona}")
     seen = []
 
@@ -196,7 +198,7 @@ def test_streaming_route_over_http_runs_as_the_member(client, test_db, two_confi
     r = client.post("/api/autofill/answer/stream", json={"question": "Why us?", "company": "Acme"})
     assert r.status_code == 200, r.text
     assert "drafted" in r.text
-    assert seen == [("member-model", "sk-member")]
+    assert seen == [("member-model", "sk-member-ant")]
 
 
 # ── Claude Code: token per account ───────────────────────────────────────────
@@ -509,10 +511,10 @@ def test_model_catalog_cache_is_keyed_by_the_api_key(client, test_db, accounts, 
     a, b = accounts
     rl._cache.clear()
     set_setting(test_db, "llm_provider", "openai")
-    set_setting(test_db, "llm_api_key", "sk-owner")
+    set_setting(test_db, "openai_api_key", "sk-owner")
     _models_own(test_db, b)
     _own(test_db, b, "llm_provider", "openai")
-    _own(test_db, b, "llm_api_key", "sk-member")
+    _own(test_db, b, "openai_api_key", "sk-member")
     fetched = []
 
     async def fake_fetch(key):

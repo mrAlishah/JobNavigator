@@ -293,8 +293,8 @@ async def test_run_clamps_results_wanted(monkeypatch, test_db):
 
 def test_board_keys_never_collide_with_jobspy_boards():
     """C4: a search whose sources still hold JobSpy boards picks no Apify board."""
-    from backend.api.routes_searches import SearchCreate
-    jobspy = set(SearchCreate.model_fields["sources"].default) | {"glassdoor", "zip_recruiter", "google", "direct"}
+    from backend.scraper.search_modes import JOBSPY_BOARDS
+    jobspy = set(JOBSPY_BOARDS)
     assert all(k.startswith("apify_") for k in apify.PRESETS)
     assert not jobspy & set(apify.PRESETS)
     assert apify.configured_presets(_search(sources=sorted(jobspy))) == []
@@ -581,8 +581,11 @@ def test_apify_results_wanted_is_clamped_on_create_and_patch(api_client):
 
 
 def test_apify_search_without_apify_boards_is_400(api_client):
-    # no `sources`: the JobSpy default list must not reach the paid source
+    # no `sources`: nothing reaches the paid source (an Apify search has no default board)
     r = api_client.post("/api/searches", json={"name": "x", "search_mode": "apify", "search_term": "pm"})
+    assert r.status_code == 400 and "needs at least one Apify board" in r.json()["detail"]
+    r = api_client.post("/api/searches", json={"name": "x", "search_mode": "apify", "search_term": "pm",
+                                               "sources": ["linkedin", "indeed"]})
     assert r.status_code == 400 and "not Apify boards: linkedin, indeed" in r.json()["detail"]
     assert _new_apify(api_client, sources=[]).status_code == 400
     assert _new_apify(api_client, sources=["apify_indeed", "indeed"]).status_code == 400

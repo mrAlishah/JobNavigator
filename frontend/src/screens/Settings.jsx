@@ -59,6 +59,11 @@ const PROVIDER_LABEL = Object.fromEntries(PROVIDERS)
 const SEARCHABLE = ['openrouter', 'openai', 'claude_api', 'claude_code', 'opencode_go']
 // providers that need no key
 const KEYLESS = ['claude_code', 'codex_cli', 'antigravity_cli', 'ollama', 'lmstudio', '']
+// One API key per provider (backend accounts/settings.py PROVIDER_KEY_SETTINGS): every slot on a
+// provider shows and saves the same key, so switching a slot's provider back keeps its key.
+const PROVIDER_KEY = { claude_api: 'anthropic_api_key', openai: 'openai_api_key', openrouter: 'openrouter_api_key', opencode_go: 'opencode_api_key' }
+const keyHelp = (prov, member) => `Saved for ${PROVIDER_LABEL[prov] || prov}: every model slot on it uses this key.`
+  + (member || !PROVIDER_KEY[prov] ? '' : ` Empty uses ${PROVIDER_KEY[prov].toUpperCase()} from .env.`)
 // Provider settings whose value 'claude_code' makes the Claude Code token row relevant.
 const CLAUDE_CODE_SLOTS = ['llm_provider', 'scoring_llm_provider', 'llm_fallback_provider', 'cv_tailor_llm_provider',
   'cover_letter_llm_provider', 'autofill_llm_provider', 'email_llm_provider']
@@ -507,6 +512,7 @@ export default function Settings() {
       : [['account', 'You', 'Your account', '', [], 'account']]
     // which LLM slots currently run on a given provider (override slots default to empty = follow Primary)
     const usedBy = (prov) => CLAUDE_CODE_SLOTS.filter((k) => val(k, k === 'llm_provider' ? 'claude_api' : '') === prov).map((k) => SLOT_NAMES[k])
+    const primaryProv = val('llm_provider', 'claude_api')
     return [
       ...people,
       // The one group that isn't a DB setting: both rows live in this browser's localStorage (theme.js), so they take no `key` and never PATCH /settings.
@@ -522,8 +528,8 @@ export default function Settings() {
       ['models', 'AI', 'Models', '', [
         { kind: 'pair', label: 'Primary provider · model', help: 'Every AI feature uses this pair unless overridden below.',
           pKey: 'llm_provider', mKey: 'llm_model', eKey: 'llm_effort',
-          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), Antigravity CLI (Google subscription), OpenCode Go (subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and Ollama and LM Studio have no effort setting." },
-        B('API key', 'API key for the primary provider.', 'llm_api_key', { secret: true, mono: true, w: '340px', hide: () => KEYLESS.includes(val('llm_provider', 'claude_api')) }),
+          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), Antigravity CLI (Google subscription), OpenCode Go (subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and Ollama and LM Studio have no effort setting. Antigravity's -high models can think for 5 minutes on a tailoring or a PDF import; -medium answers in under a minute." },
+        B('API key', keyHelp(primaryProv, member), PROVIDER_KEY[primaryProv] || 'anthropic_api_key', { secret: true, mono: true, w: '340px', hide: () => !PROVIDER_KEY[primaryProv] }),
         // MT-15: the Claude Code login per account. Shown while some slot uses Claude Code, to the owner and to a member whose Models section is its own.
         B('Claude Code token', (member ? 'Your own Claude subscription: paste the token from claude setup-token.' : 'Token from claude setup-token. Empty uses CLAUDE_CODE_OAUTH_TOKEN from .env.')
             + (usedBy('claude_code').length ? ` Used by: ${usedBy('claude_code').join(', ')}.` : ''),
@@ -534,13 +540,14 @@ export default function Settings() {
           text: 'docker compose exec backend python -m backend.scripts.cli_login codex "<account name>"', hide: () => !usedBy('codex_cli').length },
         { kind: 'note', label: 'Antigravity CLI login', help: `No token to paste: Antigravity signs in once from a terminal. Used by: ${usedBy('antigravity_cli').join(', ')}.`,
           text: 'docker compose exec backend python -m backend.scripts.cli_login agy "<account name>"', hide: () => !usedBy('antigravity_cli').length },
-        // The local model servers' addresses: owner-only settings (one host per install), shown to the owner while some slot uses that provider.
+        // The local model servers' addresses: owner-only settings (one host per install), shown to the owner while some slot uses that provider,
+        // and always with several accounts, since a member's own slots may use it and the owner sets the address (R30 L-10).
         B('LM Studio address', 'Empty uses LMSTUDIO_BASE_URL from .env, else http://localhost:1234/v1. From Docker: http://host.docker.internal:1234/v1.'
             + (usedBy('lmstudio').length ? ` Used by: ${usedBy('lmstudio').join(', ')}.` : ''),
-          'lmstudio_base_url', { mono: true, w: '340px', placeholder: effective.lmstudio_base_url, hide: () => member || !usedBy('lmstudio').length }),
+          'lmstudio_base_url', { mono: true, w: '340px', placeholder: effective.lmstudio_base_url, hide: () => member || (!multi && !usedBy('lmstudio').length) }),
         B('Ollama address', 'Empty uses OLLAMA_BASE_URL from .env, else http://localhost:11434. From Docker: http://host.docker.internal:11434.'
             + (usedBy('ollama').length ? ` Used by: ${usedBy('ollama').join(', ')}.` : ''),
-          'ollama_base_url', { mono: true, w: '340px', placeholder: effective.ollama_base_url, hide: () => member || !usedBy('ollama').length }),
+          'ollama_base_url', { mono: true, w: '340px', placeholder: effective.ollama_base_url, hide: () => member || (!multi && !usedBy('ollama').length) }),
         LLM('Scoring', 'Model that scores new jobs against your résumés.', 'scoring_llm'),
         LLM('Scoring fallback', 'Retries scoring once on error or rate limit — scoring only.', 'llm_fallback',
           { info: 'Used only when the scoring call fails or is rate-limited. One retry, then the job stays unscored until the next run. Choose a cheap model from a different provider than the primary.' }),
@@ -630,6 +637,8 @@ export default function Settings() {
       ]],
       ['scheduler', 'Pipeline', 'Scheduler', 'intervals in minutes (0 = off) · crons empty = off', [
         B('Scrape all companies', 'Runs every active company scrape on this interval.', 'scrape_interval_minutes', { mono: true, int: true, w: '135px' }),
+        B('Scrapes at once', '1 or 2. Run all, one company, one search and the scheduled scrape wait their turn beyond this.', 'scrape_max_concurrent', { mono: true, int: true, w: '135px',
+          info: 'Each scrape can start its own Chromium, so 1 keeps memory low: a second Run all, from you or another account, waits until the first finishes. A fetch another run made in the last 10 minutes is reused instead of downloaded again.' }),
         B('Email check', 'Polls Gmail for replies to your applications.', 'email_check_interval_minutes', { mono: true, int: true, w: '135px' }),
         B('Cleanup after', 'Days before ignored and skipped job postings are removed.', 'job_archive_after_days', { mono: true, int: true, w: '135px' }),
         B('Auto-reject threshold', 'Days of silence before an application is auto-moved to Rejected.', 'auto_reject_after_days', { mono: true, int: true, w: '135px',
@@ -1045,9 +1054,9 @@ function Row({ r, ctx }) {
             {on && <Select value={p} options={PROVIDERS} onPick={(v) => pickProvider(`${r.base}_provider`, `${r.base}_effort`, v)} width="200px" placeholder="pick provider…" ariaLabel={`${r.label} — provider`} />}
             {on && <Select value={val(`${r.base}_model`)} options={modelsFor(p || primary)} onPick={(v) => save(`${r.base}_model`, v)} width="260px" mono placeholder="pick model…" ariaLabel={`${r.label} — model`} emptyText={NO_MODELS} />}
             {on && eff.length > 0 && <Select value={val(`${r.base}_effort`)} options={effortOptions(eff, effortEmpty)} onPick={(v) => save(`${r.base}_effort`, v)} width="150px" ariaLabel={`${r.label} — reasoning effort`} />}
-            {on && p && !KEYLESS.includes(p) && (
-              <span title="API key for this override's provider" style={{ display: 'flex', flex: '0 1 150px', minWidth: 0 }}>
-                <TextBox value={val(`${r.base}_api_key`)} onSave={(v) => save(`${r.base}_api_key`, v)} width="150px" mono secret ariaLabel={`${r.label} — API key`} />
+            {on && p && PROVIDER_KEY[p] && (
+              <span title={`API key for ${PROVIDER_LABEL[p] || p}, shared by every model slot on it`} style={{ display: 'flex', flex: '0 1 150px', minWidth: 0 }}>
+                <TextBox value={val(PROVIDER_KEY[p])} onSave={(v) => save(PROVIDER_KEY[p], v)} width="150px" mono secret ariaLabel={`${r.label} — API key`} />
               </span>
             )}
             {/* ui: keep — a Tag: uppercase on a --surface-2 r99 chip, not a Label */}
@@ -1060,12 +1069,11 @@ function Row({ r, ctx }) {
                 if (!next) {
                   // `ovr` is local state the PATCHes don't own — if any clear fails, reopen the row or it reads
                   // "inherits Primary" while the server still holds an override.
-                  // The key goes too: it belongs to the override's provider, and a key left behind is hidden once the row closes (L-01).
+                  // The key stays: it is the provider's, shared by every slot on it.
                   const a = await save(`${r.base}_provider`, '')
                   const b = a && await save(`${r.base}_model`, '')
                   const c = b && await save(`${r.base}_effort`, '')
-                  const d = c && (!val(`${r.base}_api_key`) || await save(`${r.base}_api_key`, ''))
-                  if (!a || !b || !c || !d) setOvr((o) => ({ ...o, [r.base]: true }))
+                  if (!a || !b || !c) setOvr((o) => ({ ...o, [r.base]: true }))
                 }
               }} />
             </span>

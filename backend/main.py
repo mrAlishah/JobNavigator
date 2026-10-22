@@ -1427,7 +1427,8 @@ def get_scheduler_jobs():
             if company_running:
                 from datetime import datetime, timezone
                 elapsed = (datetime.now(timezone.utc) - company_running.started_at).total_seconds()
-                running_info = {"run_id": str(company_running.run_id), "elapsed_seconds": round(elapsed, 1)}
+                running_info = {"run_id": str(company_running.run_id), "elapsed_seconds": round(elapsed, 1),
+                                "waiting": company_running.waiting}
             result.append({
                 "id": f"company_{c.id}",
                 "name": f"Scrape: {c.name}",

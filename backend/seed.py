@@ -4,7 +4,7 @@ import json
 import re
 import secrets
 from backend.models.db import SessionLocal, Setting, Company, Search, Resume
-from backend.accounts.settings import install_row
+from backend.accounts.settings import install_row, put_setting
 from sqlalchemy import text
 from backend.analyzer.llm_client import LOCAL_LLM_URLS, REASONING_EFFORTS
 
@@ -55,8 +55,13 @@ DEFAULT_SETTINGS = {
     "scoring_output_full": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME",\n  "breakdown": {"skills": 0-20, "experience": 0-20, "domain": 0-20, "role": 0-20, "requirements": 0-20},\n  "summary": "2-3 sentence assessment of candidate-job fit",\n  "requirement_mapping": [\n    {"requirement": "JD requirement text", "cv_match": "matching CV line or null", "matched": true/false, "severity": "required or preferred"}\n  ],\n  "keyword_coverage_pct": 0-100,\n  "matched_keywords": ["keyword1", "keyword2"],\n  "missing_keywords": ["keyword3", "keyword4"],\n  "hard_blockers": ["blocker if any"],\n  "ats_tip": "one actionable ATS optimization suggestion"\n}', "Full scoring output schema with keyword analysis"),
     "llm_provider": ("claude_api", "LLM provider: claude_api, claude_code, codex_cli, antigravity_cli, opencode_go, openai, ollama, lmstudio, openrouter"),
     "llm_model": ("claude-sonnet-5", "LLM model name"),
-    "llm_api_key": ("", "API key for API-backed providers (for OpenCode Go paste its API key; not needed for subscription CLIs or Ollama)"),
     "llm_effort": ("", "Reasoning effort for the Primary model (empty = the model's default; values depend on the provider)"),
+    # One key per provider (3.1): every model slot on that provider uses it. Empty = the env var of
+    # the same name in upper case, for the owner and members on 'inherit' (never a member on 'own').
+    "anthropic_api_key": ("", "Claude API key, used by every model slot on Claude API (empty = ANTHROPIC_API_KEY from .env)"),
+    "openai_api_key": ("", "OpenAI API key, used by every model slot on OpenAI (empty = OPENAI_API_KEY from .env)"),
+    "openrouter_api_key": ("", "OpenRouter API key, used by every model slot on OpenRouter (empty = OPENROUTER_API_KEY from .env)"),
+    "opencode_api_key": ("", "OpenCode Go API key, used by every model slot on OpenCode Go (empty = OPENCODE_API_KEY from .env)"),
     "claude_code_oauth_token": ("", "Claude Code subscription token from `claude setup-token` (empty = CLAUDE_CODE_OAUTH_TOKEN from .env; a member with its own Models section can set its own)"),
     # Owner-only (section llm_local): the host's local model servers. Seeded empty, so the address
     # is read at call time from LMSTUDIO_BASE_URL / OLLAMA_BASE_URL, else the built-in default (L-03:
@@ -65,11 +70,9 @@ DEFAULT_SETTINGS = {
     "ollama_base_url": ("", "Ollama server address. Empty = OLLAMA_BASE_URL from .env, else http://localhost:11434. From Docker use http://host.docker.internal:11434"),
     "llm_fallback_provider": ("", "Fallback LLM provider (empty = no fallback)"),
     "llm_fallback_model": ("", "Fallback model name"),
-    "llm_fallback_api_key": ("", "API key for fallback provider (OpenAI)"),
     "llm_fallback_effort": ("", "Reasoning effort for the fallback model (empty = the model's default; values depend on the provider)"),
     "scoring_llm_provider": ("", "Resume scoring provider override (empty = use Primary)"),
     "scoring_llm_model": ("", "Resume scoring model override (empty = use Primary)"),
-    "scoring_llm_api_key": ("", "API key for the scoring provider override"),
     "scoring_llm_effort": ("", "Reasoning effort for the scoring override (empty = the Primary's on the same provider, else the model's default)"),
     "llm_models_list": (json.dumps([
         {"provider": "claude_api", "model": "claude-sonnet-5"},
@@ -174,6 +177,7 @@ DEFAULT_SETTINGS = {
     ]), "Known LLM models per provider (JSON array, user can add custom entries)"),
     "scoring_max_concurrent": ("5", "Max parallel scoring jobs (others queue until a slot opens)"),
     "tailoring_max_concurrent": ("2", "Max concurrent resume-tailoring LLM calls"),
+    "scrape_max_concurrent": ("1", "Scrapes at once, 1 or 2: Run all, one company, one search and the scheduled scrape; others wait their turn"),
     "tailor_auto_quick_score": ("light", "After tailoring finishes, auto-launch a score chain. Values: 'off' | 'light' | 'full'. Default 'light'. Legacy 'true'='light', 'false'='off'."),
     "prompt_caching_enabled": ("true", "Use Anthropic prompt caching on resume scoring (claude_api only; ~50% cheaper input tokens on same-batch calls). Set false to disable as a rollback lever."),
     "scoring_default_depth": ("light", "Default scoring depth: light or full"),
@@ -184,7 +188,6 @@ DEFAULT_SETTINGS = {
     "email_llm_enabled": ("false", "Enable LLM second pass for ambiguous email classification"),
     "email_llm_provider": ("", "LLM provider for email classification (empty = use primary llm_provider)"),
     "email_llm_model": ("", "LLM model for email classification (empty = use primary llm_model)"),
-    "email_llm_api_key": ("", "API key for email LLM provider"),
     "email_llm_effort": ("", "Reasoning effort for email classification (empty = the Primary's on the same provider, else the model's default)"),
     "email_llm_confidence_threshold": ("70", "Min confidence (0-100) to auto-act on LLM email classification"),
     "email_llm_prompt": ("Classify this email and match it to one active application if possible.\n\nRules:\n- match_index: pick from the numbered applications below (1-based), or null if no match\n- status: one of: interview, offer, rejected, no_change\n- confidence: 0-100 how sure you are about classification AND match combined\n- summary: one sentence describing what the email is about\n\nActive applications:\n{applications}\n\nEmail:\nFrom: {from}\nSubject: {subject}\nBody:\n{body}\n\nReturn ONLY this JSON:\n{\"match_index\": null, \"status\": \"no_change\", \"confidence\": 0, \"summary\": \"\"}", "Editable email classification LLM prompt template"),
@@ -211,13 +214,11 @@ DEFAULT_SETTINGS = {
     ]), "Subject terms to exclude from Gmail search query"),
     "cv_tailor_llm_provider": ("", "LLM provider for resume tailoring (empty = use primary llm_provider)"),
     "cv_tailor_llm_model": ("", "LLM model for resume tailoring (empty = use primary llm_model)"),
-    "cv_tailor_llm_api_key": ("", "API key for resume tailoring LLM provider"),
     "cv_tailor_llm_effort": ("", "Reasoning effort for resume tailoring (empty = the Primary's on the same provider, else the model's default)"),
     "cv_tailor_prompt": ("Tailor this resume for the job description below.\n\nRules for MAIN bullets[]:\n- Rewrite the summary to target this specific role\n- For each experience bullet: if it benefits from JD keyword alignment, reformulate it. If it's already well-suited, leave it UNCHANGED\n- Keep the same number of bullets per experience entry - do not add or remove\n- Reorder skills to prioritize JD-relevant ones first\n- Do NOT invent new experience, skills, or facts in the main bullets. If something is missing, map to the closest truthful concept\n- NEVER add skills the candidate does not have\n- Preserve all company names, titles, dates, locations, education exactly\n- Do NOT use em-dashes or unicode special characters. Use regular hyphens (-) and ASCII only\n- Preserve **bold** formatting (double asterisks) from the original bullets. For reformulated bullets, wrap the strongest metric or achievement in **bold** (e.g. **40,000+ new clients**, **reduced error rates by 30%**). Each bullet should have at most one bold highlight\n- VERIFICATION: every reformulated bullet must trace to the original resume. If you cannot trace it, leave the original unchanged.\n\nRules for suggested_bullets[] (gap-fillers - DIFFERENT from main bullets):\n- For each experience entry, generate 1-2 PLAUSIBLE STAR-format bullets that cover JD keywords/skills no existing bullet in this role covers\n- These MAY invent realistic, believable facts/metrics that someone in this role/title at this company at this seniority would credibly have done\n- Specifically target keywords from the JD that no existing bullet mentions\n- Use STAR format: strong action verb, context, concrete (possibly invented) metric or outcome\n- The user reviews these in a diff modal and accepts/rejects each - they know suggestions are speculative gap-fillers\n- Wrap the strongest metric in **bold** (one per bullet)\n- Skip a role entirely if no JD keyword gap exists for it\n\nResume:\n{resume_json}\n\nJob Description:\n{job_description}\n\nReturn ONLY this JSON:\n{\"summary\": \"rewritten summary\", \"experience\": [{\"company\": \"unchanged\", \"title\": \"unchanged\", \"location\": \"unchanged\", \"date\": \"unchanged\", \"description\": \"unchanged or null\", \"bullets\": [\"reformulated or unchanged bullet from existing content\"], \"suggested_bullets\": [\"plausible gap-filler covering missing JD keyword\"]}], \"skills\": {\"reordered label\": \"reordered value\"}}", "Editable resume tailoring LLM prompt template"),
     "persona_tailor_prompt": ("Tailor a FOCUSED resume from this rich candidate profile, targeted at the job description below.\n\nThe candidate profile is a deep pool - most roles have many bullets. SELECT only the strongest aligned with the JD; drop the rest.\n\nRules for MAIN bullets[]:\n- Rewrite the summary to target this specific role (2-4 sentences, lead with the most relevant strength)\n- For each experience entry: SELECT only 3-5 bullets (max 6 for the most senior/recent role) that best match JD keywords and required skills\n- Reformulate each selected bullet to use the JD's exact vocabulary where possible\n- Reorder skills to prioritize JD-relevant ones first; cap at 6 categories\n- Do NOT invent new experience, skills, or facts in the main bullets. Only reframe existing content from the candidate profile\n- NEVER add skills the candidate does not have\n- Preserve all company names, titles, dates, locations, education exactly\n- Do NOT use em-dashes or unicode special characters. Use regular hyphens (-) and ASCII only\n- Preserve **bold** formatting. For reformulated bullets, wrap the strongest metric in **bold** (one per bullet)\n- VERIFICATION: every selected/reformulated bullet must be traceable to the candidate profile\n\nRules for suggested_bullets[] (gap-fillers - DIFFERENT from main bullets):\n- For each experience entry, generate 1-2 PLAUSIBLE STAR-format bullets that cover JD keywords/skills no main bullet (selected from the pool) covers\n- These MAY invent realistic, believable facts/metrics that someone in this role at this company at this seniority would credibly have done\n- Specifically target JD keywords that no main bullet mentions\n- STAR format: strong action verb, context, concrete (possibly invented) metric or outcome\n- The user reviews these in a diff modal and accepts/rejects each\n- Wrap the strongest metric in **bold** (one per bullet)\n- Skip a role if no JD keyword gap exists\n\nCandidate Profile:\n{resume_json}\n\nJob Description:\n{job_description}\n\nReturn ONLY this JSON:\n{\"summary\": \"rewritten summary\", \"experience\": [{\"company\": \"unchanged\", \"title\": \"unchanged\", \"location\": \"unchanged\", \"date\": \"unchanged\", \"description\": \"unchanged or null\", \"bullets\": [\"selected + reformulated bullet from candidate profile\"], \"suggested_bullets\": [\"plausible gap-filler covering missing JD keyword\"]}], \"skills\": {\"reordered label\": \"reordered value\"}}", "Editable Persona tailoring LLM prompt template - used when base_resume_id='persona' to constrain bullet selection from the rich pool"),
     "cover_letter_llm_provider": ("", "LLM provider for cover-letter generation (empty = use primary llm_provider)"),
     "cover_letter_llm_model": ("", "LLM model for cover-letter generation (empty = use primary llm_model)"),
-    "cover_letter_llm_api_key": ("", "API key for cover-letter LLM provider"),
     "cover_letter_llm_effort": ("", "Reasoning effort for cover-letter generation (empty = the Primary's on the same provider, else the model's default)"),
     "cover_letter_prompt": ("Write a cover letter for the candidate, targeting the job described below.\n\nGround everything in the candidate's resume (provided above) and the persona preferences. Do NOT invent experience, employers, titles, metrics, or skills the resume does not contain. Pull concrete achievements from the resume; reframe them toward what the job needs.\n\nStructure:\n- A short greeting line (use the recipient/company if known, else a neutral 'Dear Hiring Team,').\n- 3 body paragraphs: (1) a hook that connects the candidate to this specific role/company, (2) the strongest 2-3 proof points from the resume mapped to the job's needs, (3) a brief close on motivation/fit and a call to talk.\n- A closing line ('Sincerely,') and the candidate's name as signature.\n\nStyle:\n- {voice_instruction}\n- Length: {length_instruction}\n- First person. No corporate cliches, no 'I am writing to apply'. No em-dashes or unicode; ASCII only. Do NOT fabricate.\n\nJob:\n{job_description}\n\nReturn ONLY this JSON:\n{\"greeting\": \"Dear ...,\", \"body_paragraphs\": [\"...\", \"...\", \"...\"], \"closing\": \"Sincerely,\", \"signature\": \"Candidate Name\"}", "Editable cover-letter generation LLM prompt. Placeholders: {voice_instruction}, {length_instruction}, {job_description}."),
     "cover_letter_voice_presets": (json.dumps([
@@ -357,7 +358,6 @@ DEFAULT_SETTINGS = {
     ]), "URL query params stripped before dedup hashing — tracking/referral noise"),
     "autofill_llm_provider": ("", "LLM provider for application autofill (empty = use primary llm_provider)"),
     "autofill_llm_model": ("", "LLM model for application autofill (empty = use primary llm_model)"),
-    "autofill_llm_api_key": ("", "API key for the autofill LLM (empty = use the primary llm_api_key)"),
     "autofill_llm_effort": ("", "Reasoning effort for application autofill (empty = the Primary's on the same provider, else the model's default)"),
     "autofill_default_length": ("250", "Default target character length for autofill answers when a field has no maxlength"),
     "autofill_prompt": (
@@ -1264,6 +1264,74 @@ def clear_seeded_local_urls(db) -> list:
     return cleared
 
 
+
+# Marker of the one-time per-provider key migration below (install row, never served, not writable).
+PROVIDER_KEYS_MIGRATED_KEY = "llm_provider_keys_migrated"
+# Slot prefixes in the order a conflict is settled: the Primary's key wins.
+_KEY_SLOT_ORDER = (("", "llm"), ("scoring_", "scoring_llm"), ("cv_tailor_", "cv_tailor_llm"),
+                   ("cover_letter_", "cover_letter_llm"), ("autofill_", "autofill_llm"),
+                   ("email_", "email_llm"), ("fallback", "llm_fallback"))
+
+
+def migrate_llm_provider_keys(db) -> dict:
+    """Once per install (3.1): copy each account's per-slot API keys into the per-provider keys.
+
+    For every scope (the install rows, then each account that has slot-key rows of its own) a
+    slot's key counts for the slot's *effective* provider, read from that scope's own rows: the
+    Primary's `llm_provider` (default claude_api); a feature slot's own provider, else the
+    Primary's; the fallback's own provider only. A key whose slot has no provider (a switched-off
+    override, an orphan) is not migrated, so it never starts billing. A provider key already set
+    is never overwritten. When one provider had different keys the Primary's wins and the log
+    names the slots dropped (never values); the legacy rows stay for a downgrade. The marker
+    keeps a key the user clears later from coming back. Returns {scope: {setting: slot}}."""
+    from backend.accounts.settings import LEGACY_LLM_KEY_SETTINGS, PROVIDER_KEY_SETTINGS
+    if install_row(db, PROVIDER_KEYS_MIGRATED_KEY) is not None:
+        return {}
+    scopes = [None] + sorted({r.account_id for r in db.query(Setting)
+                              .filter(Setting.key.in_(LEGACY_LLM_KEY_SETTINGS),
+                                      Setting.account_id.isnot(None)).all()}, key=str)
+
+    def value(acct, key):
+        row = (db.query(Setting).filter(Setting.key == key, Setting.account_id == acct).first()
+               if acct is not None else install_row(db, key))
+        return ((row.value if row is not None else "") or "").strip()
+
+    written = {}
+    for acct in scopes:
+        primary = value(acct, "llm_provider") or "claude_api"
+        candidates: dict = {}
+        for _prefix, base in _KEY_SLOT_ORDER:
+            key = value(acct, f"{base}_api_key")
+            if not key:
+                continue
+            own = value(acct, f"{base}_provider")
+            if base == "llm":
+                provider = primary
+            elif base == "llm_fallback":
+                provider = own
+            else:
+                provider = own or ""      # no provider of its own: the key was never in use
+            if provider in PROVIDER_KEY_SETTINGS:
+                candidates.setdefault(provider, []).append((base, key))
+        scope = str(acct) if acct is not None else "install"
+        for provider, found in candidates.items():
+            setting = PROVIDER_KEY_SETTINGS[provider]
+            if value(acct, setting):
+                continue                  # already set in the new box: never overwritten
+            slot, key = found[0]
+            dropped = sorted({b for b, k in found[1:] if k != key})
+            if dropped:
+                logger.warning(f"API key migration ({scope}): {provider} had different keys; kept "
+                               f"the {slot} slot's, not {', '.join(dropped)} (old rows kept)")
+            put_setting(db, setting, key, account_id=acct)
+            written.setdefault(scope, {})[setting] = slot
+    db.add(Setting(key=PROVIDER_KEYS_MIGRATED_KEY, value="1",
+                   description="Internal: per-slot API keys were copied to per-provider keys once (3.1)"))
+    db.commit()
+    if written:
+        logger.info(f"Moved API keys to one per provider: {written}")
+    return written
+
 SEED_SEARCHES = [
     {
         "name": "Extension LI",
@@ -1389,7 +1457,7 @@ MOCK_RESUME_JSON = {
     ],
 }
 
-EXTENSION_SEARCH_MODES = ("extension", "linkedin_extension")
+from backend.scraper.search_modes import EXTENSION_MODES as EXTENSION_SEARCH_MODES  # noqa: E402
 
 
 def ensure_extension_searches(db, account_id) -> int:
@@ -1612,6 +1680,7 @@ def run_seeds():
             cleanup_removed_settings(db)
             migrate_llm_settings(db)
             clear_seeded_local_urls(db)
+            migrate_llm_provider_keys(db)
             migrate_cv_terminology(db)
             migrate_h1b_to_visa_cache(db)
     finally:

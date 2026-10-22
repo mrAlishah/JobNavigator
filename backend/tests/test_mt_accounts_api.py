@@ -251,7 +251,7 @@ def _owner_world(db, owner_id):
                  "fit_score_threshold": "80", "telegram_chat_id": "999",
                  "cover_letter_voice_presets": '[{"id":"warm"}]', "cover_letter_default_voice": "warm",
                  "title_exclude_global": '["senior"]', "linkedin_email": "v@li.example",
-                 "llm_api_key": "sk-secret", "proxy_url": "http://proxy"}.items():
+                 "anthropic_api_key": "sk-secret", "proxy_url": "http://proxy"}.items():
         _install(db, k, v)
     return b1, b2, tailored
 
@@ -301,7 +301,7 @@ def test_copy_everything_from_the_owner_remaps_ids(client, test_db, owner, owner
     assert own["fit_score_threshold"] == "80"
     assert own["cover_letter_voice_presets"] == '[{"id":"warm"}]' and own["cover_letter_default_voice"] == "warm"
     assert own["title_exclude_global"] == '["senior"]'
-    for personal in ("telegram_chat_id", "linkedin_email", "llm_api_key", "proxy_url", "dashboard_api_key"):
+    for personal in ("telegram_chat_id", "linkedin_email", "anthropic_api_key", "proxy_url", "dashboard_api_key"):
         assert personal not in own
     policy = test_db.query(SectionPolicy).filter(SectionPolicy.account_id == new_id,
                                                  SectionPolicy.section == "letters").one()
@@ -370,7 +370,7 @@ def test_copy_settings_from_a_member_takes_its_policies_and_own_rows(client, tes
     src = _member(test_db, name="Source")
     test_db.add_all([SectionPolicy(account_id=src.id, section="models", mode="own"),
                      Setting(key="llm_model", value="model-x", account_id=src.id),
-                     Setting(key="llm_api_key", value="sk-member", account_id=src.id),
+                     Setting(key="anthropic_api_key", value="sk-member", account_id=src.id),
                      # scoring is 'inherit' for the source: its stray row is not its own value
                      Setting(key="scoring_rubric", value="stale", account_id=src.id)])
     test_db.commit()
@@ -591,7 +591,7 @@ def test_export_contents(client, test_db, owner, owner_pin):
     _fill(test_db, m.id, "mem")
     _fill(test_db, owner.id, "own")
     test_db.add_all([Setting(key="feed_zoom_floater", value="true", account_id=m.id),
-                     Setting(key="llm_api_key", value="sk-very-secret", account_id=m.id)])
+                     Setting(key="anthropic_api_key", value="sk-very-secret", account_id=m.id)])
     test_db.commit()
 
     z = _zip(client.get(f"/api/accounts/{m.id}/export"))
@@ -609,7 +609,7 @@ def test_export_contents(client, test_db, owner, owner_pin):
     account = json.loads(z.read("account.json"))
     assert "pin_hash" not in account and account["has_pin"] is True
     settings = {s["key"]: s["value"] for s in json.loads(z.read("settings.json"))}
-    assert settings["feed_zoom_floater"] == "true" and settings["llm_api_key"] == "•" * 6
+    assert settings["feed_zoom_floater"] == "true" and settings["anthropic_api_key"] == "•" * 6
     blob = b"".join(z.read(n) for n in names)
     assert b"sk-very-secret" not in blob and b"scrypt" not in blob and b"T own" not in blob
     policies = {p["section"]: p["mode"] for p in json.loads(z.read("section_policies.json"))}

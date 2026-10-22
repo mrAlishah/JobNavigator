@@ -81,4 +81,30 @@ describe('DownloadMenu', () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith('Could not download the Word document.'))
     expect(saved).toEqual([])
   })
+
+  it('a failed export names the server reason (R30 D-07)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const body = new Blob([JSON.stringify({ detail: 'python-docx is missing from this image' })], { type: 'application/json' })
+    get.mockRejectedValue(Object.assign(new Error('500'), { response: { status: 500, data: body } }))
+    const onError = vi.fn()
+    render(<DownloadMenu {...props} onError={onError} />)
+    fireEvent.click(screen.getByRole('button', { name: /Download/ }))
+    fireEvent.click(screen.getByText('Word'))
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Could not download the Word document — python-docx is missing from this image'))
+  })
+
+  it('sends the edit the debounced save still owes before it downloads (R30 D-06)', async () => {
+    const order = []
+    let release
+    const beforeDownload = vi.fn(() => new Promise((res) => { release = () => { order.push('saved'); res() } }))
+    get.mockImplementation(async () => { order.push('get'); return { data: new Blob(['%PDF']), headers: {} } })
+    render(<DownloadMenu {...props} beforeDownload={beforeDownload} />)
+    fireEvent.click(screen.getByRole('button', { name: /Download/ }))
+    fireEvent.click(screen.getByText('PDF'))
+    await waitFor(() => expect(beforeDownload).toHaveBeenCalled())
+    expect(get).not.toHaveBeenCalled()          // waits for the save
+    release()
+    await waitFor(() => expect(saved).toEqual(['Resume.pdf']))
+    expect(order).toEqual(['saved', 'get'])
+  })
 })

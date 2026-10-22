@@ -1,4 +1,5 @@
 """Persist LLM call metrics to the llm_call_log table. Non-fatal on errors."""
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -80,6 +81,12 @@ async def track_llm_call(purpose: str, provider: str, model: str, job_id=None):
     error = None
     try:
         yield t
+    except asyncio.CancelledError:
+        # A BaseException, not an Exception: without this a call cut off by a shutdown
+        # or a client disconnect is logged as a success with 0 tokens.
+        success = False
+        error = "cancelled"
+        raise
     except Exception as e:
         success = False
         error = str(e)

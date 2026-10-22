@@ -84,7 +84,7 @@ Light and Full depth are **not** distinguished visually anywhere.
 # backend (inside the container)
 docker compose exec -T backend sh -c "cd /app && python -m pytest backend/tests -q -p no:cacheprovider"
 
-# frontend unit tests (Vitest, via a throwaway node:20-alpine container)
+# frontend unit tests (Vitest, via a throwaway node:24-alpine container)
 bash tests/tools/fe-test.sh              # whole suite
 bash tests/tools/fe-test.sh time         # files matching "time"
 

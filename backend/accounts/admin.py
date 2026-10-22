@@ -97,7 +97,9 @@ def _search_copy(s, model, account_id, **overrides):
     """One search row for `account_id`, due at once (last_run_at cleared). An Apify search
     is copied paused: it bills the new account's Apify token (or the owner's, on inherit),
     so its owner resumes it on purpose, the same rule as a new Apify search."""
-    if s.search_mode == "apify":
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(s.search_mode)
+    if mode is not None and mode.paid:
         overrides.setdefault("active", False)
     return _clone(s, model, account_id, skip=("created_at", "warning_acknowledged_at"),
                   last_run_at=None, **overrides)

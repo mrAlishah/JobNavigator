@@ -4,7 +4,7 @@ import pytest
 from backend.models.db import Setting, LlmCallLog
 
 
-PRIMARY = {"llm_provider": "claude_code", "llm_model": "claude-sonnet-5", "llm_api_key": "pk"}
+PRIMARY = {"llm_provider": "claude_code", "llm_model": "claude-sonnet-5", "anthropic_api_key": "pk"}
 
 
 def _seed_primary_only(db):

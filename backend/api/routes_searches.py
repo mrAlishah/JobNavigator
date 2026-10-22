@@ -12,16 +12,14 @@ from backend.countries import (DEFAULT_COUNTRY, compose_location, normalize_coun
                                split_country_suffix, supported_countries)
 from backend.models.db import get_db, Search, ScrapeLog, Job, is_acknowledged
 from backend.accounts.settings import get_setting
+from backend.scraper import search_modes as _modes
 
 logger = logging.getLogger("jobnavigator.routes_searches")
 
-# The two seeded browser-extension searches ("Extension"/"Extension LI") have no
-# scraper and must not be deleted — jobs arrive by push; PATCH stays open for the editor.
-EXTENSION_MODES = ("extension", "linkedin_extension")
-# Modes that send location and country to the board, so the pair must agree.
-COUNTRY_MODES = ("keyword", "apify")
-# Modes whose test runs in the background and returns a run_id to poll.
-SLOW_TEST_MODES = ("levels_fyi", "linkedin_personal", "jobright", "freehire", "apify", "caribbeanjobs", "trulyremote")
+# What each mode is lives in backend/scraper/search_modes.py (R30 I-02). The two seeded
+# browser-extension searches ("Extension"/"Extension LI") have no scraper and must not be
+# deleted — jobs arrive by push; PATCH stays open for the editor's filters.
+EXTENSION_MODES = _modes.EXTENSION_MODES
 
 router = APIRouter(prefix="/searches", tags=["searches"])
 
@@ -52,7 +50,8 @@ def _account_key() -> Optional[str]:
 class SearchCreate(BaseModel):
     name: str
     active: bool = True
-    sources: list = ["linkedin", "indeed", "zip_recruiter", "google"]
+    # None = the mode's default (JobSpy's four boards, both LinkedIn collections, else none).
+    sources: Optional[list] = None
     search_mode: str = "keyword"
     search_term: Optional[str] = None
     direct_url: Optional[str] = None
@@ -116,6 +115,36 @@ def list_apify_boards():
             for key, p in PRESETS.items()]
 
 
+def _writable_mode(key) -> "_modes.SearchMode":
+    """The mode a client may create or switch a search to, or 400: a known mode that has a
+    scraper. The extension modes belong to the two seeded searches only (R30 P0-02)."""
+    mode = _modes.get_mode(key)
+    if mode is None:
+        known = ", ".join(k for k, m in _modes.SEARCH_MODES.items() if not m.extension)
+        raise HTTPException(status_code=400, detail=f"Unknown search mode {key!r}; one of: {known}")
+    if mode.extension:
+        raise HTTPException(status_code=400,
+                            detail=f"{mode.label} searches are built in; they cannot be created or switched to")
+    return mode
+
+
+def _sources_for(key, sources) -> list:
+    """`sources` as stored for this mode, or 400: its default when None, checked against the
+    mode's board list, and [] for a mode that takes none (R30 P0-03). Apify's own check is
+    `_apify_sources`."""
+    mode = _modes.get_mode(key)
+    if mode is not None and mode.boards == "apify":
+        return sources if sources is not None else []
+    if mode is None or mode.boards is None:
+        return []
+    if sources is None:
+        return _modes.default_sources(key)
+    error = _modes.bad_sources(key, sources)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    return list(sources)
+
+
 def _apify_sources(sources) -> list:
     """The boards of an Apify search, or 400: a non-empty list of Apify board keys only.
 
@@ -167,20 +196,23 @@ def _validated_location(location, country) -> str:
 @router.post("")
 def create_search(data: SearchCreate, db: Session = Depends(get_db)):
     payload = data.model_dump()
+    mode = _writable_mode(payload.get("search_mode") or "keyword")
+    payload["search_mode"] = mode.key
     payload["country"] = _validated_country(payload["country"])
-    # Only keyword (JobSpy) and Apify searches read location with country; for the URL-driven modes
-    # (Jobright, Levels.fyi, freehire, caribbeanjobs, trulyremote, LinkedIn Personal) country means nothing and must not reject a row.
-    if payload.get("search_mode", "keyword") in COUNTRY_MODES:
+    # Only the modes that send location with country to the board (JobSpy, Apify) check the
+    # pair; for the URL-driven modes country means nothing and must not reject a row.
+    if mode.uses_country:
         payload["location"] = _validated_location(payload["location"], payload["country"])
-    if payload.get("search_mode") == "apify":
+    payload["sources"] = _sources_for(mode.key, payload.get("sources"))
+    if mode.boards == "apify":
         from backend.scraper.sources.apify import clamp_results
         payload["sources"] = _apify_sources(payload.get("sources"))
         if payload.get("results_wanted") is not None:
             payload["results_wanted"] = clamp_results(payload["results_wanted"])
+    if mode.paid and "active" not in data.model_fields_set:
         # A paid source starts paused unless the client asked for an active search, so
         # nothing bills before the user has looked at the boards and Results wanted.
-        if "active" not in data.model_fields_set:
-            payload["active"] = False
+        payload["active"] = False
     search = Search(**payload)
     db.add(search)
     db.commit()
@@ -221,18 +253,31 @@ def update_search(search_id: str, updates: dict, db: Session = Depends(get_db)):
     }
     if "country" in updates:
         updates["country"] = _validated_country(updates["country"])
+    current = _modes.get_mode(search.search_mode)
+    if "search_mode" in updates:
+        wanted = updates["search_mode"] or "keyword"
+        if current is not None and current.extension and wanted != search.search_mode:
+            raise HTTPException(status_code=400,
+                                detail="A built-in extension search keeps its mode")
+        if wanted != search.search_mode:
+            updates["search_mode"] = _writable_mode(wanted).key
+    mode = _modes.get_mode(updates.get("search_mode", search.search_mode)) or current
+    switching_mode = updates.get("search_mode", search.search_mode) != search.search_mode
+    # A mode switch resets `sources` to the new mode's default unless the patch sets them:
+    # Apify boards must not reach JobSpy, nor JobSpy's boards a mode that takes none (R30 I-03).
+    if mode is not None and mode.boards != "apify" and ("sources" in updates or switching_mode):
+        updates["sources"] = _sources_for(mode.key, updates.get("sources"))
     # The pair is validated, not one field: a patch may carry either one, and the
     # other keeps its stored value. This runs before the writes, so a rejected
     # patch leaves the row alone.
-    mode = updates.get("search_mode", search.search_mode) or "keyword"
-    if mode in COUNTRY_MODES and ("location" in updates or "country" in updates):
+    if mode is not None and mode.uses_country and ("location" in updates or "country" in updates):
         _validated_location(
             updates.get("location", search.location),
             updates.get("country", search.country) or DEFAULT_COUNTRY,
         )
-    if mode == "apify":
+    if mode is not None and mode.boards == "apify":
         from backend.scraper.sources.apify import clamp_results
-        switching = search.search_mode != "apify"
+        switching = search.search_mode != mode.key
         if switching or "sources" in updates:
             updates["sources"] = _apify_sources(updates.get("sources", search.sources))
         if switching or "results_wanted" in updates:
@@ -317,7 +362,7 @@ async def trigger_search(search_id: str, auto_score: bool = None, db: Session = 
     config_error = search_config_error(search)
     if config_error:
         raise HTTPException(status_code=409, detail=config_error)
-    if search.search_mode == "apify" and _tests_in_flight.get(_test_flight_key(search.id)):
+    if getattr(_modes.get_mode(search.search_mode), "paid", False) and _tests_in_flight.get(_test_flight_key(search.id)):
         # A paid Test of this search is still running; a run now would buy the same
         # results a second time (R30 S-07).
         return JSONResponse(status_code=409, content={
@@ -352,12 +397,13 @@ async def trigger_search(search_id: str, auto_score: bool = None, db: Session = 
 
 @router.post("/{search_id}/test")
 async def test_search(search_id: str, db: Session = Depends(get_db)):
-    """Run a search test: keyword mode runs synchronously and returns results directly, while SLOW_TEST_MODES launch in the background and return a run_id to poll."""
+    """Run a search test: keyword mode runs synchronously and returns results directly, while modes with `background_test` (search_modes.py) launch in the background and return a run_id to poll."""
     search = db.query(Search).filter(Search.id == search_id).first()
     if not search:
         raise HTTPException(status_code=404, detail="Search not found")
 
-    if search.search_mode in SLOW_TEST_MODES:
+    mode = _modes.get_mode(search.search_mode)
+    if mode is not None and mode.background_test:
         flight_key = _test_flight_key(search.id)
         in_flight = _tests_in_flight.get(flight_key)
         if in_flight:
@@ -366,7 +412,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
             return JSONResponse(status_code=409, content={
                 "detail": "test_running", "run_id": in_flight,
                 "message": f"A Test of “{search.name}” is already running"})
-        if search.search_mode == "apify":
+        if mode.paid:
             from backend.job_monitor import is_running
             if is_running("search_run", search_id) or is_running("search_run", str(search.id)):
                 return JSONResponse(status_code=409, content={
@@ -389,26 +435,13 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
                 if not test_search_obj:
                     _store("done", {"error": "Search not found"})
                     return
-                if search.search_mode == "levels_fyi":
+                if mode.key == "levels_fyi":
+                    # levels.fyi's Test lives here (it reuses the scraper's debug pass).
                     result = await _test_levelsfyi_search(test_search_obj, test_db)
-                elif search.search_mode == "jobright":
-                    from backend.scraper.sources.jobright import preview as test_jobright
-                    result = await test_jobright(test_search_obj, test_db)
-                elif search.search_mode == "freehire":
-                    from backend.scraper.sources.freehire import preview as test_freehire
-                    result = await test_freehire(test_search_obj, test_db)
-                elif search.search_mode == "apify":
-                    from backend.scraper.sources.apify import preview as test_apify
-                    result = await test_apify(test_search_obj, test_db)
-                elif search.search_mode == "caribbeanjobs":
-                    from backend.scraper.sources.caribbeanjobs import preview as test_caribbeanjobs
-                    result = await test_caribbeanjobs(test_search_obj, test_db)
-                elif search.search_mode == "trulyremote":
-                    from backend.scraper.sources.trulyremote import preview as test_trulyremote
-                    result = await test_trulyremote(test_search_obj, test_db)
                 else:
-                    from backend.scraper.sources.linkedin_personal import preview as test_linkedin_personal
-                    result = await test_linkedin_personal(test_search_obj, test_db)
+                    import importlib
+                    source = importlib.import_module(f"backend.scraper.sources.{mode.module}")
+                    result = await source.preview(test_search_obj, test_db)
                 _store("done", result)
             except Exception as e:
                 logger.error(f"Test run {run_id} failed: {e}")
@@ -427,8 +460,9 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
         asyncio.create_task(_run_test_locked())
         return JSONResponse(status_code=202, content={"run_id": run_id, "status": "running"})
 
-    if search.search_mode != "keyword":
-        raise HTTPException(status_code=400, detail="Test only supports keyword, levels_fyi, linkedin_personal, jobright, freehire, apify, caribbeanjobs, and trulyremote searches")
+    if mode is None or mode.key != "keyword":
+        raise HTTPException(status_code=400, detail="Test is not available for "
+                            + (f"{mode.label} searches" if mode else f"search mode {search.search_mode!r}"))
 
     # ── Keyword (JobSpy) test — runs synchronously ──
     import re

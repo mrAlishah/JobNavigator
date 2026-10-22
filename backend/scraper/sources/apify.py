@@ -379,6 +379,10 @@ def _api_error(resp: httpx.Response) -> ApifyError:
             402: "the Apify account has no credit left",
             403: "the Apify API key cannot run this actor",
             404: "the actor or run does not exist"}.get(resp.status_code, "")
+    if resp.status_code == 402 and message:
+        # R30 S-17: a 402 is also a rented actor without a subscription, a monthly platform
+        # limit or a charge cap below the actor's minimum; Apify's own message names which.
+        hint = "Apify refused to charge for this run"
     text = "; ".join(t for t in (hint, message[:200]) if t)
     return ApifyError(f"HTTP {resp.status_code}" + (f": {text}" if text else ""))
 

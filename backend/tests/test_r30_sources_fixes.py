@@ -269,6 +269,37 @@ async def test_trulyremote_a_throttle_stop_holds_for_every_subscriber(test_db, a
 
 
 @pytest.mark.asyncio
+async def test_two_accounts_run_alls_back_to_back_fetch_the_board_once(test_db, accounts, monkeypatch):
+    """Cross-run reuse: A's Run all fetches the roster and its pages; B's Run all a minute
+    later rides on that fetch (no roster or page request) and still gets its own rows."""
+    import backend.scraper.orchestrator as orch
+    a, b = accounts
+    rows = [_tr_row(f"Engineer {i}", f"https://trw.test/jobs/{i}") for i in range(2)]
+    requested = _tr_serve(monkeypatch, rows, lambda u: _Resp(200, _tr_md(next(r["title"] for r in rows if r["url"] == u))))
+    rosters = []
+    serve_roster = trulyremote._fetch_roster
+
+    async def counted_roster(client):
+        rosters.append(1)
+        return await serve_roster(client)
+    monkeypatch.setattr(trulyremote, "_fetch_roster", counted_roster)
+    _search(test_db, "trulyremote")
+    with use_account(b):
+        _search(test_db, "trulyremote")
+
+    await orch.run_all(force=True, account_ids=[a])
+    await orch.run_all(force=True, account_ids=[b])
+    assert rosters == [1], "B reused A's roster"
+    assert sorted(requested) == sorted(r["url"] for r in rows), "each page read once"
+    with unscoped():
+        test_db.expire_all()
+        by_acc = {}
+        for j in test_db.query(Job).all():
+            by_acc.setdefault(j.account_id, set()).add(j.title)
+    assert by_acc == {a: {r["title"] for r in rows}, b: {r["title"] for r in rows}}
+
+
+@pytest.mark.asyncio
 async def test_caribbeanjobs_a_throttle_stop_holds_for_every_subscriber(test_db, accounts, monkeypatch):
     import backend.scraper.orchestrator as orch
     a, b = accounts

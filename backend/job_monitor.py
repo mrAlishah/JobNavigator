@@ -77,16 +77,24 @@ _LIMIT_SOURCES: dict[str, tuple[Optional[str], int]] = {
     # Chromium. Four at a time is the difference between ~300 MB and the 2.5 GB
     # the box hit; it is deliberately not user-tunable.
     "page_cache": (None, 4),
+    # Every scrape (Run all, one company, one search, the scheduled run) can start its own
+    # Chromium; one at a time keeps two accounts' Run alls from doubling the memory.
+    "scraping": ("scrape_max_concurrent", 1),
 }
+# Upper bounds a setting cannot exceed.
+_LIMIT_MAX: dict[str, int] = {"scraping": 2}
 
 # Which gate a launch_background job_type belongs to. Anything absent runs
-# unlimited — scrapes and backups are already deduped by scope key.
+# unlimited — backups are already deduped by scope key.
 _JOB_TYPE_LIMITER: dict[str, str] = {
     "analyze_job": "scoring",
     "score_resume": "scoring",
     "tailor_resume": "tailoring",
     "generate_cover_letter": "tailoring",
     "cache_job_page": "page_cache",
+    "scrape_all": "scraping",
+    "company_scrape": "scraping",
+    "search_run": "scraping",
 }
 
 _limiters: dict[str, TaskLimiter] = {}
@@ -100,11 +108,12 @@ def _resolve_limit(name: str) -> int:
         db = SessionLocal()
         try:
             raw = get_setting(db, setting_key)
-            return max(1, int(raw)) if raw else fallback
+            value = max(1, int(raw)) if raw else fallback
         finally:
             db.close()
     except Exception:
-        return fallback
+        value = fallback
+    return min(value, _LIMIT_MAX.get(name, value))
 
 
 def get_limiter(name: str) -> TaskLimiter:
@@ -157,6 +166,9 @@ class RunningJob:
     # QA F3 / R2-08: the run writes into every account (the scheduled scrape_all fan-out,
     # the H-1B refresh), whatever its account_id says.
     all_accounts: bool = False
+    # Queued behind its gate (another scrape, the scoring limit): started_at is reset when
+    # the run gets its slot, so queue time is not counted as run time.
+    waiting: bool = False
 
 
 # Keyed by dedup key (e.g. "scrape_all" or "company_scrape:<uuid>"); a member's runs
@@ -427,6 +439,7 @@ def get_all_running(all_accounts: bool = False) -> list[dict]:
             "scope_key": r.scope_key,
             "target_job_id": str(r.target_job_id) if r.target_job_id else None,
             "company_id": str(r.company_id) if r.company_id else None,
+            "waiting": r.waiting,
         }
         for r in visible_running(all_accounts)
     ]
@@ -441,6 +454,7 @@ def _get_running_by_job_type(job_type: str) -> Optional[dict]:
             return {
                 "run_id": str(r.run_id),
                 "elapsed_seconds": round((now - r.started_at).total_seconds(), 1),
+                "waiting": r.waiting,
             }
     return None
 
@@ -474,6 +488,39 @@ def _insert_job_run(
         db.commit()
     finally:
         db.close()
+
+
+def _restart_job_run(run_id: uuid.UUID, started_at: datetime) -> None:
+    """Move a queued run's start to the moment it got its slot."""
+    db = SessionLocal()
+    try:
+        run = (db.query(JobRun).filter(JobRun.id == run_id)
+               .execution_options(jn_unscoped=True).first())
+        if run:
+            run.started_at = started_at
+            db.commit()
+    except Exception as e:   # bookkeeping only; the run itself goes on
+        logger.warning(f"Could not restart the clock of run {run_id}: {e}")
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def _gated(limiter: Optional["TaskLimiter"], running_job: "RunningJob"):
+    """Hold `limiter` around the run; while it waits the run shows as waiting, and its
+    clock (in memory and on the JobRun row) starts when it gets the slot."""
+    if limiter is None:
+        yield
+        return
+    running_job.waiting = True
+    try:
+        async with limiter:
+            running_job.waiting = False
+            running_job.started_at = datetime.now(timezone.utc)
+            _restart_job_run(running_job.run_id, running_job.started_at)
+            yield
+    finally:
+        running_job.waiting = False
 
 
 def _finish_job_run(run_id: uuid.UUID, status: str, result_summary: Optional[str], error: Optional[str]) -> None:
@@ -571,10 +618,14 @@ async def _tracked_run(job_type, trigger, scope_key, meta, target_job_id, compan
         all_accounts=all_accounts,
     )
     _running[key] = running_job
+    # The scheduled scrape takes the scrape gate too, so it waits for a manual scrape
+    # instead of running beside it; other scheduler jobs are not gated here.
+    limiter = limiter_for_job_type(job_type) if job_type in SCRAPE_JOB_TYPES else None
 
     try:
         _run_failure.set(None)
-        yield running_job
+        async with _gated(limiter, running_job):
+            yield running_job
         reason = _take_run_failure()
         _finish_job_run(run_id, "failed" if reason else "completed",
                         running_job.summary, reason)
@@ -617,7 +668,18 @@ def launch_background(
     with owner_context():
         _insert_job_run(run_id, job_type, trigger, meta, target_job_id=target_job_id)
 
-    started_at = datetime.now(timezone.utc)
+    running_job = RunningJob(
+        run_id=run_id,
+        job_type=job_type,
+        trigger=trigger,
+        started_at=datetime.now(timezone.utc),
+        scope_key=scope_key,
+        target_job_id=target_job_id,
+        company_id=company_id,
+        meta=meta,
+        account_id=account,
+        all_accounts=all_accounts,
+    )
 
     async def _wrapper():
         # QA F4 / R1-08: the owner unlock is a 15-minute browser grant checked when the
@@ -631,12 +693,8 @@ def launch_background(
             _run_failure.set(None)
             # The gate is taken here, before the worker runs, so a queued task
             # holds nothing but itself — no DB connection, no LLM slot.
-            limiter = limiter_for_job_type(job_type)
-            if limiter is None:
+            async with _gated(limiter_for_job_type(job_type), running_job):
                 result = await coro_func(*(func_args or ()), **(func_kwargs or {}))
-            else:
-                async with limiter:
-                    result = await coro_func(*(func_args or ()), **(func_kwargs or {}))
             # A coroutine that returns a string is describing what it did.
             summary = result.strip() if isinstance(result, str) and result.strip() else None
             # …but it may also have reported a failure it handled itself.
@@ -648,20 +706,7 @@ def launch_background(
         finally:
             _running.pop(key, None)
 
-    task = asyncio.create_task(_wrapper())
-
-    _running[key] = RunningJob(
-        run_id=run_id,
-        job_type=job_type,
-        trigger=trigger,
-        started_at=started_at,
-        task=task,
-        scope_key=scope_key,
-        target_job_id=target_job_id,
-        company_id=company_id,
-        meta=meta,
-        account_id=account,
-        all_accounts=all_accounts,
-    )
+    running_job.task = asyncio.create_task(_wrapper())
+    _running[key] = running_job
 
     return str(run_id)

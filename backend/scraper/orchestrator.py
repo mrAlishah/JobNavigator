@@ -22,57 +22,32 @@ logger = logging.getLogger("jobnavigator.scraper.orchestrator")
 # ── Per-search dispatch ─────────────────────────────────────────────────────
 
 async def run_search(search: Search, proxy_url: Optional[str] = None, shared=None) -> dict:
-    """Dispatch one search to its source module by search.search_mode; returns the module's result dict, or raises ValueError on an unknown mode.
+    """Dispatch one search to its source module (`search_modes.SEARCH_MODES[mode].module`);
+    returns the module's result dict, or raises ValueError on an unknown mode.
 
-    `shared` (MT-8 `SharedFetch`) is passed only to the shareable modes (keyword,
-    levels_fyi, freehire, caribbeanjobs, trulyremote) and only when set, so a single search calls exactly as before."""
-    mode = search.search_mode
-    extra = {"shared": shared} if shared is not None else {}
-
-    if mode == "keyword":
-        from backend.scraper.sources.jobspy import run
-        return await run(search, proxy_url=proxy_url, **extra)
-    if mode == "levels_fyi":
-        from backend.scraper.sources.levelsfyi import run
-        return await run(search, **extra)
-    if mode == "linkedin_personal":
-        from backend.scraper.sources.linkedin_personal import run
-        return await run(search)
-    if mode == "jobright":
-        from backend.scraper.sources.jobright import run
-        return await run(search)
-    if mode == "freehire":
-        from backend.scraper.sources.freehire import run
-        return await run(search, **extra)
-    if mode == "apify":
-        # Never shared across accounts (no SharedFetch): each account runs and pays
-        # with its own token. See targets.is_shareable_search.
-        from backend.scraper.sources.apify import run
-        return await run(search)
-    if mode == "caribbeanjobs":
-        from backend.scraper.sources.caribbeanjobs import run
-        return await run(search, **extra)
-    if mode == "trulyremote":
-        from backend.scraper.sources.trulyremote import run
-        return await run(search, **extra)
-    if mode == "linkedin_extension":
-        # No scraper — jobs come via POST /api/jobs/linkedin-import (Chrome extension push)
+    `shared` (MT-8 `SharedFetch`) is passed only to the shareable modes and only when set, and
+    `proxy_url` only to the modes that take one, so a single search calls exactly as before."""
+    import importlib
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(search.search_mode)
+    if mode is None:
+        raise ValueError(f"Unknown search_mode: {search.search_mode}")
+    if mode.extension:
+        # No scraper: jobs come from the Chrome extension (POST /api/jobs/linkedin-import for
+        # passive LinkedIn capture, POST /api/jobs/save-from-extension for Save to Job Feed).
         return {
             "jobs_found": 0,
             "new_jobs": 0,
-            "error": "linkedin_extension has no scraper (passive via Chrome extension)",
+            "error": f"{search.search_mode} has no scraper (jobs arrive from the Chrome extension)",
             "duration": 0,
         }
-    if mode == "extension":
-        # No scraper — jobs come via POST /api/jobs/save-from-extension (manual Save-to-Feed button)
-        return {
-            "jobs_found": 0,
-            "new_jobs": 0,
-            "error": "extension has no scraper (manual save via Chrome extension)",
-            "duration": 0,
-        }
-
-    raise ValueError(f"Unknown search_mode: {mode}")
+    module = importlib.import_module(f"backend.scraper.sources.{mode.module}")
+    kwargs = {}
+    if mode.takes_proxy:
+        kwargs["proxy_url"] = proxy_url
+    if mode.shareable and shared is not None:
+        kwargs["shared"] = shared
+    return await module.run(search, **kwargs)
 
 
 # ── Per-company dispatch ────────────────────────────────────────────────────
@@ -221,51 +196,25 @@ def summarize_search_run(label: str, result: dict) -> str:
 
 def _source_for_search(search: Search) -> str:
     """Source string used for ScrapeLog.source."""
-    source_map = {
-        "keyword": "jobspy",
-        "levels_fyi": "levels_fyi",
-        "linkedin_personal": "linkedin_personal",
-        "jobright": "jobright",
-        "freehire": "freehire",
-        "apify": "apify",
-        "caribbeanjobs": "caribbeanjobs",
-        "trulyremote": "trulyremote",
-    }
-    return source_map.get(search.search_mode, search.search_mode)
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(search.search_mode)
+    return mode.source if mode else search.search_mode
 
 
 def _search_mode_is_valid(search: Search) -> bool:
-    """True if a search has a runnable configuration (levels_fyi requires direct_url; other known modes are always runnable); invalid configs are skipped, not raised."""
-    mode = search.search_mode
-    if mode == "keyword":
-        return True
-    if mode == "levels_fyi":
-        return bool(search.direct_url)
-    if mode in ("linkedin_personal", "jobright", "trulyremote"):
-        return True
-    if mode == "freehire":
-        return bool(search.direct_url or search.search_term)
-    if mode == "apify":
-        from backend.scraper.sources.apify import configured_presets
-        return bool((search.search_term or "").strip() and configured_presets(search))
-    if mode == "caribbeanjobs":
-        return bool(search.direct_url or search.search_term)
-    return False
-
-
-# Sources that scrape a keyword board have no account-based "recommended" feed, so without a
-# term or a pre-filtered URL there is nothing to ask them for.
-_NEEDS_QUERY_MODES = ("freehire", "caribbeanjobs")
+    """True if a search has a runnable configuration (`search_config_error` is None for a mode
+    with a scraper); invalid configs are skipped, not raised."""
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(search.search_mode)
+    return bool(mode and mode.runnable) and search_config_error(search) is None
 
 
 def search_config_error(search) -> Optional[str]:
     """A human reason this search cannot run as configured, or None. The scheduler skips an
     invalid config silently; the manual trigger reads this so the run history says why instead
     of leaving it at "nothing ran"."""
-    if search.search_mode in _NEEDS_QUERY_MODES and not (search.direct_url or search.search_term):
-        label = "CaribbeanJobs.com" if search.search_mode == "caribbeanjobs" else "freehire.me"
-        return f"{label} needs a search term or a URL before it can run"
-    return None
+    from backend.scraper.search_modes import config_error
+    return config_error(search)
 
 
 # ── Fan-out: all active searches + companies ────────────────────────────────
@@ -315,9 +264,11 @@ async def run_all(force: bool = False, account_ids=None, skip=None):
     import uuid
     from backend.accounts.background import account_session, acting_as
     from backend.accounts.context import current_account
+    from backend.scraper.search_modes import is_extension
     from backend.scraper.targets import (
-        SharedFetch, group_targets, is_shareable_search, load_active, search_due,
-        search_fetch_params, search_key, search_target_due, split_search_targets,
+        group_targets, is_shareable_search, load_active, reusable_key, search_due,
+        search_fetch_params, search_key, search_target_due, shared_fetch_for,
+        split_search_targets,
     )
     db = SessionLocal()
     errors: list = []
@@ -355,7 +306,7 @@ async def run_all(force: bool = False, account_ids=None, skip=None):
         for search in searches:
             # Passive-only modes (extension push endpoints) are not scheduler-driven —
             # skip silently to keep logs clean.
-            if search.search_mode in ("linkedin_extension", "extension"):
+            if is_extension(search.search_mode):
                 continue
             if str(search.id) in skip_search_ids:
                 logger.info(f"Search '{search.name}' skipped: a manual run of it is in progress")
@@ -392,8 +343,11 @@ async def run_all(force: bool = False, account_ids=None, skip=None):
                     continue
 
             run_id = uuid.uuid4()
-            shared = (SharedFetch(target.key, search_fetch_params(target.subscribers))
-                      if target.shared else None)
+            # Every shareable target gets a SharedFetch, even with one subscriber, so a later
+            # run (another account's Run all, the scheduled scrape) can reuse it; per-account
+            # modes (own session, paid Apify) keep calling their source directly.
+            shared = (shared_fetch_for(target.key, search_fetch_params(target.subscribers))
+                      if reusable_key(target.key) else None)
             for search in target.subscribers:
                 sid, sname, account = ident[id(search)]
                 # QA F10 / R1-05: each subscriber works in a fresh session of its own
@@ -428,7 +382,7 @@ async def run_all(force: bool = False, account_ids=None, skip=None):
                         logger.info(
                             f"Search '{sname}': found={result.get('jobs_found', 0)}, "
                             f"new={result.get('new_jobs', 0)}, duration={result.get('duration', 0):.1f}s"
-                            + (f" (shared fetch, {len(target.subscribers)} subscribers)" if shared else "")
+                            + (f" (shared fetch, {len(target.subscribers)} subscribers)" if target.shared else "")
                         )
 
                         # Auto CV-score: mark the account for one pool sweep after all searches

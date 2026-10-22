@@ -36,7 +36,7 @@ async def test_call_llm_uses_primary_override(monkeypatch):
 async def test_call_llm_reads_primary_from_settings_when_no_override(monkeypatch):
     """Without overrides, the Primary comes from llm_* settings (unchanged behavior)."""
     import backend.analyzer.llm_client as L
-    settings = {"llm_provider": "claude_api", "llm_model": "claude-sonnet-5", "llm_api_key": "envkey"}
+    settings = {"llm_provider": "claude_api", "llm_model": "claude-sonnet-5", "anthropic_api_key": "envkey"}
     monkeypatch.setattr(L, "SessionLocal", lambda: _DummyDB())
     monkeypatch.setattr(L, "_get_setting", lambda db, k, d="": settings.get(k, d))
     calls = []
@@ -56,7 +56,7 @@ async def test_call_llm_falls_back_on_primary_failure(monkeypatch):
     """Primary exhausts its retries, then the Fallback (llm_fallback_*) is used."""
     import backend.analyzer.llm_client as L
     settings = {"llm_fallback_provider": "openai", "llm_fallback_model": "gpt-x",
-                "llm_fallback_api_key": "fk"}
+                "openai_api_key": "fk"}
     monkeypatch.setattr(L, "SessionLocal", lambda: _DummyDB())
     monkeypatch.setattr(L, "_get_setting", lambda db, k, d="": settings.get(k, d))
 
@@ -120,7 +120,7 @@ def _scorer_session(extra_rows):
     s.add(Setting(key="scoring_output_full", value="FULL"))
     s.add(Setting(key="llm_provider", value="claude_api"))
     s.add(Setting(key="llm_model", value="claude-sonnet-5"))
-    s.add(Setting(key="llm_api_key", value="primkey"))
+    s.add(Setting(key="anthropic_api_key", value="primkey"))
     for k, v in extra_rows.items():
         s.add(Setting(key=k, value=v))
     s.commit()
@@ -149,8 +149,7 @@ async def _run_scorer_capture(monkeypatch, Session):
 
 @pytest.mark.asyncio
 async def test_scorer_uses_primary_when_override_empty(monkeypatch):
-    Session = _scorer_session({"scoring_llm_provider": "", "scoring_llm_model": "",
-                               "scoring_llm_api_key": ""})
+    Session = _scorer_session({"scoring_llm_provider": "", "scoring_llm_model": ""})
     cap = await _run_scorer_capture(monkeypatch, Session)
     assert cap["provider"] == "claude_api"
     assert cap["model"] == "claude-sonnet-5"
@@ -161,7 +160,7 @@ async def test_scorer_uses_primary_when_override_empty(monkeypatch):
 async def test_scorer_uses_scoring_override_when_set(monkeypatch):
     Session = _scorer_session({"scoring_llm_provider": "openrouter",
                                "scoring_llm_model": "x-ai/grok-4.6",
-                               "scoring_llm_api_key": "orkey"})
+                               "openrouter_api_key": "orkey"})
     cap = await _run_scorer_capture(monkeypatch, Session)
     assert cap["provider"] == "openrouter"
     assert cap["model"] == "x-ai/grok-4.6"
@@ -173,8 +172,7 @@ async def test_scorer_override_on_another_provider_never_borrows_the_primary_key
     """Override provider differs from the Primary's and its key is blank → no key (B1): the
     Primary's Anthropic key must never be sent to OpenRouter."""
     Session = _scorer_session({"scoring_llm_provider": "openrouter",
-                               "scoring_llm_model": "x-ai/grok-4.6",
-                               "scoring_llm_api_key": ""})
+                               "scoring_llm_model": "x-ai/grok-4.6"})
     cap = await _run_scorer_capture(monkeypatch, Session)
     assert cap["provider"] == "openrouter"
     assert cap["api_key"] == ""
@@ -184,7 +182,6 @@ async def test_scorer_override_on_another_provider_never_borrows_the_primary_key
 async def test_scorer_override_on_the_primary_provider_reuses_the_primary_key(monkeypatch):
     """Same provider as the Primary with a blank key → the Primary's key."""
     Session = _scorer_session({"scoring_llm_provider": "claude_api",
-                               "scoring_llm_model": "claude-haiku-4-5",
-                               "scoring_llm_api_key": ""})
+                               "scoring_llm_model": "claude-haiku-4-5"})
     cap = await _run_scorer_capture(monkeypatch, Session)
     assert (cap["provider"], cap["model"], cap["api_key"]) == ("claude_api", "claude-haiku-4-5", "primkey")

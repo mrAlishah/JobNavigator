@@ -69,6 +69,16 @@ def _clean_auth_throttle():
 
 
 @pytest.fixture(autouse=True)
+def _no_reused_fetches():
+    """Cross-run fetch reuse (`targets.shared_fetch_for`) keeps recent fetches in-process;
+    one test's fake postings must never reach the next test's run."""
+    from backend.scraper.targets import reset_shared_fetches
+    reset_shared_fetches()
+    yield
+    reset_shared_fetches()
+
+
+@pytest.fixture(autouse=True)
 def _mt_unscoped_by_default():
     """Tests that build their own throwaway engine (no accounts table, no owner) run
     unscoped, as before MT-2. The shared `test_db` fixture switches back to scoped and

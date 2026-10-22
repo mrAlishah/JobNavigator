@@ -70,8 +70,10 @@ def test_get_running_by_job_type_finds_a_scoped_run():
     info = jm._get_running_by_job_type("company_scrape")
     assert info is not None
     assert info["run_id"] == str(run_id)
-    # Only run_id + elapsed_seconds are exposed here (the scheduler card's needs).
-    assert set(info) == {"run_id", "elapsed_seconds"}
+    # Only run_id, elapsed_seconds and waiting (queued behind the scrape gate) are exposed
+    # here (the scheduler card's needs).
+    assert set(info) == {"run_id", "elapsed_seconds", "waiting"}
+    assert info["waiting"] is False
     assert info["elapsed_seconds"] >= 5.0
 
 

@@ -49,6 +49,30 @@ jobs:
         run: |
           pytest backend/tests/ --tb=short
 
+  test-frontend:
+    # R30 I-07: the Vitest specs and the style lint ran only on a developer's machine.
+    name: Frontend tests and style lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install frontend deps
+        # No lockfile on purpose (tests/tools/fe-test.sh installs the same way), so the
+        # image build and the tests resolve the same ranges.
+        working-directory: frontend
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Vitest
+        working-directory: frontend
+        env:
+          TZ: UTC
+          CI: "1"
+        run: npx vitest run
+      - name: Style lint (no raw colour, font, radius or shadow outside ui.jsx / theme.css)
+        run: python3 tests/tools/stylelint.py
+
   audit-deps:
     name: Dependency vulnerability scan
     runs-on: ubuntu-24.04

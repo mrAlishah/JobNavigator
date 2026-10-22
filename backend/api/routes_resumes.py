@@ -1464,6 +1464,24 @@ def resume_shelf(db: Session = Depends(get_db)):
             "persona": persona, "archived": archived, "archived_count": len(archived)}
 
 
+# R30 D-09: a résumé is a JSON object of a few dozen KB; an import or paste of hundreds of KB
+# made every preview render take 20 s, and a non-object broke the editor and the templates.
+JSON_DATA_MAX_BYTES = 512 * 1024
+
+
+def checked_json_data(value) -> dict:
+    """`json_data` as stored, or 400: an object (None means empty) of at most 512 KB."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="json_data must be an object")
+    size = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    if size > JSON_DATA_MAX_BYTES:
+        raise HTTPException(status_code=400,
+                            detail=f"Résumé too large ({size // 1024} KB, max {JSON_DATA_MAX_BYTES // 1024} KB)")
+    return value
+
+
 @router.post("", status_code=201)
 def create_resume(body: dict, db: Session = Depends(get_db)):
     """Create a new resume from name/is_base/parent_id/job_id/template/page_format/json_data."""
@@ -1481,7 +1499,7 @@ def create_resume(body: dict, db: Session = Depends(get_db)):
         job_id=owned_id_or_404(db, Job, body.get("job_id")),
         template=body.get("template", _default_template_id()),
         page_format=body.get("page_format", "letter"),
-        json_data=body.get("json_data", {}),
+        json_data=checked_json_data(body.get("json_data")),
     )
     db.add(resume)
     db.commit()
@@ -1871,6 +1889,11 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
         validate_template_name(body["template"], TEMPLATES_DIR)
     # Re-linking a résumé: the new parent / job must be the account's own (MT-5).
     body = dict(body)
+    # A rename gets the same check as a create: a blank or non-string name is a 400.
+    if "name" in body:
+        body["name"] = str_field(body, "name", required=True)
+    if "json_data" in body:
+        body["json_data"] = checked_json_data(body["json_data"])
     if "parent_id" in body:
         body["parent_id"] = owned_id_or_404(db, Resume, body["parent_id"], "Parent resume not found")
     if "job_id" in body:
@@ -2125,9 +2148,23 @@ def _ascii_filename_stem(stem: str) -> str:
     return "_".join(part for part in folded.split("_") if part) or "Resume"
 
 
+# R30 D-10: a download name is built from free text (header name, résumé name, company), so
+# it is cut to a length every file system takes and has no path separator or "..".
+FILENAME_STEM_MAX = 120
+
+
+def _safe_filename_stem(stem: str) -> str:
+    """`stem` without path separators, `..`, reserved characters or leading dots, at most
+    FILENAME_STEM_MAX characters; "Resume" when nothing is left."""
+    stem = re.sub(r'[\\/:*?<>|"\x00-\x1f\x7f]', "_", stem or "")
+    stem = re.sub(r"\.{2,}", "_", stem).strip(" ._")
+    return stem[:FILENAME_STEM_MAX].rstrip(" ._") or "Resume"
+
+
 def _content_disposition(stem: str, ext: str) -> str:
     """An attachment header that keeps a non-ASCII name: an ASCII `filename=` for old
     clients plus the RFC 5987 `filename*=UTF-8''…` every current browser prefers."""
+    stem = _safe_filename_stem(stem)
     return (f'attachment; filename="{_ascii_filename_stem(stem)}.{ext}"; '
             f"filename*=UTF-8''{_url_quote(f'{stem}.{ext}', safe='')}")
 

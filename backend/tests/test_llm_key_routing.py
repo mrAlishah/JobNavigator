@@ -7,7 +7,8 @@ only on the same provider. B3: OpenAI dispatch falls back to OPENAI_API_KEY (the
 only for api_key=None, and an empty string was sent); OpenRouter / OpenCode Go / LM Studio never
 receive it.
 
-R30: L-01 a slot's own key counts only while the slot has its own provider. L-02 Claude API and
+3.1: one API key per provider (`anthropic_api_key`, `openai_api_key`, …) replaces the per-slot
+keys, which are never read again (they were L-01's stale keys). L-02 Claude API and
 OpenRouter with no key fail at once with a NonRetryable "No API key for <provider>". L-03 the
 LM Studio / Ollama addresses are seeded empty (env, then default, at call time), the owner sees
 the address in use, and a one-time cleanup blanks values that equal what the env/default gives.
@@ -55,7 +56,7 @@ def _models_own(db, account_id):
 def _anthropic_primary(db, **slots):
     set_setting(db, "llm_provider", "claude_api")
     set_setting(db, "llm_model", "claude-sonnet-5")
-    set_setting(db, "llm_api_key", ANT_KEY)
+    set_setting(db, "anthropic_api_key", ANT_KEY)
     for k, v in slots.items():
         set_setting(db, k, v)
 
@@ -109,9 +110,19 @@ def test_slot_inheriting_the_primary_provider_reuses_its_key(test_db):
     assert L.resolve_llm_config("autofill", db=test_db)["api_key"] == ANT_KEY
 
 
-def test_slot_own_key_wins(test_db):
-    _anthropic_primary(test_db, autofill_llm_provider="openai", autofill_llm_api_key="sk-openai-slot")
-    assert L.resolve_llm_config("autofill", db=test_db)["api_key"] == "sk-openai-slot"
+def test_slot_on_another_provider_gets_that_provider_key(test_db):
+    _anthropic_primary(test_db, autofill_llm_provider="openai", openai_api_key="sk-openai")
+    assert L.resolve_llm_config("autofill", db=test_db)["api_key"] == "sk-openai"
+    assert L.resolve_llm_config("scoring", db=test_db)["api_key"] == ANT_KEY
+
+
+def test_switching_a_slot_provider_back_keeps_both_keys(test_db):
+    """The point of one key per provider: nothing is lost or re-pasted on a switch."""
+    _anthropic_primary(test_db, openai_api_key="sk-openai")
+    set_setting(test_db, "llm_provider", "openai")
+    assert L.resolve_llm_config("", db=test_db)["api_key"] == "sk-openai"
+    set_setting(test_db, "llm_provider", "claude_api")
+    assert L.resolve_llm_config("", db=test_db)["api_key"] == ANT_KEY
 
 
 # ── B1: dispatch ─────────────────────────────────────────────────────────────
@@ -145,11 +156,11 @@ async def test_scoring_override_on_openai_through_call_llm(test_db, monkeypatch,
 
 @pytest.mark.asyncio
 async def test_member_on_own_never_gets_the_owner_or_env_key(test_db, member, monkeypatch, openai_seen):
-    _anthropic_primary(test_db, autofill_llm_provider="openai", autofill_llm_api_key="sk-openai-owner")
+    _anthropic_primary(test_db, autofill_llm_provider="openai", openai_api_key="sk-openai-owner")
     monkeypatch.setenv("OPENAI_API_KEY", ENV_OPENAI)
     _models_own(test_db, member)
     _own(test_db, member, "llm_provider", "claude_api")
-    _own(test_db, member, "llm_api_key", "sk-ant-member")
+    _own(test_db, member, "anthropic_api_key", "sk-ant-member")
     _own(test_db, member, "autofill_llm_provider", "openai")
     with use_account(member):
         cfg = L.resolve_llm_config("autofill", db=test_db)
@@ -163,7 +174,7 @@ async def test_member_on_own_never_gets_the_owner_or_env_key(test_db, member, mo
 
 @pytest.mark.asyncio
 async def test_member_on_inherit_gets_the_env_openai_key(test_db, member, monkeypatch, openai_seen):
-    _anthropic_primary(test_db, autofill_llm_provider="openai")
+    _anthropic_primary(test_db, autofill_llm_provider="openai", autofill_llm_model="gpt-5")
     monkeypatch.setenv("OPENAI_API_KEY", ENV_OPENAI)
     with use_account(member):
         await L.call_autofill_llm("p", "s")
@@ -195,12 +206,12 @@ async def test_fallback_reuses_the_primary_key_only_on_the_same_provider(test_db
 
 
 @pytest.mark.asyncio
-async def test_fallback_own_key_wins(test_db, monkeypatch):
-    _anthropic_primary(test_db, llm_fallback_provider="claude_api", llm_fallback_model="fb-model",
-                       llm_fallback_api_key="sk-ant-fallback")
+async def test_fallback_on_another_provider_gets_that_provider_key(test_db, monkeypatch):
+    _anthropic_primary(test_db, llm_fallback_provider="openai", llm_fallback_model="fb-model",
+                       openai_api_key="sk-openai")
     calls = _capture_dispatch(monkeypatch)
     await L.call_llm("p", "s", 10)
-    assert calls[1] == ("claude_api", "sk-ant-fallback")
+    assert calls[1] == ("openai", "sk-openai")
 
 
 # ── B3: OpenAI env key, and only for OpenAI ──────────────────────────────────
@@ -218,7 +229,7 @@ async def test_owner_openai_primary_with_only_the_env_key(test_db, monkeypatch, 
 @pytest.mark.asyncio
 async def test_openai_setting_beats_the_env_key(test_db, monkeypatch, openai_seen):
     set_setting(test_db, "llm_provider", "openai")
-    set_setting(test_db, "llm_api_key", "sk-openai-setting")
+    set_setting(test_db, "openai_api_key", "sk-openai-setting")
     monkeypatch.setenv("OPENAI_API_KEY", ENV_OPENAI)
     await L.call_llm("p", "s", 10)
     assert openai_seen == [("sk-openai-setting", None)]
@@ -400,40 +411,41 @@ def _count_dispatch(monkeypatch):
     return calls
 
 
-# ── L-01: a stale key in a switched-off override ─────────────────────────────
+# ── the per-slot keys of 3.0 are never read (L-01's stale keys) ─────────────
 
 @pytest.mark.parametrize("feature", FEATURES)
-def test_slot_key_without_its_own_provider_is_ignored(test_db, feature):
-    """An override switched off keeps its key; the slot follows the Primary, so the Primary's key goes."""
-    _anthropic_primary(test_db, **{f"{feature}_llm_api_key": "sk-proj-STALE-OPENAI"})
-    cfg = L.resolve_llm_config(feature, db=test_db)
-    assert (cfg["provider"], cfg["api_key"]) == ("claude_api", ANT_KEY)
+def test_a_legacy_slot_key_is_never_read(test_db, feature):
+    _anthropic_primary(test_db, **{f"{feature}_llm_api_key": "sk-proj-STALE-OPENAI",
+                                   f"{feature}_llm_provider": "openai"})
+    assert L.resolve_llm_config(feature, db=test_db)["api_key"] == ""
+    set_setting(test_db, f"{feature}_llm_provider", "")
+    assert L.resolve_llm_config(feature, db=test_db)["api_key"] == ANT_KEY
 
 
-def test_stale_slot_key_is_ignored_when_the_primary_has_no_key(test_db):
+def test_the_legacy_primary_key_is_never_read(test_db):
     set_setting(test_db, "llm_provider", "claude_api")
-    set_setting(test_db, "autofill_llm_api_key", "sk-proj-STALE-OPENAI")
-    assert L.resolve_llm_config("autofill", db=test_db)["api_key"] == ""
+    set_setting(test_db, "llm_api_key", "sk-ant-legacy")
+    assert L.resolve_llm_config("", db=test_db)["api_key"] == ""
 
 
 def test_primary_key_still_counts_with_the_provider_left_to_the_default(test_db):
     """The Primary has no slot to follow: an empty llm_provider means the default provider."""
     set_setting(test_db, "llm_provider", "")
-    set_setting(test_db, "llm_api_key", ANT_KEY)
+    set_setting(test_db, "anthropic_api_key", ANT_KEY)
     assert L.resolve_llm_config("", db=test_db)["api_key"] == ANT_KEY
 
 
 @pytest.mark.asyncio
 async def test_stale_openai_key_never_reaches_anthropic(test_db, monkeypatch, anthropic_seen):
     """The R30 probe: Autofill once ran on OpenAI, the override was switched off, the Primary is Claude API."""
-    _anthropic_primary(test_db, autofill_llm_api_key="sk-proj-STALE-OPENAI")
+    _anthropic_primary(test_db, autofill_llm_api_key="sk-proj-STALE-OPENAI", openai_api_key="sk-openai")
     res = await L.call_autofill_llm("p", "s")
     assert res["provider"] == "claude_api"
     assert anthropic_seen == [ANT_KEY]
 
 
 @pytest.mark.asyncio
-async def test_stale_slot_key_does_not_hide_the_env_key(test_db, monkeypatch, anthropic_seen):
+async def test_a_legacy_slot_key_does_not_hide_the_env_key(test_db, monkeypatch, anthropic_seen):
     set_setting(test_db, "llm_provider", "claude_api")
     set_setting(test_db, "scoring_llm_api_key", "sk-proj-STALE-OPENAI")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
@@ -442,10 +454,10 @@ async def test_stale_slot_key_does_not_hide_the_env_key(test_db, monkeypatch, an
     assert anthropic_seen == ["sk-ant-env"]
 
 
-def test_member_stale_slot_key_is_ignored_too(test_db, member):
+def test_member_own_provider_key_is_used(test_db, member):
     _models_own(test_db, member)
     _own(test_db, member, "llm_provider", "claude_api")
-    _own(test_db, member, "llm_api_key", "sk-ant-member")
+    _own(test_db, member, "anthropic_api_key", "sk-ant-member")
     _own(test_db, member, "cover_letter_llm_api_key", "sk-proj-member-stale")
     with use_account(member):
         assert L.resolve_llm_config("cover_letter", db=test_db)["api_key"] == "sk-ant-member"
@@ -497,7 +509,7 @@ async def test_claude_api_with_no_key_falls_back_at_once(test_db, monkeypatch, a
     set_setting(test_db, "llm_provider", "claude_api")
     set_setting(test_db, "llm_fallback_provider", "openai")
     set_setting(test_db, "llm_fallback_model", "gpt-5-mini")
-    set_setting(test_db, "llm_fallback_api_key", "sk-openai-fb")
+    set_setting(test_db, "openai_api_key", "sk-openai-fb")
     calls = _count_dispatch(monkeypatch)
     res = await L.call_llm("p", "s", 10)
     assert (res["provider"], res["model"], res["text"]) == ("openai", "gpt-5-mini", "ok")
@@ -543,7 +555,7 @@ async def test_streaming_openrouter_with_no_key_fails_clearly(test_db, openai_se
 @pytest.mark.asyncio
 async def test_openrouter_with_a_key_still_works(test_db, openai_seen):
     _anthropic_primary(test_db, autofill_llm_provider="openrouter", autofill_llm_model="openai/gpt-5",
-                       autofill_llm_api_key="sk-or-slot")
+                       openrouter_api_key="sk-or-slot")
     res = await L.call_autofill_llm("p", "s")
     assert res["text"] == "ok"
     assert openai_seen == [("sk-or-slot", L.OPENROUTER_BASE_URL)]

@@ -57,6 +57,17 @@ def _parse_levelsfyi_salary(location_text: str) -> tuple[str, str | None, int | 
     return (location, work_arrangement, salary_min, salary_max)
 
 
+# Ids were 18 digits until 2026-10-09 and are base-36 since ("2ci7r6weraiqb"); \d+ kept only the
+# leading digits, which gave a 404 job page and merged unrelated jobs into one id.
+_JOB_ID_RE = re.compile(r"[?&]jobId=([A-Za-z0-9]+)")
+
+
+def _levelsfyi_job_id(href: str) -> str | None:
+    """The job id from a levels.fyi link, or None."""
+    m = _JOB_ID_RE.search(href or "")
+    return m.group(1) if m else None
+
+
 async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bool = False):
     """Extract all job links from a single company card. Returns (jobs, rejected)."""
     jobs = []
@@ -78,10 +89,9 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
         if not href:
             continue
 
-        job_id_match = re.search(r'jobId=(\d+)', href)
-        if not job_id_match:
+        job_id = _levelsfyi_job_id(href)
+        if not job_id:
             continue
-        job_id = job_id_match.group(1)
         if job_id in seen_ids:
             continue
         seen_ids.add(job_id)
@@ -329,10 +339,10 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                 async def _worker(_tab_idx, pg, job_slice):
                     nonlocal enriched
                     for j in job_slice:
-                        job_id_match = re.search(r'jobId=(\d+)', j["url"])
-                        if not job_id_match:
+                        job_id = _levelsfyi_job_id(j["url"])
+                        if not job_id:
                             continue
-                        detail_url = f"https://www.levels.fyi/jobs?jobId={job_id_match.group(1)}"
+                        detail_url = f"https://www.levels.fyi/jobs?jobId={job_id}"
                         try:
                             detail = await _levelsfyi_extract_detail(pg, detail_url)
                             if detail.get("application_url"):

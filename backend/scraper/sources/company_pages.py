@@ -490,7 +490,8 @@ async def scrape_career_pages(force: bool = False, account_ids=None,
     from backend.accounts.settings import get_setting
     from backend.accounts.background import account_session, acting_as
     from backend.scraper.targets import (
-        SharedFetch, company_due, company_key, company_target_due, group_targets, load_active,
+        company_due, company_key, company_target_due, group_targets, load_active, reusable_key,
+        shared_fetch_for,
     )
     db = SessionLocal()
     shared_pw = None
@@ -563,7 +564,8 @@ async def scrape_career_pages(force: bool = False, account_ids=None,
                     continue
 
             run_id = uuid.uuid4()
-            shared = SharedFetch(target.key) if target.shared else None
+            # Every target gets one (cross-run reuse, `shared_fetch_for`), not only shared ones.
+            shared = shared_fetch_for(target.key) if reusable_key(target.key) else None
             for company in target.subscribers:
                 cid, cname, account = ident[id(company)]
                 # One company's failure must never take the batch down: the scraper's own errors come
@@ -599,7 +601,7 @@ async def scrape_career_pages(force: bool = False, account_ids=None,
 
                         logger.info(
                             f"Playwright {cname}: found={result['jobs_found']}, new={result['new_jobs']}"
-                            + (f" (shared fetch, {len(target.subscribers)} subscribers)" if shared else "")
+                            + (f" (shared fetch, {len(target.subscribers)} subscribers)" if target.shared else "")
                         )
 
                         # Mark for one pool sweep per account at batch end rather than per company — the
