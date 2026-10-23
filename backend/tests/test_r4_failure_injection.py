@@ -212,7 +212,9 @@ async def test_partial_llm_scores_still_persist_what_arrived(test_db, monkeypatc
     await score_single_job(str(job.id), cv_ids=[str(resume.id)], depth="light")
     test_db.expire_all()
     fresh = test_db.query(Job).filter(Job.id == job.id).first()
-    assert fresh.cv_scores == {"Base": 72} and fresh.best_cv_score == 72
+    # stored by résumé id (3.1); the model's "Base" label maps to the résumé it named
+    assert fresh.cv_scores == {str(resume.id): 72} and fresh.best_cv_score == 72
+    assert fresh.best_cv == str(resume.id) and fresh.cv_score_names == {str(resume.id): "Base"}
 
 
 # ══ Retry + fallback inside call_llm ═════════════════════════════════════════

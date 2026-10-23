@@ -7,7 +7,7 @@ user's own storage is never involved:
   1. An EXISTING user (a profile carrying `jobnavigator_welcomed`, or any legacy
      key) sees "Welcome to the new JobNavigator" once. Closing it — by Escape,
      the scrim, the ✕ or "Got it", all one `onClose` — writes
-     `jobnavigator_newui_seen = '2.0.0'` and the next load is clean.
+     `jobnavigator_newui_seen = '3.1'` and the next load is clean.
   2. A GENUINELY FRESH profile sees the first-run tour instead; the upgrade modal
      is not marked seen while the tour is up, and closing the tour marks it seen
      (V-01), so the visit after the tour is clean.
@@ -26,7 +26,7 @@ import h
 NEWUI_TITLE = 'Welcome to the new JobNavigator'
 TOUR_TITLE = 'Welcome to JobNavigator'
 SEEN_KEY = 'jobnavigator_newui_seen'
-VERSION = '2.0.0'
+VERSION = '3.1'
 
 # The tour's own title is a PREFIX of the upgrade modal's, so "is the tour up?"
 # can never be asked with a plain substring test — it is true either way.
@@ -51,11 +51,11 @@ def _newui(c):
             if shown:
                 bullets = pg.evaluate("""() => {
                   const t = (document.querySelector('[role="dialog"]')?.innerText || '');
-                  return [/Everything you know, rebuilt/, /extension, redesigned/, /Pick a look in Settings/,
-                          /Persona import from a r/]
+                  return [/up to five people share one install/, /Everything you know, rebuilt/,
+                          /extension, redesigned/, /Pick a look in Settings/, /Persona import from a r/]
                          .filter((re) => re.test(t)).length;
                 }""")
-                c.check('all four bullets render', bullets == 4, bullets)
+                c.check('all five bullets render, accounts first', bullets == 5, bullets)
                 notes = pg.evaluate(
                     """() => { const a = [...document.querySelectorAll('[role="dialog"] a')]
                         .find((x) => /Read the release notes/.test(x.textContent || ''));

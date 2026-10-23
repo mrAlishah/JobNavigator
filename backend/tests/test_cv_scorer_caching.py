@@ -138,7 +138,8 @@ async def test_score_job_full_depth_uses_score_full_purpose(scorer_db, monkeypat
 
 @pytest.mark.asyncio
 async def test_score_job_respects_prompt_caching_disabled(scorer_db, monkeypatch):
-    """When prompt_caching_enabled='false' in settings, cached_prefix is passed as None."""
+    """When prompt_caching_enabled='false' in settings, cached_prefix is passed as None and the
+    résumés, rubric and schema are in the prompt itself (they used to be dropped with it)."""
     from backend.models.db import Setting
     s = scorer_db()
     s.add(Setting(key="prompt_caching_enabled", value="false"))
@@ -149,6 +150,7 @@ async def test_score_job_respects_prompt_caching_disabled(scorer_db, monkeypatch
 
     async def fake_call_llm(prompt, system, max_tokens, cached_prefix=None, **kwargs):
         captured["cached_prefix"] = cached_prefix
+        captured["prompt"] = prompt
         return {
             "text": '{"scores":{"PM":75},"best_cv":"PM"}',
             "usage": {"input_tokens": 100, "output_tokens": 20,
@@ -164,6 +166,8 @@ async def test_score_job_respects_prompt_caching_disabled(scorer_db, monkeypatch
                                     preloaded_text="JD text")
 
     assert captured["cached_prefix"] is None
+    assert "CV text" in captured["prompt"] and "JD text" in captured["prompt"]
+    assert captured["prompt"].index("CV text") < captured["prompt"].index("JD text")
 
 
 @pytest.mark.asyncio

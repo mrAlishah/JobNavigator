@@ -319,10 +319,14 @@ class Job(AccountScoped, Base):
     h1b_jd_flag = Column(Boolean, default=False)
     h1b_jd_snippet = Column(String, nullable=True)
     h1b_verdict = Column(String, nullable=True)  # likely | unlikely | unknown
-    cv_scores = Column(JSON, default={})     # {"CV Name": score, ...}
+    cv_scores = Column(JSON, default={})     # {"<résumé id>" | "Tailored" | "Persona": score, ...}
     best_cv_score = Column(Float, nullable=True, index=True)
     best_cv = Column(String, nullable=True)
     scoring_report = Column(JSON, nullable=True)  # Structured report: summary, keywords, requirement mapping
+    # 3.1: cv_scores / scoring_report / best_cv are keyed by résumé id ("Tailored" and "Persona"
+    # as before); this keeps {résumé id: name at scoring time} so a deleted résumé keeps a label.
+    # Read and written through backend/analyzer/score_keys.py.
+    cv_score_names = Column(JSON, nullable=True)
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
     # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))

@@ -663,6 +663,7 @@ def run_migrations(db):
         "ALTER TABLE jobs DROP COLUMN IF EXISTS language_snippet",
         "ALTER TABLE searches ADD COLUMN IF NOT EXISTS require_salary BOOLEAN DEFAULT FALSE",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scoring_report JSONB",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cv_score_names JSON",   # 3.1: score keys are résumé ids
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_summary",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_strengths",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_gaps",
@@ -1332,6 +1333,93 @@ def migrate_llm_provider_keys(db) -> dict:
         logger.info(f"Moved API keys to one per provider: {written}")
     return written
 
+
+def _chunk_then_commit(db, model, ids):
+    """The rows with these ids, then a commit once the caller has changed them."""
+    yield from db.query(model).filter(model.id.in_(ids)).all()
+    db.commit()
+
+
+# Marker of the one-time score-key migration below (install row, never served, not writable).
+SCORE_KEYS_MIGRATED_KEY = "cv_score_keys_migrated"
+
+
+def migrate_cv_score_keys(db, batch: int = 500) -> dict:
+    """Once per install (3.1): re-key job scores from résumé names to résumé ids.
+
+    Per account, a name maps to that account's base résumé of that name (the scorer keyed by
+    base names; a tailored copy scored under "Tailored"); when two bases share a name, the
+    newest wins and the log names the others, never their content.
+    In every job of the account, the keys of `cv_scores` and `scoring_report` and the value of
+    `best_cv` that are such a name become the id, and `cv_score_names` records {id: name}. A
+    key no résumé has (a deleted or renamed one, "Tailored", "Persona", "_skipped") stays as it
+    is and is still shown under its own text. The marker keeps it from running twice.
+    Returns {account id: jobs changed}."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from backend.analyzer.score_keys import PERSONA, TAILORED, is_resume_key
+    from backend.models.db import Account, Job, Resume
+    if install_row(db, SCORE_KEYS_MIGRATED_KEY) is not None:
+        return {}
+    changed: dict = {}
+    for (account_id,) in db.query(Account.id).all():
+        name_to_id: dict = {}
+        dropped: dict = {}
+        rows = (db.query(Resume.id, Resume.name, Resume.created_at)
+                .filter(Resume.account_id == account_id, Resume.is_base == True).all())  # noqa: E712
+        # oldest first, so the newest of two same-named bases ends up in the map
+        for rid, name, created in sorted(rows, key=lambda r: r[2].timestamp() if r[2] else 0):
+            if not name or name in (TAILORED, PERSONA):
+                continue
+            if name in name_to_id:
+                dropped.setdefault(name, []).append(name_to_id[name])
+            name_to_id[name] = str(rid)
+        for name, older in dropped.items():
+            logger.warning(f"Score keys ({account_id}): {len(older) + 1} résumés are named "
+                           f"{name!r}; their scores go to the newest ({name_to_id[name]})")
+        if not name_to_id:
+            continue
+        n = 0
+        ids = [jid for (jid,) in db.query(Job.id).filter(Job.account_id == account_id,
+                                                         Job.cv_scores.isnot(None)).all()]
+        # chunks committed one by one (idempotent: a key that is already an id is never a name)
+        jobs = (job for i in range(0, len(ids), batch)
+                for job in _chunk_then_commit(db, Job, ids[i:i + batch]))
+        for job in jobs:
+            scores = job.cv_scores if isinstance(job.cv_scores, dict) else None
+            if not scores:
+                continue
+            mapping = {k: name_to_id[k] for k in scores if k in name_to_id and not is_resume_key(k)}
+            report = job.scoring_report if isinstance(job.scoring_report, dict) else None
+            nested = report is not None and "summary" not in report
+            if nested:
+                mapping.update({k: name_to_id[k] for k in report if k in name_to_id})
+            best = job.best_cv if job.best_cv in name_to_id else None
+            if not mapping and not best:
+                continue
+            job.cv_scores = {mapping.get(k, k): v for k, v in scores.items()}
+            flag_modified(job, "cv_scores")
+            if nested:
+                job.scoring_report = {mapping.get(k, k): v for k, v in report.items()}
+                flag_modified(job, "scoring_report")
+            if best:
+                job.best_cv = name_to_id[best]
+            names = dict(job.cv_score_names or {})
+            names.update({rid: name for name, rid in mapping.items()})
+            if best:
+                names[name_to_id[best]] = best
+            job.cv_score_names = names
+            n += 1
+        db.commit()
+        if n:
+            changed[str(account_id)] = n
+    db.add(Setting(key=SCORE_KEYS_MIGRATED_KEY, value="1",
+                   description="Internal: job scores were re-keyed from résumé names to ids once (3.1)"))
+    db.commit()
+    if changed:
+        logger.info(f"Job scores now keyed by résumé id: {changed}")
+    return changed
+
+
 SEED_SEARCHES = [
     {
         "name": "Extension LI",
@@ -1681,6 +1769,7 @@ def run_seeds():
             migrate_llm_settings(db)
             clear_seeded_local_urls(db)
             migrate_llm_provider_keys(db)
+            migrate_cv_score_keys(db)
             migrate_cv_terminology(db)
             migrate_h1b_to_visa_cache(db)
     finally:

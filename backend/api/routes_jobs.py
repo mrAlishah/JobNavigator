@@ -201,12 +201,15 @@ def list_jobs(
         in_flight_detail_map.setdefault(key, []).append(
             {"job_type": r.job_type, "meta": r.meta})
 
+    from backend.analyzer.score_keys import resume_names
+    names = resume_names(db)
     rows = [
         _job_to_dict(
             j,
             tailored_resume_id=tailored_map.get(j.id),
             in_flight=in_flight_map.get(str(j.id), []),
             in_flight_detail=in_flight_detail_map.get(str(j.id), []),
+            names=names,
         )
         for j in jobs
     ]
@@ -1286,8 +1289,17 @@ def _normalize_report(report, best_cv):
 
 
 def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = None,
-                 in_flight_detail: list[dict] | None = None) -> dict:
-    scores = j.cv_scores or {}
+                 in_flight_detail: list[dict] | None = None, names: dict | None = None) -> dict:
+    """`names` is {résumé id: name} for the account (score_keys.resume_names), loaded once by a
+    list caller; a single job loads it itself."""
+    from backend.analyzer.score_keys import display, resume_names
+    if names is None:
+        from sqlalchemy.orm import object_session
+        sess = object_session(j)
+        names = resume_names(sess) if sess is not None else {}
+    # Stored by résumé id, served by the résumé's current name (score_keys.py).
+    scores, report, best_cv = display(j.cv_scores or {}, j.scoring_report, j.best_cv,
+                                      j.cv_score_names, names)
     numeric_scores = [v for v in scores.values() if isinstance(v, (int, float))]
     best_score = max(numeric_scores) if numeric_scores else 0
     return {
@@ -1314,8 +1326,8 @@ def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = 
         "h1b_jd_snippet": j.h1b_jd_snippet,
         "h1b_verdict": j.h1b_verdict,
         "cv_scores": scores,
-        "best_cv": j.best_cv,
-        "scoring_report": _normalize_report(j.scoring_report, j.best_cv),
+        "best_cv": best_cv,
+        "scoring_report": _normalize_report(report, best_cv),
         "best_score": best_score,
         "has_cached_page": bool(j.has_cached_page),
         "page_cached_at": j.page_cached_at.isoformat() if j.page_cached_at else None,

@@ -40,7 +40,7 @@ PREFIX = 'ZZE'
 # this second mark every seeded page opens behind a scrim and every click in the
 # suite times out against it. Cases that are ABOUT an overlay use `raw_page` and
 # seed neither. Bump alongside App.jsx's NEWUI_VERSION.
-NEWUI_VERSION = '2.0.0'
+NEWUI_VERSION = '3.1'
 
 # X-Frame-Options / CSP iframe noise from the Feed's cached-page preview is
 # expected and ignored, exactly as every previous smoke pass did.

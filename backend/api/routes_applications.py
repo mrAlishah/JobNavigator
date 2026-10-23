@@ -427,10 +427,12 @@ def list_applications(
                   .filter(Resume.job_id.in_(job_ids), Resume.is_base == False)  # noqa: E712
                   .order_by(Resume.updated_at.asc()).all()):
             tailored[str(r.job_id)] = r      # asc → last write wins = most recent
+    from backend.analyzer.score_keys import resume_names
+    names = resume_names(db)
     return {
         "total": total,
         "applications": [_app_to_dict(a, lookup, tailored.get(str(a.job_id)),
-                                      str(a.job_id) in with_letter) for a in apps],
+                                      str(a.job_id) in with_letter, names=names) for a in apps],
     }
 
 
@@ -892,8 +894,12 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         tailored = (db.query(Resume)
                     .filter(Resume.job_id == app.job_id, Resume.is_base == False)  # noqa: E712
                     .order_by(Resume.updated_at.desc()).first())
-    cv_name = (tailored.name if tailored else None) or app.cv_version_used or (job.best_cv if job else None)
+    from backend.analyzer.score_keys import display_best, is_resume_key
+    best_key = job.best_cv if job else None
+    cv_name = (tailored.name if tailored else None) or app.cv_version_used or display_best(job, db=db)
     src = tailored
+    if not src and not app.cv_version_used and is_resume_key(best_key):
+        src = db.query(Resume).filter(Resume.id == best_key).first()    # scores are keyed by résumé id
     if not src and cv_name:
         src = db.query(Resume).filter(Resume.name == cv_name).first()
     resume_text = ""
@@ -926,8 +932,15 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
     return {"text": "\n".join(L)}
 
 
-def _app_to_dict(a: Application, lookup=None, tailored=None, has_cover_letter=False) -> dict:
-    """Serialize an Application; pass lookup={lowercase: Company} (from build_company_lookup) to populate company_canonical for alias-aware grouping, else it falls back to the raw company name."""
+def _session_of(obj):
+    from sqlalchemy.orm import object_session
+    return object_session(obj)
+
+
+def _app_to_dict(a: Application, lookup=None, tailored=None, has_cover_letter=False,
+                 names: dict | None = None) -> dict:
+    """Serialize an Application; pass lookup={lowercase: Company} (from build_company_lookup) to populate company_canonical for alias-aware grouping, else it falls back to the raw company name. `names` ({résumé id: name}, score_keys.resume_names) is loaded once by a list caller."""
+    from backend.analyzer.score_keys import display_best
     job = a.job
     raw = job.company if job else None
     canonical_co = (lookup or {}).get((raw or "").lower())
@@ -948,7 +961,7 @@ def _app_to_dict(a: Application, lookup=None, tailored=None, has_cover_letter=Fa
         "company_canonical": canonical_co.name if canonical_co else raw,
         "title": job.title if job else None,
         "url": job.url if job else None,
-        "best_cv": job.best_cv if job else None,
+        "best_cv": display_best(job, names=names, db=_session_of(a)) if job else None,
         "short_id": job.short_id if job else None,
         # posting details the detail pane shows, so it never has to re-fetch the job
         "location": job.location if job else None,

@@ -20,7 +20,7 @@ _REDACT_KEYS = {"dashboard_api_key", "gmail_refresh_token", "claude_code_oauth_t
                 "telegram_bot_token"}
 # Server-side only, never listed (not even redacted) and not writable (not a known key).
 _HIDDEN_KEYS = {"account_cookie_secret", "telegram_own_webhook_secret", "gmail_token_status",
-                "llm_local_seed_cleared", "llm_provider_keys_migrated",
+                "llm_local_seed_cleared", "llm_provider_keys_migrated", "cv_score_keys_migrated",
                 # the per-slot API keys replaced by one key per provider (kept one release for a downgrade)
                 *acct_settings.LEGACY_LLM_KEY_SETTINGS}
 
