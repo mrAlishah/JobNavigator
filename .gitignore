@@ -148,7 +148,7 @@ backend/cover_letter_templates/garamond/
 
 # Claude Code
 .claude/
-CLAUDE.md
+# CLAUDE.md
 docs/*
 !docs/default.png
 !docs/demo.gif
