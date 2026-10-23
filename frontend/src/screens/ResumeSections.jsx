@@ -4,7 +4,7 @@
 // Real data is looser than the EMPTY skeleton (unknown keys, missing sections). Every mutation
 // goes through mutate(), which deep-clones and writes one path, so unknown keys survive.
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
-import { Band, Button, Card, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Select, Switch, Textarea } from '../ui'
+import { Band, Button, Card, DashedAdd, Helper, Input, Label, MoveArrows, RemoveLink, RemoveX, SectionHead, Segmented, Select, Switch, Textarea } from '../ui'
 
 // The résumé sections' add-line IS ui.jsx's DashedAdd (accent ink · 1px dashed
 // --dashadd-border · r6 · 11.5 · h28, `big` = 32/12/500) — re-exported under the
@@ -163,7 +163,7 @@ export function SectionEditor(props) {
   </>
 }
 
-function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage }) {
+function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHint = true, onError, onRemoved, hasProfileImage, imagePosition }) {
   switch (name) {
     case 'Header': return <HeaderEditor data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Summary': return <SummaryEditor pageHint={pageHint} data={data} setField={setField} baseSummary={baseData?.summary} />
@@ -172,19 +172,28 @@ function SectionBody({ name, data, setField, mutate, baseData, emptyNote, pageHi
     case 'Education': return <EducationEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Projects': return <ProjectsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
     case 'Publications': return <PublicationsEditor emptyNote={emptyNote} data={data} setField={setField} mutate={mutate} onRemoved={onRemoved} />
-    case 'Settings': return <SettingsEditor data={data} setField={setField} hasProfileImage={hasProfileImage} />
+    case 'Settings': return <SettingsEditor data={data} setField={setField} hasProfileImage={hasProfileImage} imagePosition={imagePosition} />
     default: return null
   }
 }
 
-// Both switches read ON until the field says false (upstream's footer is opt-in: `=== true`).
-export function SettingsEditor({ data, setField, hasProfileImage }) {
+const PHOTO_SIDES = [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }]
+
+// Both switches read ON until the field says false (upstream's footer is opt-in: `=== true`). The photo side is
+// `imagePosition` (the editor resolves a legacy template id's side); without it, the saved side, else right.
+export function SettingsEditor({ data, setField, hasProfileImage, imagePosition }) {
+  const side = imagePosition || (data.profile_image_position === 'left' ? 'left' : 'right')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 10 }}>
       <Switch on={data.profile_image_enabled !== false} onChange={(v) => setField('profile_image_enabled', v)} label="Profile image"
         disabled={hasProfileImage === false}
         title={hasProfileImage === false ? 'The selected template has no profile image' : 'Show the profile image in templates that support it.'} />
       <Helper>Shows the picture from Settings › Résumés in templates that support one.</Helper>
+      {hasProfileImage !== false && <>
+        <Label>Photo position</Label>
+        <Segmented size="sm" ariaLabel="Photo position" options={PHOTO_SIDES} value={side} disabled={data.profile_image_enabled === false}
+          onChange={(v) => setField('profile_image_position', v)} />
+      </>}
       <Switch on={data.footer_enabled !== false} onChange={(v) => setField('footer_enabled', v)} label="Page footer"
         title="Print your name, the job title and the company at the foot of every page of this résumé's PDF and Word downloads." />
       <Helper>Adds “name - job title - company” in small type at the foot of every page.</Helper>
