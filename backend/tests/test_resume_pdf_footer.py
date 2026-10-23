@@ -103,6 +103,12 @@ def test_empty_footer_text_renders_no_visible_markup():
     assert "font-size" not in html
 
 
+def _page_margin(html):
+    """The last `@page` margin as [top, side, bottom, side]: what Chromium prints with. The renderer appends
+    its footer band after the template's own rule (or the template, if it lays out its pages, writes it itself)."""
+    return re.findall(r"@page\s*\{[^}]*?\bmargin:\s*([^;]+);", html)[-1].split()
+
+
 # ── /resumes/{id}/pdf wiring ─────────────────────────────────────────────────
 # These stub out Playwright itself (no real Chromium) and assert export_pdf calls
 # page.pdf() with the right footer/margin for each of the three resume kinds.
@@ -156,7 +162,8 @@ async def test_pdf_export_adds_footer_for_a_job_linked_tailored_resume(test_db, 
     # footer -- it does not itself shrink the CSS layout used for pagination. Without
     # the matching @page bottom margin in the rendered HTML, a wrapped bullet/entry
     # lays out flush to the physical page edge and paints on top of the footer.
-    assert "margin: 0.5in 0 0.4in 0" in captured["html"]
+    margin = _page_margin(captured["html"])
+    assert (margin[0], margin[2]) == ("0.5in", "0.4in")
 
 
 @pytest.mark.asyncio
@@ -172,7 +179,8 @@ async def test_pdf_export_has_no_footer_for_a_base_resume(test_db, monkeypatch):
 
     assert captured["display_header_footer"] is False
     assert captured["margin"]["bottom"] == "0"
-    assert "margin: 0.5in 0 0in 0" in captured["html"]
+    margin = _page_margin(captured["html"])
+    assert (margin[0], margin[2]) == ("0.5in", "0in")
 
 
 @pytest.mark.asyncio
@@ -192,7 +200,8 @@ async def test_pdf_export_has_no_footer_for_a_freeform_tailor(test_db, monkeypat
 
     assert captured["display_header_footer"] is False
     assert captured["margin"]["bottom"] == "0"
-    assert "margin: 0.5in 0 0in 0" in captured["html"]
+    margin = _page_margin(captured["html"])
+    assert (margin[0], margin[2]) == ("0.5in", "0in")
 
 
 @pytest.mark.asyncio
@@ -256,54 +265,42 @@ def _page_top_margin_in(name):
 
 
 def _render_with_footer_margin(name, footer_reserved_in):
-    """footer_reserved_in=None omits the variable entirely, matching how preview and
-    base/freeform PDF renders call _render_html (no footer_reserved_in kwarg at all),
-    so the template's `| default(0)` fallback is what's under test."""
-    from jinja2 import Environment, FileSystemLoader
-    from markupsafe import Markup
-    env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR / name)))
-    env.filters["bold"] = lambda text: Markup(re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text or ""))
-    kwargs = dict(
-        header={"name": CANDIDATE, "contact_items": []}, summary="", experience=[],
-        skills={}, education=[], projects=[], publications=[],
-        page_format="letter", fonts_base="", fonts={},
-    )
-    if footer_reserved_in is not None:
-        kwargs["footer_reserved_in"] = footer_reserved_in
-    return env.get_template("template.html.j2").render(**kwargs)
+    """The renderer's output for a template. footer_reserved_in=None omits the kwarg, as the preview and
+    base/freeform PDF renders call _render_html, so the default (no band) is what's under test. The official
+    templates are upstream's own files; the band and the whole-entries rule are added to their output
+    (backend/resume_template_overrides.py), the fork's templates write them themselves."""
+    from backend.api.routes_resumes import _render_html
+    kwargs = {} if footer_reserved_in is None else {"footer_reserved_in": footer_reserved_in}
+    return _render_html({"header": {"name": CANDIDATE, "contact_items": []}}, name, "letter", **kwargs)
 
 
 @pytest.mark.parametrize("name", _template_names())
 def test_template_page_margin_reserves_the_footer_band(name):
-    html = _render_with_footer_margin(name, 0.4)
-    top = _page_top_margin_in(name)
-    assert f"margin: {top}in 0 0.4in 0" in html
+    margin = _page_margin(_render_with_footer_margin(name, 0.4))
+    assert (margin[0], margin[2]) == (f"{_page_top_margin_in(name)}in", "0.4in")
 
 
 @pytest.mark.parametrize("name", _template_names())
 def test_template_page_margin_is_zero_without_a_footer(name):
     """No footer_reserved_in passed (preview, base/freeform PDFs) -- no bottom band,
     but every page (not just page 1) still gets its top margin."""
-    html = _render_with_footer_margin(name, None)
-    top = _page_top_margin_in(name)
-    assert f"margin: {top}in 0 0in 0" in html
+    margin = _page_margin(_render_with_footer_margin(name, None))
+    assert (margin[0], margin[2]) == (f"{_page_top_margin_in(name)}in", "0in")
 
 
 @pytest.mark.parametrize("name", _template_names())
 def test_template_reapplies_top_margin_on_every_physical_page(name):
     """Regression: .page's own top padding only wraps the start of the whole résumé
-    flow, so page 2+ previously had zero top margin regardless of the footer. The fix
-    moves that spacing to @page (reapplied by Chromium per physical page) and zeroes
-    .page's own top/bottom padding in print so page 1 isn't double-padded."""
+    flow, so page 2+ previously had zero top margin regardless of the footer. The top
+    spacing lives in @page (reapplied by Chromium per physical page) and .page has no
+    vertical padding in print, so page 1 isn't double-padded."""
     html = _render_with_footer_margin(name, None)
-    assert "padding-top: 0; padding-bottom: 0;" in html
+    assert _page_margin(html)[0] == f"{_page_top_margin_in(name)}in"
+    assert re.search(r"@media print\s*\{[^}]*\.page\s*\{[^}]*padding(-top)?:\s*0", html)
 
 
 @pytest.mark.parametrize("name", _template_names())
 def test_template_keeps_bullets_and_entries_whole_across_a_page_break(name):
     html = _render_with_footer_margin(name, 0.4)
-    start = html.find("@media print")
-    end = html.find("</style>", start)
-    print_block = html[start:end]
-    assert "ul.bullets li" in print_block
-    assert "break-inside: avoid" in print_block
+    blocks = [html[m.start():html.find("</style>", m.start())] for m in re.finditer("@media print", html)]
+    assert any("ul.bullets li" in block and "break-inside: avoid" in block for block in blocks)

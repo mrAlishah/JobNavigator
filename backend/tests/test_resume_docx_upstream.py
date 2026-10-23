@@ -1,7 +1,8 @@
 """Upstream 3.0's Word export tests, run against the fork's builder (`test_resume_docx.py` holds the fork's own).
 
-Two differences are deliberate and adapted below: the fork prints Skills before Experience (the Professional
-reference order) and its footer is on by default for a job-linked tailored copy, where upstream's is opt-in.
+One difference is deliberate and adapted below: the fork's footer is on by default for a job-linked tailored
+copy, where upstream's is opt-in. (The section order is upstream's again for generic templates; the Professional
+templates keep their own, see test_resume_docx_section_order.py.)
 """
 import io
 import uuid
@@ -100,7 +101,7 @@ def test_docx_contains_every_section_in_the_pdf_order(client, test_db):
     for heading in ("Experience", "Skills", "Education", "Projects"):
         assert heading in text
     assert "Publications" not in text   # an empty section prints no heading
-    assert text.index("Skills") < text.index("Experience") < text.index("Education") < text.index("Projects")   # the fork's order
+    assert text.index("Experience") < text.index("Skills") < text.index("Education") < text.index("Projects")
     joined = "\n".join(text)
     for expected in ("Senior Product Manager", "Product leader.", "PM at Acme", "2020 - 2024", "Ran the platform.",
                      "Languages", "Go, Python", "TU Berlin", "BSc CS", "Side", "A thing"):

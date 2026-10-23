@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const TEMPLATES = [
-  { id: 'professional-top-left-image', name: 'Professional (Top-Left Image)', has_profile_image: true, docx: { style_overrides: true } },
+  { id: 'professional-photo', name: 'Professional Photo', has_profile_image: true, docx: { style_overrides: true }, aliases: { 'professional-top-left-image': 'left', 'professional-top-right-image': 'right' } },   // the backend hides the legacy ids; the résumé below still stores one
   { id: 'modern', name: 'Modern', docx: {} },
 ]
 const doc = { id: 'r1', name: 'CV', is_base: true, template: 'professional-top-left-image', page_format: 'letter', json_data: { header: { name: 'Dana', contact_items: [] } } }

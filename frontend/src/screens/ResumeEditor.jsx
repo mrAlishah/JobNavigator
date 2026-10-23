@@ -16,6 +16,7 @@ import {
   SectionShell, SectionEditor, BandRule, StyleSettings, STYLE_AREAS, styleAreaLabel,
 } from './ResumeSections'
 import ResumeName from './ResumeName'
+import { dataWithSavedSide, effectiveImageSide, templateFor } from '../templateAliases'
 import { Band, Button, Check, ChoiceCard, ChoiceModal, ChoiceRow, CopyGlyph, FooterRow, Heading, HeaderRow, Helper, IconButton, Input, Label, Menu, MenuHead, MenuItem, ModalPanel, Mono, NavLink, Pill, Rule, ScoreRing, Spinner, Surface, Textarea, ToolbarTrigger } from '../ui'
 
 // contiguous prefix/suffix word diff → { before, removed, added, after }
@@ -430,8 +431,9 @@ export default function ResumeEditor() {
   const persist = useCallback((patch) => {
     setSaving(true)
     clearTimeout(saveTimer.current)
-    pendingSave.current = patch
-    saveTimer.current = setTimeout(() => { pendingSave.current = null; sendSave(patch) }, 500)
+    const pending = { ...pendingSave.current, ...patch }     // a template pick and an edit inside the delay are both sent
+    pendingSave.current = pending
+    saveTimer.current = setTimeout(() => { pendingSave.current = null; sendSave(pending) }, 500)
   }, [sendSave])
   // Sends the patch the timer still owes now (a switch, a download); undefined when none.
   const flushSave = useCallback(() => {
@@ -442,7 +444,13 @@ export default function ResumeEditor() {
   }, [sendSave])
   useFlushBeforeSwitch(flushSave)
   const onData = useCallback((next) => { setData(next); persist({ json_data: next }) }, [persist])
-  const pickTemplate = (t) => { setTemplate(t); setTplOpen(false); persist({ template: t }) }
+  const pickTemplate = (t) => {
+    // A résumé that still stores a legacy Professional id keeps its photo side when it is switched: it is saved with the template.
+    const next = dataWithSavedSide(templates, template, data)
+    setTemplate(t); setTplOpen(false)
+    if (next === data) persist({ template: t })
+    else { setData(next); persist({ template: t, json_data: next }) }
+  }
   const pickFormat = (f) => { setFormat(f); setFmtOpen(false); persist({ page_format: f }) }
 
   // live PDF preview — one request at a time (abort the in-flight render before the
@@ -474,7 +482,7 @@ export default function ResumeEditor() {
 
   // "Select & style": the same template and style CSS as the PDF, as HTML whose areas can be clicked
   // (a PDF viewer swallows clicks). Re-rendered on the PDF's debounce so it follows the autosave.
-  const tpl = templates.find((item) => item.id === template)
+  const tpl = templateFor(templates, template)       // a legacy Professional id stands for Professional Photo
   const supportsStyle = !!tpl?.docx?.style_overrides
   const selectOn = selectMode && supportsStyle
   useEffect(() => {
@@ -556,7 +564,7 @@ export default function ResumeEditor() {
 
   const counts = sectionCounts(data)
   const sectionNames = resumeSectionNames(doc)
-  const tplLabel = templates.find((t) => t.id === template)?.name || template || 'Template'
+  const tplLabel = tpl?.name || template || 'Template'
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -683,7 +691,7 @@ export default function ResumeEditor() {
           {sectionNames.map((name) => (
             <SectionShell key={name} name={name} count={counts[name]} open={open.has(name)} onToggle={() => toggle(name)}
               meta={changedSections.has(name) ? <span title="Contains unreviewed tailoring changes" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--warn)' }}>● changed by tailoring</span> : null}>
-              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={tpl?.has_profile_image} onError={(msg) => pushToast({ kind: 'error', msg })}
+              <SectionEditor name={name} data={data} setField={setField} mutate={mutate} baseData={baseData} hasProfileImage={tpl?.has_profile_image} imagePosition={effectiveImageSide(templates, template, data)} onError={(msg) => pushToast({ kind: 'error', msg })}
                 onRemoved={(msg, undo) => pushToast({ kind: 'undo', msg, action: 'Undo', onAction: undo })} />
             </SectionShell>
           ))}
@@ -702,7 +710,7 @@ export default function ResumeEditor() {
                 onClick={() => { setTplOpen((v) => !v); setFmtOpen(false) }} />
               {tplOpen && (
                   <Menu role="listbox" ariaLabel="Résumé template" className="v2-scroll" style={{ position: 'absolute', top: '100%', left: 0, marginTop: 5, zIndex: 21, width: 190, maxHeight: 300, overflow: 'auto' }}>
-                    {templates.map((t) => <MenuItem key={t.id} role="option" ariaSelected={t.id === template} selected={t.id === template} onClick={() => pickTemplate(t.id)}>{t.name}</MenuItem>)}
+                    {templates.map((t) => <MenuItem key={t.id} role="option" ariaSelected={t.id === tpl?.id} selected={t.id === tpl?.id} onClick={() => pickTemplate(t.id)}>{t.name}</MenuItem>)}
                   </Menu>
               )}
             </div>}
@@ -725,7 +733,7 @@ export default function ResumeEditor() {
             {selectOn
               ? <>
                 {selectHtml && <iframe ref={selectFrame} title="Select preview" srcDoc={selectHtml} sandbox="allow-scripts" onLoad={pushSelection}
-                  style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />}
+                  style={{ width: '100%', height: '100%', border: 'none', background: 'var(--iframe-bg)' }} />}
                 {selected && (
                   <Surface key={selected} style={{ position: 'absolute', top: 12, right: 12, width: 330, maxHeight: 'calc(100% - 24px)', overflow: 'auto', padding: 12, zIndex: 5 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>

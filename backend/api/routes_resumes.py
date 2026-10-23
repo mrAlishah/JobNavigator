@@ -20,6 +20,8 @@ from backend.accounts.owned import get_owned, get_owned_or_404, get_persona, own
 from backend.models.db import get_db, Resume, TracerLink, TracerClickEvent, Job, Application, SessionLocal, utcnow, Persona
 from backend.accounts.settings import get_setting
 from backend.api._input import str_field
+from backend import resume_template_overrides as _template_overrides
+from backend import resume_template_aliases as _aliases
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
 from backend.job_monitor import launch_background, JobAlreadyRunningError
 
@@ -247,7 +249,26 @@ def _discover_templates() -> list[dict]:
                 pass
         meta["has_profile_image"] = "profile_image_path" in (d / "template.html.j2").read_text(encoding="utf-8")
         templates.append(meta)
-    return templates
+    return _aliases.present(templates)      # the legacy Professional ids are not offered; the photo template lists them
+
+
+def _docx_style_for(requested, json_data, stored_template=None):
+    """The `docx` block of the template a résumé uses (None for a template without one), with the photo side of
+    this résumé: the side is per résumé, not the template's static meta.json value."""
+    resolved = _aliases.resolve(requested, json_data, stored_template=stored_template)
+    style = next((item.get("docx") for item in _discover_templates() if item["id"] == resolved.template), None)
+    if style and style.get("image") and resolved.position:
+        style = {**style, "image": resolved.position}
+    return style
+
+
+def _validated_template(name):
+    """`validate_template_name` for a résumé. A legacy Professional id is valid and is returned as spelled (the stored
+    id is never rewritten); it only has to resolve to a template that exists. Anything else is checked as before: 422."""
+    if isinstance(name, str) and name in _aliases.LEGACY_TEMPLATE_ALIASES:
+        validate_template_name(_aliases.resolve(name).template, TEMPLATES_DIR)
+        return name
+    return validate_template_name(name, TEMPLATES_DIR)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -557,6 +578,8 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     """
     from jinja2 import Environment, FileSystemLoader
 
+    resolved = _aliases.resolve(template_name, json_data)       # a legacy Professional id loads professional-photo, on its old side
+    template_name = resolved.template
     allowed = template_paths(TEMPLATES_DIR)
     # A stored name that no longer exists on this install (a personal template, an old
     # default) renders with the first available template instead of failing the page.
@@ -595,9 +618,17 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
         footer_reserved_in=footer_reserved_in,
         profile_image_path=profile_image_path,
         profile_image_enabled=profile_image_enabled,
+        profile_image_position=resolved.position,
         section_titles=section_titles,
         style_css=style_css,
     ))
+    # A template that reads `footer_reserved_in` / `section_titles` does that itself (see resume_template_overrides.py);
+    # an official one, which does not, gets the fork's print layout and custom headings applied to its output.
+    read = _template_overrides.reads(template_dir, env.filters)
+    if "footer_reserved_in" not in read:
+        html = _template_overrides.print_layout(html, footer_reserved_in)
+    if "section_titles" not in read:
+        html = _template_overrides.section_titles(html, _section_titles(json_data))
     return _with_select_script(html) if select_mode else html
 
 
@@ -768,7 +799,7 @@ def _build_docx(
         # secondary lines (kind "small") one point under it; headings pass their own `pt` and keep it.
         if cur.get("size") and (kind or pt is None):
             pt = cur["size"] - (kind == "small")
-        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", text or "")):
+        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", str(text or ""))):
             if chunk:
                 r = par.add_run(chunk)
                 if cur.get("font"):
@@ -845,7 +876,7 @@ def _build_docx(
         p.paragraph_format.tab_stops.add_tab_stop(body_width, WD_TAB_ALIGNMENT.RIGHT)
         runs(p, left, bold=bold, color=color, pt=pt, kind="main" if pt else None)
         if right:
-            r = p.add_run("\t" + right)
+            r = p.add_run("\t" + str(right))
             if cur.get("font"):
                 r.font.name = cur["font"]
             if st:
@@ -865,9 +896,13 @@ def _build_docx(
                 indent = pp.get("indent", 9.7)
                 pf.left_indent, pf.first_line_indent, pf.space_after = Pt(indent), Pt(-indent * 0.67 if "indent" in pp else -6.5), Pt(0.45)
                 box(p, part)
-                runs(p, (_BULLETS[pp["bullet"]] if "bullet" in pp else "• ") + b)
+                runs(p, (_BULLETS[pp["bullet"]] if "bullet" in pp else "• ") + str(b))
             else:
                 runs(para(style="List Bullet"), b)
+
+    def entries(key):
+        # A tailored or imported résumé can hold a string or null where an entry belongs: skip it, print the rest.
+        return [e for e in (d.get(key) if isinstance(d.get(key), list) else []) if isinstance(e, dict)]
 
     header = d.get("header") if isinstance(d.get("header"), dict) else {}
     begin("sec", "header")
@@ -925,51 +960,62 @@ def _build_docx(
             section("Summary")
         runs(para("summary.text"), d["summary"], color=ink)
 
-    skills = d.get("skills")
-    if skills:
-        section("Skills")
-        pairs = skills.items() if isinstance(skills, dict) else [(s.get("category"), s.get("items")) for s in skills]
-        for label, value in pairs:
-            p = para("skills.line")
-            runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
-            runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
+    def skills_section():
+        skills = d.get("skills")
+        pairs = list(skills.items()) if isinstance(skills, dict) else [
+            (s.get("category"), s.get("items")) for s in (skills if isinstance(skills, list) else []) if isinstance(s, dict)]
+        if pairs:
+            section("Skills")
+            for label, value in pairs:
+                p = para("skills.line")
+                if label:
+                    runs(p, f"{label}: ", bold=True, pt=meta_pt, kind="main", part="skills.label")
+                runs(p, ", ".join(map(str, value)) if isinstance(value, list) else str(value or ""), pt=meta_pt, kind="main")
 
-    if d.get("experience"):
-        section("Experience")
-        for job in d["experience"]:
-            begin("card", "experience.entry")
-            date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
-            if st:
-                p = para("experience.title")
-                p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
-                box(p, "experience.title")
-                title, company = job.get("title"), job.get("company")
-                runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
-                if title and company:
-                    runs(p, " - " + company, pt=entry_pt, color=ink, kind="main")
-                runs(para("experience.meta"), " | ".join(x for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
-            else:
-                row(f"{job.get('title') or ''}{' at ' + job['company'] if job.get('company') else ''}", date)
-                if job.get("location"):
-                    doc.add_paragraph(job["location"])
-            details(job, "experience")
+    def experience_section():
+        if entries("experience"):
+            section("Experience")
+            for job in entries("experience"):
+                begin("card", "experience.entry")
+                date = job.get("date") or job.get("dates") or ""    # templates disagree on the key; the editor writes `date`
+                if st:
+                    p = para("experience.title")
+                    p.paragraph_format.space_before, p.paragraph_format.keep_with_next = Pt(3), True
+                    box(p, "experience.title")
+                    title, company = job.get("title"), job.get("company")
+                    runs(p, title or company or "", bold=True, pt=entry_pt, color=ink, kind="main")
+                    if title and company:
+                        runs(p, " - " + _as_text(company), pt=entry_pt, color=ink, kind="main")
+                    runs(para("experience.meta"), " | ".join(_as_text(x) for x in (job.get("location"), date) if x), pt=meta_pt, color=muted, kind="small")
+                else:
+                    row(f"{_as_text(job.get('title'))}{' at ' + _as_text(job['company']) if job.get('company') else ''}", date)
+                    if job.get("location"):
+                        doc.add_paragraph(_as_text(job["location"]))
+                details(job, "experience")
 
-    if d.get("education"):
+    # The template's own order: docx.titles is written in it (Professional: Skills before Experience); a template
+    # without it gets the generic one, Experience before Skills, as the PDF templates and upstream print them.
+    order = list(st.get("titles", {}))
+    skills_first = "Skills" in order and "Experience" in order and order.index("Skills") < order.index("Experience")
+    for build in (skills_section, experience_section) if skills_first else (experience_section, skills_section):
+        build()
+
+    if entries("education"):
         section("Education")
-        for edu in d["education"]:
+        for edu in entries("education"):
             begin("card", "education.entry")
             row(edu.get("school") or "", edu.get("location") or "", color=ink, part="education.school", rpart="education.location")
             if edu.get("degree"):
                 runs(para("education.degree"), edu["degree"], pt=meta_pt, kind="small")
 
     for key, title in (("projects", "Projects"), ("publications", "Publications")):
-        if d.get(key):
+        if entries(key):
             section(title)
-            for item in d[key]:
+            for item in entries(key):
                 begin("card", f"{key}.entry")
                 row(item.get("name") or item.get("title") or "", color=ink, pt=entry_pt, part=f"{key}.name")
                 if item.get("url"):
-                    link(para(f"{key}.url"), item["url"], item["url"])
+                    link(para(f"{key}.url"), _as_text(item["url"]), _as_text(item["url"]))
                 details(item, key)
 
     end("sec")
@@ -1489,7 +1535,7 @@ def create_resume(body: dict, db: Session = Depends(get_db)):
     # gets, instead of an AttributeError 500 (R4-T1-20).
     name = str_field(body, "name", required=True)
     if "template" in body:
-        validate_template_name(body["template"], TEMPLATES_DIR)
+        _validated_template(body["template"])
 
     # Body ids must be the account's own rows (MT-5): 404 for anything else.
     resume = Resume(
@@ -1886,7 +1932,8 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
     # Validate before the first setattr so a bad template can't be half-applied
     # (it is also the value every later render reads — R4-T5-01).
     if "template" in body:
-        validate_template_name(body["template"], TEMPLATES_DIR)
+        _validated_template(body["template"])
+    old_template = resume.template
     # Re-linking a résumé: the new parent / job must be the account's own (MT-5).
     body = dict(body)
     # A rename gets the same check as a create: a blank or non-string name is a 400.
@@ -1905,6 +1952,11 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
             # pairs in a different order compare equal — a pure reorder (e.g. the editor's ▲▼) was silently dropped, so force the column dirty.
             if key == "json_data":
                 flag_modified(resume, "json_data")
+    if "template" in body:      # a legacy row switched to another template keeps its photo side in its data
+        kept = _aliases.keep_position(old_template, resume.template, resume.json_data)
+        if kept is not None:
+            resume.json_data = kept
+            flag_modified(resume, "json_data")
 
     resume.updated_at = utcnow()
     db.commit()
@@ -2048,7 +2100,8 @@ def preview_resume(resume_id: str, template: Optional[str] = None, format: Optio
     profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
     json_data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
-    html = _render_html(json_data, template or resume.template, format or resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled, select_mode=select)
+    requested = template or resume.template
+    html = _render_html(_aliases.for_render(json_data, requested, resume.template), requested, format or resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled, select_mode=select)
     return HTMLResponse(content=html, headers={"Content-Security-Policy": _PREVIEW_CSP})
 
 
@@ -2082,7 +2135,7 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
 
     profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
-    html = _render_html(pdf_data, tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
+    html = _render_html(_aliases.for_render(pdf_data, tpl, resume.template), tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
 
     try:
         pdf_bytes = await _render_pdf(
@@ -2221,12 +2274,12 @@ def export_docx(resume_id: str, template: Optional[str] = None, format: Optional
     """Export editable Word text using Professional styling when the template supplies it."""
     resume = get_owned_or_404(db, Resume, resume_id)
 
-    selected_template = validate_template_name(template, TEMPLATES_DIR) if template is not None else resume.template
+    requested = _validated_template(template) if template is not None else resume.template
     fmt = format or resume.page_format or "letter"
     json_data = resume.json_data or {}
     data = _xml_safe(_rewrite_urls_with_tracers(json_data, str(resume.id), db))
     footer_text = _xml_safe(_resume_footer_text(db, resume))
-    style = next((item.get("docx") for item in _discover_templates() if item["id"] == selected_template), None)
+    style = _docx_style_for(requested, json_data, resume.template)
     try:
         image = None
         if style and style.get("image"):
