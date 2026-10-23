@@ -195,6 +195,17 @@ def test_the_word_file_puts_the_picture_on_the_effective_side(api_client, test_d
     assert _header_cells(document) == ([(True, False), (False, True)] if image_left else [(False, True), (True, False)])
 
 
+@pytest.mark.parametrize("stored,asked,right", [(LEFT, CANON, False), (RIGHT, CANON, True), (LEFT, RIGHT, True), (RIGHT, LEFT, False)])
+def test_the_pdf_follows_the_editors_query_param_over_a_stored_legacy_row(api_client, test_db, monkeypatch, stored, asked, right):
+    """The editor asks for ?template= while the row still stores the old id; the PDF must agree with the preview."""
+    resume = make(test_db, stored)
+    captured = {}
+    _fake_browser(monkeypatch, captured)
+    assert api_client.get(f"/api/resumes/{resume.id}/pdf", params={"template": asked}).status_code == 200
+    assert reversed_(captured["html"]) is right
+    assert reversed_(api_client.get(f"/api/resumes/{resume.id}/preview", params={"template": asked}).text) is right
+
+
 def test_word_follows_the_editors_query_param_over_a_stored_legacy_row(api_client, test_db):
     resume = make(test_db, LEFT)
     _, document = _fetch(api_client, resume, f"?template={CANON}")
