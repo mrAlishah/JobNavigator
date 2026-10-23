@@ -82,7 +82,7 @@ To let the résumé editor restyle a template ("Select & style": fonts, sizes, s
 
 - set `"style_overrides": true` in the `docx` block of its `meta.json`;
 - end its `<style>` block with `{{ style_css | default("") | safe }}`;
-- mark the markup the way `professional-top-left-image/template.html.j2` does: `data-section="page"`, `"header"` and `"image"` on the page, header and picture, and `<div class="section sec-<name>" data-section="<name>">` for each section;
+- mark the markup the way `professional-photo/template.html.j2` does: `data-section="page"`, `"header"` and `"image"` on the page, header and picture, and `<div class="section sec-<name>" data-section="<name>">` for each section;
 - make the selectors in `_STYLE_PARTS` (`backend/api/routes_resumes.py`) match your classes. `test_every_part_selector_matches_something_in_the_template` in `backend/tests/test_resume_style_overrides.py` checks that for the two Professional templates; add yours to its list;
 - fonts: a template can ship a font as `fonts/<Family>-<Weight>.ttf` (`Regular`, `Bold`, `SemiBold`…); it is embedded in the PDF only when a style picks that family. Add the family to `_STYLE_FONTS` (`routes_resumes.py`) and `STYLE_FONTS` (`ResumeSections.jsx`). `.ttf` files are git-ignored, so they are not committed unless you force-add them.
 
