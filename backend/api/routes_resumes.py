@@ -21,6 +21,7 @@ from backend.models.db import get_db, Resume, TracerLink, TracerClickEvent, Job,
 from backend.accounts.settings import get_setting
 from backend.api._input import str_field
 from backend import resume_template_overrides as _template_overrides
+from backend import resume_template_aliases as _aliases
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
 from backend.job_monitor import launch_background, JobAlreadyRunningError
 
@@ -248,7 +249,26 @@ def _discover_templates() -> list[dict]:
                 pass
         meta["has_profile_image"] = "profile_image_path" in (d / "template.html.j2").read_text(encoding="utf-8")
         templates.append(meta)
-    return templates
+    return _aliases.present(templates)      # the legacy Professional ids are not offered; the photo template lists them
+
+
+def _docx_style_for(requested, json_data, stored_template=None):
+    """The `docx` block of the template a résumé uses (None for a template without one), with the photo side of
+    this résumé: the side is per résumé, not the template's static meta.json value."""
+    resolved = _aliases.resolve(requested, json_data, stored_template=stored_template)
+    style = next((item.get("docx") for item in _discover_templates() if item["id"] == resolved.template), None)
+    if style and style.get("image") and resolved.position:
+        style = {**style, "image": resolved.position}
+    return style
+
+
+def _validated_template(name):
+    """`validate_template_name` for a résumé. A legacy Professional id is valid and is returned as spelled (the stored
+    id is never rewritten); it only has to resolve to a template that exists. Anything else is checked as before: 422."""
+    if isinstance(name, str) and name in _aliases.LEGACY_TEMPLATE_ALIASES:
+        validate_template_name(_aliases.resolve(name).template, TEMPLATES_DIR)
+        return name
+    return validate_template_name(name, TEMPLATES_DIR)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -558,6 +578,8 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     """
     from jinja2 import Environment, FileSystemLoader
 
+    resolved = _aliases.resolve(template_name, json_data)       # a legacy Professional id loads professional-photo, on its old side
+    template_name = resolved.template
     allowed = template_paths(TEMPLATES_DIR)
     # A stored name that no longer exists on this install (a personal template, an old
     # default) renders with the first available template instead of failing the page.
@@ -596,6 +618,7 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
         footer_reserved_in=footer_reserved_in,
         profile_image_path=profile_image_path,
         profile_image_enabled=profile_image_enabled,
+        profile_image_position=resolved.position,
         section_titles=section_titles,
         style_css=style_css,
     ))
@@ -1512,7 +1535,7 @@ def create_resume(body: dict, db: Session = Depends(get_db)):
     # gets, instead of an AttributeError 500 (R4-T1-20).
     name = str_field(body, "name", required=True)
     if "template" in body:
-        validate_template_name(body["template"], TEMPLATES_DIR)
+        _validated_template(body["template"])
 
     # Body ids must be the account's own rows (MT-5): 404 for anything else.
     resume = Resume(
@@ -1909,7 +1932,8 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
     # Validate before the first setattr so a bad template can't be half-applied
     # (it is also the value every later render reads — R4-T5-01).
     if "template" in body:
-        validate_template_name(body["template"], TEMPLATES_DIR)
+        _validated_template(body["template"])
+    old_template = resume.template
     # Re-linking a résumé: the new parent / job must be the account's own (MT-5).
     body = dict(body)
     # A rename gets the same check as a create: a blank or non-string name is a 400.
@@ -1928,6 +1952,11 @@ def update_resume(resume_id: str, body: dict, db: Session = Depends(get_db)):
             # pairs in a different order compare equal — a pure reorder (e.g. the editor's ▲▼) was silently dropped, so force the column dirty.
             if key == "json_data":
                 flag_modified(resume, "json_data")
+    if "template" in body:      # a legacy row switched to another template keeps its photo side in its data
+        kept = _aliases.keep_position(old_template, resume.template, resume.json_data)
+        if kept is not None:
+            resume.json_data = kept
+            flag_modified(resume, "json_data")
 
     resume.updated_at = utcnow()
     db.commit()
@@ -2071,7 +2100,8 @@ def preview_resume(resume_id: str, template: Optional[str] = None, format: Optio
     profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
     json_data = _rewrite_urls_with_tracers(resume.json_data or {}, str(resume.id), db)
-    html = _render_html(json_data, template or resume.template, format or resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled, select_mode=select)
+    requested = template or resume.template
+    html = _render_html(_aliases.for_render(json_data, requested, resume.template), requested, format or resume.page_format, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled, select_mode=select)
     return HTMLResponse(content=html, headers={"Content-Security-Policy": _PREVIEW_CSP})
 
 
@@ -2105,7 +2135,7 @@ async def export_pdf(resume_id: str, template: Optional[str] = None, format: Opt
 
     profile_image_path, profile_image_enabled = _profile_image_for(resume, db)
 
-    html = _render_html(pdf_data, tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
+    html = _render_html(_aliases.for_render(pdf_data, tpl, resume.template), tpl, fmt, footer_reserved_in=bottom_margin_in, profile_image_path=profile_image_path, profile_image_enabled=profile_image_enabled)
 
     try:
         pdf_bytes = await _render_pdf(
@@ -2244,12 +2274,12 @@ def export_docx(resume_id: str, template: Optional[str] = None, format: Optional
     """Export editable Word text using Professional styling when the template supplies it."""
     resume = get_owned_or_404(db, Resume, resume_id)
 
-    selected_template = validate_template_name(template, TEMPLATES_DIR) if template is not None else resume.template
+    requested = _validated_template(template) if template is not None else resume.template
     fmt = format or resume.page_format or "letter"
     json_data = resume.json_data or {}
     data = _xml_safe(_rewrite_urls_with_tracers(json_data, str(resume.id), db))
     footer_text = _xml_safe(_resume_footer_text(db, resume))
-    style = next((item.get("docx") for item in _discover_templates() if item["id"] == selected_template), None)
+    style = _docx_style_for(requested, json_data, resume.template)
     try:
         image = None
         if style and style.get("image"):

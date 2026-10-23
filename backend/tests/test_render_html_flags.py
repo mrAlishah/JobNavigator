@@ -23,6 +23,6 @@ def test_render_survives_flags_stored_in_json_data(template, flag):
 
 def test_template_list_identifies_image_capability():
     templates = {item["id"]: item for item in _discover_templates()}
-    assert templates["professional-top-left-image"]["has_profile_image"] is True
-    assert templates["professional-top-right-image"]["has_profile_image"] is True
+    assert templates["professional-photo"]["has_profile_image"] is True
+    assert "professional-top-left-image" not in templates and "professional-top-right-image" not in templates    # legacy ids are aliases, not templates
     assert templates["helvetica"]["has_profile_image"] is False

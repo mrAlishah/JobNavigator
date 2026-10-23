@@ -41,7 +41,7 @@ MALFORMED = {
 
 STYLES = {
     "generic template": None,
-    "professional template": next(t["docx"] for t in _discover_templates() if t["id"] == "professional-top-left-image"),
+    "professional template": next(t["docx"] for t in _discover_templates() if t["id"] == "professional-photo"),
 }
 
 

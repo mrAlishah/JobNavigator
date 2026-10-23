@@ -4379,6 +4379,2286 @@
   "styles_sha256": "cb46bada5ab8480b32e527325f4d3bd39c16c54bd47c5f1108a0f7953ca3bf68",
   "tables": 0
  },
+ "professional-photo+left|full": {
+  "document_sha256": "50673f51ffaeb0b72aa2a447240121203ea1f78ff5252bb59714486c9e25cefe",
+  "footer": [
+   "Dana Okonkwo - Senior Product Manager - Acme"
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [
+   [
+    53,
+    40
+   ]
+  ],
+  "inline_shapes": [
+   [
+    1143000,
+    857250
+   ]
+  ],
+  "page": [
+   7772400,
+   10058400,
+   640080,
+   640080,
+   548640,
+   548640
+  ],
+  "paragraphs": [
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "",
+      "text": ""
+     }
+    ],
+    "text": ""
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Manrope\" w:hAnsi=\"Manrope\"></w:rFonts><w:b></w:b><w:color w:val=\"112233\"></w:color><w:sz w:val=\"44\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"ff0000\" w:space=\"2\" w:sz=\"16\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"164\"></w:spacing><w:ind w:left=\"60\"></w:ind><w:jc w:val=\"center\"></w:jc></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Profile"
+     }
+    ],
+    "text": "Profile"
+   },
+   {
+    "pPr": "<w:pPr><w:ind w:left=\"60\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Career"
+     }
+    ],
+    "text": "Career"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "– Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Cut cost 20%"
+     }
+    ],
+    "text": "– Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Owned onboarding"
+     }
+    ],
+    "text": "– Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 1
+ },
+ "professional-photo+left|plain": {
+  "document_sha256": "5f5e209f52b9178a7f6f6f89d2164750e1c9ec0d22fcaf910836293cd90dee1c",
+  "footer": [
+   ""
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [],
+  "inline_shapes": [],
+  "page": [
+   7772400,
+   10058400,
+   484505,
+   484505,
+   374650,
+   374650
+  ],
+  "paragraphs": [
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"38\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL SUMMARY"
+     }
+    ],
+    "text": "PROFESSIONAL SUMMARY"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "CORE SKILLS"
+     }
+    ],
+    "text": "CORE SKILLS"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL EXPERIENCE"
+     }
+    ],
+    "text": "PROFESSIONAL EXPERIENCE"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "• Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cut cost 20%"
+     }
+    ],
+    "text": "• Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Owned onboarding"
+     }
+    ],
+    "text": "• Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 0
+ },
+ "professional-photo+right|full": {
+  "document_sha256": "b03e27f9f09ee6a8bf20ed7e90c331dc5fdc54c1b4f1554e2e096526e4d492a6",
+  "footer": [
+   "Dana Okonkwo - Senior Product Manager - Acme"
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [
+   [
+    53,
+    40
+   ]
+  ],
+  "inline_shapes": [
+   [
+    1143000,
+    857250
+   ]
+  ],
+  "page": [
+   7772400,
+   10058400,
+   640080,
+   640080,
+   548640,
+   548640
+  ],
+  "paragraphs": [
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Manrope\" w:hAnsi=\"Manrope\"></w:rFonts><w:b></w:b><w:color w:val=\"112233\"></w:color><w:sz w:val=\"44\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:jc w:val=\"right\"></w:jc></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": ""
+     }
+    ],
+    "text": ""
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"ff0000\" w:space=\"2\" w:sz=\"16\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"164\"></w:spacing><w:ind w:left=\"60\"></w:ind><w:jc w:val=\"center\"></w:jc></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Profile"
+     }
+    ],
+    "text": "Profile"
+   },
+   {
+    "pPr": "<w:pPr><w:ind w:left=\"60\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Career"
+     }
+    ],
+    "text": "Career"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "– Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Cut cost 20%"
+     }
+    ],
+    "text": "– Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Owned onboarding"
+     }
+    ],
+    "text": "– Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 1
+ },
+ "professional-photo+right|plain": {
+  "document_sha256": "5f5e209f52b9178a7f6f6f89d2164750e1c9ec0d22fcaf910836293cd90dee1c",
+  "footer": [
+   ""
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [],
+  "inline_shapes": [],
+  "page": [
+   7772400,
+   10058400,
+   484505,
+   484505,
+   374650,
+   374650
+  ],
+  "paragraphs": [
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"38\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL SUMMARY"
+     }
+    ],
+    "text": "PROFESSIONAL SUMMARY"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "CORE SKILLS"
+     }
+    ],
+    "text": "CORE SKILLS"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL EXPERIENCE"
+     }
+    ],
+    "text": "PROFESSIONAL EXPERIENCE"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "• Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cut cost 20%"
+     }
+    ],
+    "text": "• Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Owned onboarding"
+     }
+    ],
+    "text": "• Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 0
+ },
+ "professional-photo|full": {
+  "document_sha256": "b03e27f9f09ee6a8bf20ed7e90c331dc5fdc54c1b4f1554e2e096526e4d492a6",
+  "footer": [
+   "Dana Okonkwo - Senior Product Manager - Acme"
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [
+   [
+    53,
+    40
+   ]
+  ],
+  "inline_shapes": [
+   [
+    1143000,
+    857250
+   ]
+  ],
+  "page": [
+   7772400,
+   10058400,
+   640080,
+   640080,
+   548640,
+   548640
+  ],
+  "paragraphs": [
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Manrope\" w:hAnsi=\"Manrope\"></w:rFonts><w:b></w:b><w:color w:val=\"112233\"></w:color><w:sz w:val=\"44\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:line=\"336\" w:lineRule=\"auto\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:jc w:val=\"right\"></w:jc></w:pPr>",
+    "runs": [
+     {
+      "rPr": "",
+      "text": ""
+     }
+    ],
+    "text": ""
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"ff0000\" w:space=\"2\" w:sz=\"16\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"164\"></w:spacing><w:ind w:left=\"60\"></w:ind><w:jc w:val=\"center\"></w:jc></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Profile"
+     }
+    ],
+    "text": "Profile"
+   },
+   {
+    "pPr": "<w:pPr><w:ind w:left=\"60\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:rFonts w:ascii=\"Georgia\" w:hAnsi=\"Georgia\"></w:rFonts><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"22\"></w:sz></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Stack"
+     }
+    ],
+    "text": "Stack"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:i></w:i><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Career"
+     }
+    ],
+    "text": "Career"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "– Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Cut cost 20%"
+     }
+    ],
+    "text": "– Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"100\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:caps></w:caps><w:color w:val=\"232323\"></w:color><w:spacing w:val=\"10\"></w:spacing><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"129\"></w:spacing><w:ind w:hanging=\"188\" w:left=\"280\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "– Owned onboarding"
+     }
+    ],
+    "text": "– Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10224\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 1
+ },
+ "professional-photo|plain": {
+  "document_sha256": "5f5e209f52b9178a7f6f6f89d2164750e1c9ec0d22fcaf910836293cd90dee1c",
+  "footer": [
+   ""
+  ],
+  "header": [
+   ""
+  ],
+  "hyperlinks": [
+   "https://example.com/side",
+   "mailto:dana@example.com",
+   "tel:+15550100"
+  ],
+  "image_pixels": [],
+  "inline_shapes": [],
+  "page": [
+   7772400,
+   10058400,
+   484505,
+   484505,
+   374650,
+   374650
+  ],
+  "paragraphs": [
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"38\"></w:sz></w:rPr>",
+      "text": "Dana Okonkwo"
+     }
+    ],
+    "text": "Dana Okonkwo"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "Senior Product Manager"
+     }
+    ],
+    "text": "Senior Product Manager"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "dana@example.com"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "+1 555 0100"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": " | "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "dana@example.com | +1 555 0100 | Berlin"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL SUMMARY"
+     }
+    ],
+    "text": "PROFESSIONAL SUMMARY"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "Product leader with "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "ten"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": " years in platforms."
+     }
+    ],
+    "text": "Product leader with ten years in platforms."
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "CORE SKILLS"
+     }
+    ],
+    "text": "CORE SKILLS"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Languages: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Go, Python"
+     }
+    ],
+    "text": "Languages: Go, Python"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Tools: "
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Jira, SQL"
+     }
+    ],
+    "text": "Tools: Jira, SQL"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROFESSIONAL EXPERIENCE"
+     }
+    ],
+    "text": "PROFESSIONAL EXPERIENCE"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "PM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Acme"
+     }
+    ],
+    "text": "PM - Acme"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin | 2020 - 2024"
+     }
+    ],
+    "text": "Berlin | 2020 - 2024"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Ran the platform."
+     }
+    ],
+    "text": "Ran the platform."
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Shipped "
+     },
+     {
+      "rPr": "<w:rPr><w:b></w:b></w:rPr>",
+      "text": "Go"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": " services"
+     }
+    ],
+    "text": "• Shipped Go services"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cut cost 20%"
+     }
+    ],
+    "text": "• Cut cost 20%"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:spacing w:before=\"60\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "APM"
+     },
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": " - Globex"
+     }
+    ],
+    "text": "APM - Globex"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Remote | 2017 - 2020"
+     }
+    ],
+    "text": "Remote | 2017 - 2020"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Owned onboarding"
+     }
+    ],
+    "text": "• Owned onboarding"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "EDUCATION & TRAINING"
+     }
+    ],
+    "text": "EDUCATION & TRAINING"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color></w:rPr>",
+      "text": "TU Berlin"
+     },
+     {
+      "rPr": "<w:rPr><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Berlin"
+     }
+    ],
+    "text": "TU BerlinBerlin"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "BSc CS"
+     }
+    ],
+    "text": "BSc CS"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PROJECTS"
+     }
+    ],
+    "text": "PROJECTS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "Side"
+     }
+    ],
+    "text": "Side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:color w:val=\"232323\"></w:color><w:sz w:val=\"16\"></w:sz></w:rPr>",
+      "text": "example.com/side"
+     }
+    ],
+    "text": "example.com/side"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "A thing"
+     }
+    ],
+    "text": "A thing"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Did it"
+     }
+    ],
+    "text": "• Did it"
+   },
+   {
+    "pPr": "<w:pPr><w:keepNext></w:keepNext><w:pBdr><w:bottom w:color=\"1F4E79\" w:space=\"2\" w:sz=\"8\" w:val=\"single\"></w:bottom></w:pBdr><w:spacing w:after=\"46\" w:before=\"84\"></w:spacing></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"1F4E79\"></w:color><w:sz w:val=\"23\"></w:sz></w:rPr>",
+      "text": "PUBLICATIONS"
+     }
+    ],
+    "text": "PUBLICATIONS"
+   },
+   {
+    "pPr": "<w:pPr><w:tabs><w:tab w:pos=\"10714\" w:val=\"right\"></w:tab></w:tabs></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b></w:b><w:color w:val=\"232323\"></w:color><w:sz w:val=\"19\"></w:sz></w:rPr>",
+      "text": "A paper"
+     }
+    ],
+    "text": "A paper"
+   },
+   {
+    "pPr": "",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b><w:i></w:i><w:color w:val=\"5A5A5A\"></w:color><w:sz w:val=\"17\"></w:sz></w:rPr>",
+      "text": "Journal"
+     }
+    ],
+    "text": "Journal"
+   },
+   {
+    "pPr": "<w:pPr><w:spacing w:after=\"9\"></w:spacing><w:ind w:hanging=\"130\" w:left=\"194\"></w:ind></w:pPr>",
+    "runs": [
+     {
+      "rPr": "<w:rPr><w:b w:val=\"0\"></w:b></w:rPr>",
+      "text": "• Cited twice"
+     }
+    ],
+    "text": "• Cited twice"
+   }
+  ],
+  "styles_sha256": "9b79c848a36913591c056c2b5614ed536ed43ed3b76a6c9dc13c62ea233207ba",
+  "tables": 0
+ },
  "professional-top-left-image|full": {
   "document_sha256": "50673f51ffaeb0b72aa2a447240121203ea1f78ff5252bb59714486c9e25cefe",
   "footer": [

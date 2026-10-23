@@ -54,8 +54,7 @@ def test_the_layout_is_added_once_to_an_official_template_and_never_to_the_other
 
 
 @pytest.mark.parametrize("name,expected", [("inter", set()), ("helvetica", set(overrides.VARIABLES)),
-                                           ("professional-top-left-image", set(overrides.VARIABLES)),
-                                           ("professional-top-right-image", set(overrides.VARIABLES))])
+                                           ("professional-photo", set(overrides.VARIABLES))])
 def test_reads_reports_what_each_real_template_reads(name, expected):
     assert overrides.reads(TEMPLATES_DIR / name, {"bold": lambda text: text}) == expected
 

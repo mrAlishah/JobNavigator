@@ -22,6 +22,7 @@ from docx.oxml.ns import qn
 from lxml import etree
 from PIL import Image
 
+from backend import resume_template_aliases as aliases
 from backend.api import routes_resumes as rr
 
 HERE = pathlib.Path(__file__).parent
@@ -76,16 +77,23 @@ def _norm_html(html: str) -> str:
 
 def html_snapshot() -> dict:
     out = {}
-    for t in _templates():
-        tid, opts = t["id"], bool((t.get("docx") or {}).get("style_overrides"))
+
+    def add(key, tid, opts, extra=None):
         cases = [("plain|letter", BASE, "letter", 0, None, True, False),
                  ("full|a4", FULL, "a4", 0.5, PNG_URI, True, False),
                  ("no-image|letter", FULL, "letter", 0, PNG_URI, False, False)]
         if opts:
             cases.append(("select|letter", FULL, "letter", 0.5, PNG_URI, True, True))
         for label, data, fmt, reserve, image, enabled, select in cases:
-            html = _norm_html(rr._render_html(data, tid, fmt, reserve, image, enabled, select))
-            out[f"{tid}|{label}"] = {"sha256": hashlib.sha256(html.encode()).hexdigest(), "len": len(html)}
+            html = _norm_html(rr._render_html({**data, **(extra or {})}, tid, fmt, reserve, image, enabled, select))
+            out[f"{key}|{label}"] = {"sha256": hashlib.sha256(html.encode()).hexdigest(), "len": len(html)}
+
+    for t in _templates():
+        add(t["id"], t["id"], bool((t.get("docx") or {}).get("style_overrides")))
+    for legacy in sorted(aliases.LEGACY_TEMPLATE_ALIASES):        # a legacy id is served by professional-photo on its old side:
+        add(legacy, legacy, True)                                   # these hashes are the old templates' own, unchanged
+    for side in aliases.IMAGE_POSITIONS:                            # a saved side on the canonical template
+        add(f"{aliases.CANONICAL_TEMPLATE}+{side}", aliases.CANONICAL_TEMPLATE, True, {"profile_image_position": side})
     return out
 
 
@@ -135,12 +143,21 @@ def docx_structure(blob: bytes) -> dict:
 
 def docx_snapshot() -> dict:
     out = {}
-    for t in _templates():
-        style = t.get("docx")
-        for label, data, footer, image in (("plain", BASE, "", None),
-                                           ("full", FULL, FOOTER, _png(60, 40) if style and style.get("image") else None)):
+
+    def add(key, tid, extra=None):
+        for label, data, footer, with_image in (("plain", BASE, "", False), ("full", FULL, FOOTER, True)):
+            data = {**data, **(extra or {})}
+            style = rr._docx_style_for(tid, data)                   # the same call the Word export makes
+            image = _png(60, 40) if with_image and style and style.get("image") else None
             blob = rr._build_docx(rr._xml_safe(data), "letter", style, image, rr._xml_safe(footer))
-            out[f"{t['id']}|{label}"] = docx_structure(blob)
+            out[f"{key}|{label}"] = docx_structure(blob)
+
+    for t in _templates():
+        add(t["id"], t["id"])
+    for legacy in sorted(aliases.LEGACY_TEMPLATE_ALIASES):
+        add(legacy, legacy)
+    for side in aliases.IMAGE_POSITIONS:
+        add(f"{aliases.CANONICAL_TEMPLATE}+{side}", aliases.CANONICAL_TEMPLATE, {"profile_image_position": side})
     return out
 
 

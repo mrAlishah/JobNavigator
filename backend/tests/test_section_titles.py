@@ -42,7 +42,7 @@ def test_blank_titles_keep_template_default(template, titles):
 
 
 def test_docx_custom_titles_styled_and_plain():
-    style = json.loads((ROOT / "professional-top-left-image" / "meta.json").read_text())["docx"]
+    style = json.loads((ROOT / "professional-photo" / "meta.json").read_text())["docx"]
     for st in (style, None):
         d = docx.Document(io.BytesIO(_build_docx({**DATA, "section_titles": CUSTOM}, "a4", st)))
         text = [p.text for p in d.paragraphs]
@@ -50,7 +50,7 @@ def test_docx_custom_titles_styled_and_plain():
 
 
 def test_docx_blank_titles_keep_defaults():
-    style = json.loads((ROOT / "professional-top-left-image" / "meta.json").read_text())["docx"]
+    style = json.loads((ROOT / "professional-photo" / "meta.json").read_text())["docx"]
     d = docx.Document(io.BytesIO(_build_docx({**DATA, "section_titles": {"summary": ""}}, "a4", style)))
     assert "PROFESSIONAL SUMMARY" in [p.text for p in d.paragraphs]
     plain = docx.Document(io.BytesIO(_build_docx({**DATA, "section_titles": {"summary": ""}}, "a4")))
