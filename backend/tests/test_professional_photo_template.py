@@ -264,6 +264,47 @@ async def test_a_tailored_resume_keeps_the_side(api_client, test_db, monkeypatch
     assert _header_cells(document)[0][0] is (not right)
 
 
+# ── the old folders are not needed ──────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def without_legacy_folders(tmp_path, monkeypatch):
+    """The templates directory as it will be once the two old folders are deleted."""
+    import shutil
+    import backend.api.routes_resumes as rr
+    root = tmp_path / "templates"
+    shutil.copytree(rr.TEMPLATES_DIR, root, ignore=shutil.ignore_patterns(LEFT, RIGHT))
+    assert not (root / LEFT).exists() and not (root / RIGHT).exists() and (root / CANON).is_dir()
+    monkeypatch.setattr(rr, "TEMPLATES_DIR", root)
+    return root
+
+
+@pytest.mark.parametrize("legacy,right", [(LEFT, False), (RIGHT, True)])
+def test_legacy_ids_render_export_and_save_with_the_old_folders_gone(api_client, test_db, monkeypatch, without_legacy_folders, legacy, right):
+    resume = make(test_db, legacy)
+    assert reversed_(api_client.get(f"/api/resumes/{resume.id}/preview").text) is right
+    captured = {}
+    _fake_browser(monkeypatch, captured)
+    assert api_client.get(f"/api/resumes/{resume.id}/pdf").status_code == 200 and reversed_(captured["html"]) is right
+    _, document = _fetch(api_client, resume)
+    assert _header_cells(document)[0][0] is (not right)
+    assert api_client.get(f"/api/resumes/{resume.id}/docx", params={"template": legacy}).status_code == 200
+    assert api_client.patch(f"/api/resumes/{resume.id}", json={"template": legacy, "name": "Renamed"}).status_code == 200
+    created = api_client.post("/api/resumes", json={"name": "N", "template": legacy})
+    assert created.status_code == 201 and created.json()["template"] == legacy
+    assert reversed_(html_of(legacy)) is right
+    assert api_client.patch(f"/api/resumes/{resume.id}", json={"template": CANON}).status_code == 200
+    assert stored(test_db, resume)[1]["profile_image_position"] == ("right" if right else "left")
+
+
+def test_the_picker_and_rejection_are_the_same_with_the_old_folders_gone(api_client, test_db, without_legacy_folders):
+    listed = api_client.get("/api/resumes/templates").json()
+    assert CANON in [t["id"] for t in listed] and LEFT not in [t["id"] for t in listed]
+    assert next(t for t in listed if t["id"] == CANON)["aliases"] == {LEFT: "left", RIGHT: "right"}
+    resume = make(test_db, "inter")
+    assert api_client.patch(f"/api/resumes/{resume.id}", json={"template": "professional-top-up-image"}).status_code == 422
+    assert api_client.get(f"/api/resumes/{resume.id}/docx", params={"template": "nope-template"}).status_code == 422
+
+
 # ── nothing else changes ────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("name", UPSTREAM)
