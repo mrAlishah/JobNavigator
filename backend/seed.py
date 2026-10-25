@@ -664,6 +664,13 @@ def run_migrations(db):
         "ALTER TABLE searches ADD COLUMN IF NOT EXISTS require_salary BOOLEAN DEFAULT FALSE",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scoring_report JSONB",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cv_score_names JSON",   # 3.1: score keys are résumé ids
+        # 3.1: the posting a job is, whatever link spelled it (scraper/_shared/posting_links.py)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS apply_url VARCHAR",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS posting_key VARCHAR",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duplicate_of UUID REFERENCES jobs(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_acct_posting_key ON jobs (account_id, posting_key)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_duplicate_of ON jobs (duplicate_of)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_acct_content_hash ON jobs (account_id, content_hash)",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_summary",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_strengths",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_gaps",
@@ -1420,6 +1427,60 @@ def migrate_cv_score_keys(db, batch: int = 500) -> dict:
     return changed
 
 
+# Marker of the posting-key backfill below: the reader version the stored keys were read with
+# (install row, never served, not writable). 3.1 wrote "1".
+POSTING_KEYS_MIGRATED_KEY = "posting_keys_migrated"
+
+
+def migrate_posting_keys(db, batch: int = 1000) -> dict:
+    """On start, when the stored posting keys were read by older readers (postings.READER_VERSION):
+    key every stored job again and bring its duplicates in line (scraper/_shared/posting_links.py).
+
+    Every job gets `posting_key` from its links, and `apply_url` when its link wraps the employer's
+    posting (a click tracker); no request is made. A key a row took over from its duplicate (an
+    employer key on a board listing) is kept when its own link names no employer posting. Then each
+    account is relinked (posting_links.relink_account): duplicates linked by company and title alone,
+    without a shared key or the same text, go back to the feed, and untouched rows that share a key or
+    are one role become duplicates. Rows the user acted on are never changed.
+    Returns {"rekeyed": n, "unlinked": n, "linked": n}."""
+    from backend.models.db import Account, Job
+    from backend.scraper._shared.posting_links import employer_link, key_of, relink_account
+    from backend.scraper._shared.postings import READER_VERSION, is_employer_key
+    row = install_row(db, POSTING_KEYS_MIGRATED_KEY)
+    done = int(row.value) if row is not None and str(row.value or "").isdigit() else 0
+    if done >= READER_VERSION:
+        return {}
+    rekeyed = 0
+    ids = [jid for (jid,) in db.query(Job.id).all()]
+    jobs = (job for i in range(0, len(ids), batch)
+            for job in _chunk_then_commit(db, Job, ids[i:i + batch]))
+    for job in jobs:
+        key = key_of(job)
+        taken_over = is_employer_key(job.posting_key) and not is_employer_key(key)
+        if key != job.posting_key and not taken_over:
+            job.posting_key = key
+            rekeyed += 1
+        if not job.apply_url:
+            link = employer_link(job.url)
+            if link and link != job.url:
+                job.apply_url = link
+    db.commit()
+    unlinked = linked = 0
+    for (account_id,) in db.query(Account.id).all():
+        out = relink_account(db, account_id)
+        unlinked += out["unlinked"]
+        linked += out["linked"]
+    if row is None:
+        db.add(Setting(key=POSTING_KEYS_MIGRATED_KEY, value=str(READER_VERSION),
+                       description="Internal: the posting-key reader version stored jobs were keyed and linked with"))
+    else:
+        row.value = str(READER_VERSION)
+    db.commit()
+    logger.info(f"Posting keys (readers v{READER_VERSION}): {rekeyed} jobs keyed again, "
+                f"{unlinked} duplicates without proof back in the feed, {linked} untouched copies linked")
+    return {"rekeyed": rekeyed, "unlinked": unlinked, "linked": linked}
+
+
 SEED_SEARCHES = [
     {
         "name": "Extension LI",
@@ -1770,6 +1831,7 @@ def run_seeds():
             clear_seeded_local_urls(db)
             migrate_llm_provider_keys(db)
             migrate_cv_score_keys(db)
+            migrate_posting_keys(db)
             migrate_cv_terminology(db)
             migrate_h1b_to_visa_cache(db)
     finally:

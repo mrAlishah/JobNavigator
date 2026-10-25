@@ -11,6 +11,7 @@ from backend.models.db import (
     build_company_lookup, get_existing_external_ids,
 )
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.postings import is_short_link, resolve_short_link
 from backend.analyzer.salary_extractor import apply_salary_to_job
 from backend.analyzer.work_arrangement import apply_arrangement_to_job
 from backend.analyzer.location import apply_location_to_job
@@ -288,12 +289,14 @@ async def enrich(linkedin_ids: list[str], db=None):
                         skipped += 1
                         continue
 
+                    landed = await resolve_short_link(job_url) if is_short_link(job_url) else job_url
                     job = Job(
                         external_id=ext_id,
                         content_hash=c_hash,
                         company=company,
                         title=title,
                         url=job_url,
+                        apply_url=landed if landed != job_url else None,
                         source="linkedin_extension",
                         linkedin_job_id=lid,
                         search_id=ext_search.id if ext_search else None,

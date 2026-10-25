@@ -97,7 +97,8 @@ const SOURCE_LABELS = {
 }
 // `boards` (useApifyBoards) names the `apify_<board>` sources.
 const srcLabel = (s, boards = []) => SOURCE_LABELS[s] || apifySourceLabel(boards, s) || s || ''
-const STATUS_OPTS = [['new', 'New'], ['saved', 'Saved'], ['applied', 'Applied'], ['skip', 'Skip'], ['ignored', 'Ignored']]
+// `duplicate`: a copy of a posting the feed already has (posting_links.py); the posting lists it under "Also on".
+const STATUS_OPTS = [['new', 'New'], ['saved', 'Saved'], ['applied', 'Applied'], ['skip', 'Skip'], ['ignored', 'Ignored'], ['duplicate', 'Duplicate']]
 const SORT_OPTS = [['score', 'Top score'], ['date', 'Newest first'], ['salary', 'Salary, high to low'], ['company', 'Company A–Z']]
 // "45 minutes", "1 hour", "2 hours 30 minutes" — the scrape interval in the never-scraped empty state
 const everyText = (min) => {
@@ -1452,6 +1453,13 @@ export default function V2JobFeed() {
                         {[fmtSalary(d.salary_min, d.salary_max) && <span key="sal" style={{ maxWidth: 230, fontFamily: 'var(--numeral-face)', fontSize: 12.5, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmtSalary(d.salary_min, d.salary_max)}</span>,
                           d.location && <span key="loc" style={{ maxWidth: 270, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.location}</span>,
                           visaText && <span key="visa" title={visaTitle} style={{ color: visaCol }}>{visaText}</span>,
+                          // where else this posting was found; each copy opens its own listing
+                          // a copy from this job's own source is the same posting or role under another
+                          // link: named by its city when that differs, else "another link"
+                          d.also_on?.length > 0 && <span key="also" style={{ whiteSpace: 'nowrap' }}>Also listed:{' '}
+                            {d.also_on.map((a, i) => <React.Fragment key={a.url}>{i ? '; ' : ''}<Link href={a.url} target="_blank" title={a.url} style={{ fontSize: 'inherit', lineHeight: 'inherit' }}>{a.source !== d.source ? srcLabel(a.source, apifyBoards) : (a.location && a.location !== d.location ? a.location : 'another link')}</Link></React.Fragment>)}
+                          </span>,
+                          d.status === 'duplicate' && <span key="dup" title="A copy of a posting or role already in your feed; its own row lists this one under Also listed">Duplicate</span>,
                         ].filter(Boolean).flatMap((el, i) => i ? [<span key={`sep${i}`} style={{ color: 'var(--line)' }}>|</span>, el] : [el])}
                       </div>
                     ) : <Helper style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[d.company, fmtSalary(d.salary_min, d.salary_max), d.location, visaText, srcLabel(d.source, apifyBoards), timeAgo(d.discovered_at)].filter(Boolean).join(' · ')}</Helper>}
@@ -1463,6 +1471,8 @@ export default function V2JobFeed() {
                         button's own paint; the override is the height, which tracks
                         the collapsing detail header (36/30) like the ✦ button beside it. */}
                     {d.url && <Button variant="secondary" size="sm" href={d.url} target="_blank" style={{ height: headOpen ? 36 : 30 }}>Open ↗</Button>}
+                    {/* the employer's own posting, when the job came from a board (Indeed, a tracked link) */}
+                    {d.apply_url && d.apply_url !== d.url && <Button variant="secondary" size="sm" href={d.apply_url} target="_blank" title={d.apply_url} style={{ height: headOpen ? 36 : 30 }}>Company site ↗</Button>}
                     {/* Routed through Button (not hand-drawn) so it reads --btn-shadow/--btn-weight/--btn-primary-bg/-ink
                         and the hover/pressed rules; the style override only restores height/padding/line-height, which track the collapsing header. */}
                     {/* while a tailor runs the button says so and does nothing: `disabled`

@@ -128,6 +128,113 @@ def detail_locations(detail: dict) -> list[str]:
     return out
 
 
+# Workday's jobs endpoint never reports or pages past 2,000 results: a bigger
+# board says total=2000 and offsets beyond it repeat earlier rows. A search that
+# reaches the ceiling is split by a facet (job category, location, ...), whose
+# per-value counts come back with the first page, and each part is fetched on its
+# own; a part still at the ceiling is split again, up to _MAX_SPLIT_DEPTH levels.
+_CEILING = 2000
+_MAX_SPLIT_DEPTH = 2
+_PAGE = 20  # Workday API max per request
+_HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
+
+
+def _facet_options(facets: list) -> list[tuple[str, list[tuple[str, int]]]]:
+    """(facetParameter, [(value id, count), ...]) for every facet in a response.
+
+    `locationMainGroup` nests further facets, each with its own parameter
+    (`locationHierarchy1`, `locations`, ...); those are listed in its place.
+    """
+    out = []
+    for f in facets or []:
+        values = f.get("values") or []
+        if values and isinstance(values[0], dict) and "facetParameter" in values[0]:
+            out.extend(_facet_options(values))
+            continue
+        param = f.get("facetParameter")
+        pairs = [(v.get("id"), int(v.get("count") or 0)) for v in values
+                 if isinstance(v, dict) and v.get("id")]
+        pairs = [(i, c) for i, c in pairs if c > 0]
+        if param and pairs:
+            out.append((param, pairs))
+    return out
+
+
+def _split_facet(options, applied: dict, total: int):
+    """The facet to split a ceiling-sized search by, or None.
+
+    A facet already applied is left alone. The best one covers the whole search
+    (its counts add up to at least `total`) with every part under the ceiling,
+    and among those the one that costs the fewest requests: a facet whose values
+    overlap (a posting in several locations) fetches the same posting twice.
+    """
+    candidates = [(param, pairs) for param, pairs in options if param not in applied and len(pairs) > 1]
+    if not candidates:
+        return None
+
+    def rank(item):
+        _, pairs = item
+        covered = sum(c for _, c in pairs)
+        largest = max(c for _, c in pairs)
+        requests = sum(-(-min(c, _CEILING) // _PAGE) for _, c in pairs)
+        return (covered < total, largest >= _CEILING, requests)
+
+    return min(candidates, key=rank)
+
+
+async def _walk(client, api_url: str, facets: dict, label: str, debug: bool, rejected: list):
+    """Page through one search. Returns (status of the first page, total, facets, postings)."""
+    postings: list[dict] = []
+    offset = 0
+    total = None  # Capture from first page only (Workday returns 0 on later pages)
+    first_facets = []
+    while True:
+        payload = {"appliedFacets": facets, "limit": _PAGE, "offset": offset, "searchText": ""}
+        resp = await client.post(api_url, json=payload, headers=_HEADERS)
+        if resp.status_code != 200:
+            logger.warning(f"Workday API returned {resp.status_code} for {label}")
+            if debug:
+                rejected.append({"title": "(none)", "url": api_url, "selector": "workday_api",
+                                 "reason": f"HTTP {resp.status_code}"})
+            return (resp.status_code if offset == 0 else 200), total or 0, first_facets, postings
+        data = json.loads(resp.text)
+        if total is None:
+            total = data.get("total", 0) or 0
+            first_facets = data.get("facets") or []
+        page = data.get("jobPostings", [])
+        if not page:
+            break
+        postings.extend(page)
+        offset += len(page)
+        if offset >= total or offset >= _CEILING:
+            break
+    return 200, total or 0, first_facets, postings
+
+
+async def _collect(client, api_url, facets, label, debug, rejected, found: dict, depth: int = 0):
+    """Fetch one search into `found` (keyed by externalPath); split it when it hits the ceiling."""
+    status, total, facet_list, postings = await _walk(client, api_url, facets, label, debug, rejected)
+    for p in postings:
+        found.setdefault(p.get("externalPath") or id(p), p)
+    if total < _CEILING or depth >= _MAX_SPLIT_DEPTH:
+        if total >= _CEILING:
+            logger.warning(f"Workday API: {label} still at the {_CEILING}-result ceiling after "
+                           f"{depth} splits; some jobs may be missing")
+        return status, total
+    choice = _split_facet(_facet_options(facet_list), facets, total)
+    if choice is None:
+        logger.warning(f"Workday API: {label} is at the {_CEILING}-result ceiling and offers no facet "
+                       f"to split by; some jobs may be missing")
+        return status, total
+    param, pairs = choice
+    logger.info(f"Workday API: {label} hit the {_CEILING}-result ceiling; splitting by {param} "
+                f"({len(pairs)} parts)")
+    for value_id, _count in pairs:
+        await _collect(client, api_url, {**facets, param: [value_id]}, label, debug, rejected,
+                       found, depth + 1)
+    return status, total
+
+
 async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
     """Fetch jobs from Workday's internal JSON API."""
     origin, company_slug, site, applied_facets = _parse_workday_url(url)
@@ -139,68 +246,37 @@ async def scrape(url: str, debug: bool = False) -> list[dict] | tuple:
         return []
 
     api_url = f"{origin}/wday/cxs/{company_slug}/{site}/jobs"
+    label = f"{company_slug}/{site}"
     logger.info(f"Workday API: {api_url} facets={list(applied_facets.keys())}")
 
     jobs = []
     rejected = []
-    offset = 0
-    total = None  # Capture from first page only (Workday returns 0 on later pages)
-    limit = 20  # Workday API max per request
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+    found: dict = {}
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-        while True:
-            payload = {
-                "appliedFacets": applied_facets,
-                "limit": limit,
-                "offset": offset,
-                "searchText": "",
-            }
+        status, total = await _collect(client, api_url, applied_facets, label, debug, rejected, found)
+    if status != 200 and not found:
+        if not debug:
+            raise_if_board_gone(status, "Workday", label)
+    else:
+        logger.info(f"Workday API: total={total}")
 
-            resp = await client.post(api_url, json=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.warning(f"Workday API returned {resp.status_code} for {company_slug}/{site}")
-                if not debug and offset == 0:
-                    raise_if_board_gone(resp.status_code, "Workday", f"{company_slug}/{site}")
-                if debug:
-                    rejected.append({"title": "(none)", "url": api_url, "selector": "workday_api", "reason": f"HTTP {resp.status_code}"})
-                break
+    for p in found.values():
+        title = (p.get("title") or "").strip()
+        ext_path = p.get("externalPath") or ""
+        job_url = f"{origin}/en-US/{site}{ext_path}" if ext_path else ""
 
-            data = json.loads(resp.text)
-            if total is None:
-                total = data.get("total", 0)
-            postings = data.get("jobPostings", [])
+        reason = _validate_job(title, job_url)
+        if reason is None:
+            # `locations` is filled in later, from the detail JSON the
+            # description fetch already downloads for each new job.
+            jobs.append({"title": title, "url": job_url,
+                         "location": _board_location_of(p),
+                         "arrangement": _arrangement_of(p)})
+        elif debug:
+            rejected.append({"title": title, "url": job_url, "selector": "workday_api", "reason": reason})
 
-            if offset == 0:
-                logger.info(f"Workday API: total={total}")
-
-            if not postings:
-                break
-
-            for p in postings:
-                title = (p.get("title") or "").strip()
-                ext_path = p.get("externalPath") or ""
-                job_url = f"{origin}/en-US/{site}{ext_path}" if ext_path else ""
-
-                reason = _validate_job(title, job_url)
-                if reason is None:
-                    # `locations` is filled in later, from the detail JSON the
-                    # description fetch already downloads for each new job.
-                    jobs.append({"title": title, "url": job_url,
-                                 "location": _board_location_of(p),
-                                 "arrangement": _arrangement_of(p)})
-                elif debug:
-                    rejected.append({"title": title, "url": job_url, "selector": "workday_api", "reason": reason})
-
-            offset += len(postings)
-            if offset >= total:
-                break
-
-    logger.info(f"Workday API: fetched {len(jobs)} jobs for {company_slug}/{site}")
+    logger.info(f"Workday API: fetched {len(jobs)} jobs for {label}")
     if debug:
         return jobs, rejected
     return jobs

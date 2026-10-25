@@ -107,3 +107,150 @@ async def test_scrape_workday_bad_url(monkeypatch):
     # URL with no site segment
     jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/")
     assert jobs == []
+
+
+# ── the 2,000-result ceiling ───────────────────────────────────────────────
+
+class _FakeBoard:
+    """A Workday board that behaves like the live API at the ceiling.
+
+    `total` never exceeds 2,000, and an offset past 2,000 repeats earlier rows.
+    Each posting has a category and a list of countries (a posting may be in
+    several). Facet counts are computed over the filtered set, the way Workday
+    reports them; countries sit nested under locationMainGroup.
+    """
+
+    def __init__(self, postings, facets_offered=("jobFamilyGroup", "country")):
+        self.postings = postings
+        self.facets_offered = facets_offered
+        self.calls = []
+
+    def _match(self, p, applied):
+        for key, ids in applied.items():
+            if key == "jobFamilyGroup" and p["cat"] not in ids:
+                return False
+            if key == "country" and not set(p["countries"]) & set(ids):
+                return False
+            if key == "keep" and p["keep"] not in ids:
+                return False
+        return True
+
+    async def post(self, url, json=None, headers=None):
+        import json as _json
+        applied, offset, limit = json["appliedFacets"], json["offset"], json["limit"]
+        self.calls.append(dict(applied))
+        rows = [p for p in self.postings if self._match(p, applied)]
+        real = len(rows)
+        start = offset if offset < 2000 else offset % 2000
+        page = rows[start:start + limit]
+        facets = []
+        if "jobFamilyGroup" in self.facets_offered:
+            cats = {}
+            for p in rows:
+                cats[p["cat"]] = cats.get(p["cat"], 0) + 1
+            facets.append({"facetParameter": "jobFamilyGroup",
+                           "values": [{"id": k, "descriptor": k, "count": v} for k, v in cats.items()]})
+        if "country" in self.facets_offered:
+            ctr = {}
+            for p in rows:
+                for c in p["countries"]:
+                    ctr[c] = ctr.get(c, 0) + 1
+            facets.append({"facetParameter": "locationMainGroup", "values": [
+                {"facetParameter": "country", "descriptor": "Locations",
+                 "values": [{"id": k, "descriptor": k, "count": v} for k, v in ctr.items()]}]})
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = _json.dumps({"total": min(real, 2000) if offset == 0 else 0,
+                                 "jobPostings": [{"title": f"Engineer {p['n']}",
+                                                  "externalPath": f"/job/X/Engineer_{p['n']}",
+                                                  "locationsText": "Santa Clara"} for p in page],
+                                 "facets": facets if offset == 0 else []})
+        return resp
+
+
+def _board(monkeypatch, postings, **kw):
+    board = _FakeBoard(postings, **kw)
+    client = MagicMock()
+    client.post = board.post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr("httpx.AsyncClient", lambda **k: client)
+    return board
+
+
+def _postings(spec):
+    """spec: [(category, count, countries)] -> numbered postings."""
+    out, n = [], 0
+    for cat, count, countries in spec:
+        for _ in range(count):
+            out.append({"n": n, "cat": cat, "countries": countries, "keep": "y"})
+            n += 1
+    return out
+
+
+@pytest.mark.asyncio
+async def test_board_over_the_ceiling_is_split_and_nothing_is_missed(monkeypatch):
+    board = _board(monkeypatch, _postings([("eng", 1700, ["US"]), ("sales", 600, ["US", "DE"]),
+                                          ("ops", 400, ["DE"])]))
+    from backend.scraper.ats.workday import scrape
+    jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/Site")
+    assert len(jobs) == 2700
+    assert len({j["url"] for j in jobs}) == 2700
+    # split by category (no overlap, fewest requests), not by country
+    assert {key for call in board.calls for key in call} == {"jobFamilyGroup"}
+
+
+@pytest.mark.asyncio
+async def test_part_still_at_the_ceiling_is_split_again(monkeypatch):
+    # every facet has a part over the ceiling: category first (fewer requests), then country
+    board = _board(monkeypatch, _postings([("eng", 1500, ["US"]), ("eng", 1000, ["DE"]),
+                                          ("sales", 600, ["US", "DE"])]))
+    from backend.scraper.ats.workday import scrape
+    jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/Site")
+    assert len({j["url"] for j in jobs}) == 3100
+    assert any(set(c) == {"jobFamilyGroup", "country"} for c in board.calls)
+
+
+@pytest.mark.asyncio
+async def test_split_keeps_the_filters_in_the_company_url(monkeypatch):
+    postings = _postings([("eng", 1800, ["US"]), ("sales", 900, ["US"])])
+    for p in postings[::10]:
+        p["keep"] = "n"
+    board = _board(monkeypatch, postings)
+    from backend.scraper.ats.workday import scrape
+    jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/Site?keep=y")
+    assert len(jobs) == 2430
+    assert all(c.get("keep") == ["y"] for c in board.calls)
+
+
+@pytest.mark.asyncio
+async def test_board_under_the_ceiling_is_one_walk(monkeypatch):
+    board = _board(monkeypatch, _postings([("eng", 1200, ["US"]), ("sales", 300, ["US"])]))
+    from backend.scraper.ats.workday import scrape
+    jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/Site")
+    assert len(jobs) == 1500
+    assert all(c == {} for c in board.calls)
+    assert len(board.calls) == 75
+
+
+@pytest.mark.asyncio
+async def test_ceiling_without_a_facet_keeps_what_it_has(monkeypatch, caplog):
+    _board(monkeypatch, _postings([("eng", 2600, ["US"])]), facets_offered=())
+    from backend.scraper.ats.workday import scrape
+    with caplog.at_level("WARNING"):
+        jobs = await scrape("https://nvidia.wd5.myworkdayjobs.com/Site")
+    assert len(jobs) == 2000
+    assert "no facet to split by" in caplog.text
+
+
+def test_facet_options_flattens_nested_location_groups():
+    from backend.scraper.ats.workday import _facet_options
+    opts = _facet_options([
+        {"facetParameter": "jobFamilyGroup", "values": [{"id": "a", "count": 3}, {"id": "b", "count": 0}]},
+        {"facetParameter": "locationMainGroup", "values": [
+            {"facetParameter": "locationHierarchy2", "values": [{"id": "office", "count": 5}]},
+            {"facetParameter": "locationHierarchy1", "values": [{"id": "us", "count": 4}, {"id": "de", "count": 1}]},
+        ]},
+    ])
+    assert opts == [("jobFamilyGroup", [("a", 3)]), ("locationHierarchy2", [("office", 5)]),
+                    ("locationHierarchy1", [("us", 4), ("de", 1)])]

@@ -23,6 +23,7 @@ from backend.models.db import (
 from backend.accounts.settings import get_setting
 from backend.analyzer import salary_extractor
 from backend.scraper._shared.dedup import make_external_id, make_content_hash, mark_ignored
+from backend.scraper._shared.posting_links import counts_as_new
 from backend.scraper._shared.filters import build_search_exclude_sets, company_included
 from backend.scraper._shared.analysis import analyze_inline, prefetch_h1b
 
@@ -482,7 +483,7 @@ async def run(search: Search, shared=None) -> dict:
                         db.add(job)
                         db.flush()
                     if job.status == "new":
-                        new_jobs += 1
+                        new_jobs += counts_as_new(job)
                     else:
                         ignored_jobs += 1
                     existing_ids.add(ext_id)

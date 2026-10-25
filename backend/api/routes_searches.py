@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from backend.countries import (DEFAULT_COUNTRY, compose_location, normalize_country,
+from backend.countries import (DEFAULT_COUNTRY, normalize_country,
                                split_country_suffix, supported_countries)
 from backend.models.db import get_db, Search, ScrapeLog, Job, is_acknowledged
 from backend.accounts.settings import get_setting
@@ -476,31 +476,15 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
 
     proxy_url = get_setting(db, "proxy_url") or None
 
-    kwargs = {
-        "site_name": sources,
-        "search_term": search.search_term or "",
-        "location": compose_location(search.location, search.country),
-        "results_wanted": search.results_wanted or 50,
-        "hours_old": search.hours_old or 24,
-        "job_type": search.job_type or "fulltime",
-        "country_indeed": search.country or DEFAULT_COUNTRY,
-        "verbose": 2,
-    }
-
-    if search.is_remote is not None:
-        kwargs["is_remote"] = search.is_remote
-
-    if proxy_url:
-        kwargs["proxies"] = [proxy_url]
-
-    from backend.scraper.sources.jobspy import _board_errors, _capture_source_errors
+    from backend.scraper.sources.jobspy import _board_errors, _errors_of, jobspy_kwargs
+    try:
+        kwargs = jobspy_kwargs(search, proxy_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     start = time.time()
     try:
-        # The same capture as the scheduled run: jobspy reports a failed board
-        # only in its log, so without it a failed board just disappears here.
-        with _capture_source_errors(sources) as capture:
-            jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
+        jobs_df = await asyncio.to_thread(scrape_jobs, **kwargs)
     except Exception:
         logger.exception("JobSpy scrape_jobs failed during test for search %s", search.name)
         return {
@@ -520,7 +504,7 @@ async def test_search(search_id: str, db: Session = Depends(get_db)):
 
     duration = round(time.time() - start, 1)
     # {board: text} for each board that failed; source_breakdown keeps its shape.
-    source_errors = _board_errors(capture.errors, jobs_df, sources)
+    source_errors = _board_errors(_errors_of(jobs_df), jobs_df, sources)
 
     if jobs_df is None or jobs_df.empty:
         return {

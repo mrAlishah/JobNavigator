@@ -49,6 +49,7 @@ from backend.analyzer.salary_extractor import extract_salary
 from backend.analyzer.work_arrangement import HYBRID, ONSITE, REMOTE, extract_arrangement
 from backend.scraper._shared.analysis import analyze_inline, prefetch_h1b
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.posting_links import counts_as_new
 from backend.scraper._shared.filters import (build_search_exclude_sets, company_included,
                                              search_title_filters, title_kept)
 from backend.scraper._shared.html_text import html_to_text
@@ -642,7 +643,7 @@ async def run(search: Search) -> dict:
                     with db.begin_nested():
                         db.add(job)
                         db.flush()
-                    new_jobs += 1
+                    new_jobs += counts_as_new(job)
                     existing_ids.add(ext_id)
                     breakdown[j["source"]]["new"] += 1
                 except IntegrityError:

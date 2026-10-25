@@ -11,39 +11,54 @@ from functools import lru_cache
 from typing import Optional
 
 # The value a search falls back to when nothing says where to look. It is a
-# jobspy alias, so `Country.from_string()` always accepts it.
+# jobspy country name, so `Country("usa")` always accepts it.
 DEFAULT_COUNTRY = "usa"
 
-# Two enum members are routing values for other boards, not places a user picks:
-# US_CANADA belongs to ZipRecruiter and WORLDWIDE to LinkedIn. Neither selects an
-# Indeed domain, so both stay out of the list and out of validation.
+# Routing values for other boards, not places a user picks: up to jobspy 1.3
+# US_CANADA belonged to ZipRecruiter and WORLDWIDE to LinkedIn (1.4 dropped
+# both). Neither selects an Indeed domain, so both stay out of the list.
 _INTERNAL_MEMBERS = frozenset({"US_CANADA", "WORLDWIDE"})
 
 
 def _aliases(member) -> list:
-    """The spellings `Country.from_string()` accepts for one enum member.
+    """Every spelling jobspy accepts for one country, its own name first.
 
-    jobspy stores each member as a tuple whose first item is a comma-separated
-    alias string. The shape is checked, not assumed: on a plain-string value
-    `value[0]` would be the first letter, and "usa" would silently become "u".
+    Since jobspy 1.4 a member's value is its name ("usa", "south korea") and
+    the other spellings sit in `jobspy.model.country_aliases` ("us" -> "usa").
     """
-    value = member.value
-    raw = value[0] if isinstance(value, (tuple, list)) and value else value
-    return [a.strip() for a in str(raw).split(",") if a.strip()]
+    from jobspy import model
+
+    name = str(member.value)
+    extra = [alias for alias, target in getattr(model, "country_aliases", {}).items() if target == name]
+    return [name] + extra
+
+
+def _member(value):
+    """The jobspy Country for a name or alias, or None (case-insensitive)."""
+    from jobspy.model import Country
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        member = Country(text)
+    except ValueError:
+        return None
+    return None if member.name in _INTERNAL_MEMBERS else member
 
 
 @lru_cache(maxsize=1)
 def supported_countries() -> tuple:
     """((value, label), ...) for every country Indeed supports, sorted by label.
 
-    `value` is the first alias, which is what the project stores and hands back
-    to jobspy. `label` is the longest alias, which reads as the full name of the
-    country ("usa" -> "United States", "uk" -> "United Kingdom").
+    `value` is jobspy's name for it, which is what the project stores and hands
+    back to jobspy. `label` is the longest spelling, which reads as the full
+    name of the country ("usa" -> "United States", "uk" -> "United Kingdom").
     """
     from jobspy.model import Country
 
     rows = [
-        (_aliases(member)[0], max(_aliases(member), key=len).title())
+        (str(member.value), max(_aliases(member), key=len).title())
         for member in Country
         if member.name not in _INTERNAL_MEMBERS
     ]
@@ -56,29 +71,22 @@ def normalize_country(value) -> Optional[str]:
     The match is case-insensitive and accepts every alias jobspy accepts, so
     "Canada", "canada", "US" and "United States" all resolve.
     """
-    from jobspy.model import Country
-
-    try:
-        member = Country.from_string(str(value or ""))
-    except (ValueError, AttributeError):
-        return None
-    if member.name in _INTERNAL_MEMBERS:
-        return None
-    return _aliases(member)[0]
+    member = _member(value)
+    return str(member.value) if member is not None else None
 
 
 def indeed_host(value) -> Optional[str]:
     """The Indeed host of a country ("usa" -> "www.indeed.com", "uk" -> "uk.indeed.com"), or None.
 
-    jobspy's own Indeed scraper builds its base URL from the same property, so a
+    jobspy's own Indeed scraper builds its base URL from the same tables, so a
     search URL built here reaches the domain a keyword search reaches.
     """
-    from jobspy.model import Country
+    from jobspy.indeed.constant import country_codes, subdomains
 
-    name = normalize_country(value)
-    if name is None:
+    member = _member(value)
+    if member is None or member not in country_codes:
         return None
-    return f"{Country.from_string(name).indeed_domain_value[0]}.indeed.com"
+    return f"{subdomains.get(member, country_codes[member].lower())}.indeed.com"
 
 
 def country_from_location(location) -> str:

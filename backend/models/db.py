@@ -327,6 +327,15 @@ class Job(AccountScoped, Base):
     # as before); this keeps {résumé id: name at scoring time} so a deleted résumé keeps a label.
     # Read and written through backend/analyzer/score_keys.py.
     cv_score_names = Column(JSON, nullable=True)
+    # 3.1: which posting the job is (scraper/_shared/postings.py, posting_links.py).
+    # `apply_url` is the employer's own posting when `url` is a job board listing or a
+    # wrapped link; `posting_key` names the posting whatever link spelled it
+    # ("greenhouse:8686811002"); a job that repeats a posting the feed already has is
+    # stored with status "duplicate" and `duplicate_of` pointing at that job.
+    apply_url = Column(String, nullable=True)
+    posting_key = Column(String, nullable=True, index=True)
+    duplicate_of = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"),
+                          nullable=True, index=True)
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
     # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))
@@ -335,7 +344,7 @@ class Job(AccountScoped, Base):
     cache_error = Column(Text, nullable=True)
     seen = Column(Boolean, default=False)
     saved = Column(Boolean, default=False)
-    status = Column(String, default="new")  # new | saved | applied | skip
+    status = Column(String, default="new")  # new | saved | applied | skip | ignored | duplicate
     discovered_at = Column(DateTime(timezone=True), default=utcnow)
 
     # Computed in SQL without loading the deferred blob columns; .columns[0] reaches
@@ -818,6 +827,10 @@ def create_tables():
 from backend.accounts.scoping import install_scoping  # noqa: E402
 
 install_scoping(AccountScoped)
+
+# After the scoping listener, so a new job already carries its account when it is linked.
+from backend.scraper._shared.posting_links import install_posting_links  # noqa: E402
+install_posting_links()
 
 
 # ── Uncommitted writes (S2-01) ───────────────────────────────────────────────

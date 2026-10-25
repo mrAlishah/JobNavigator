@@ -1,5 +1,6 @@
-"""A JobSpy board that hard-fails must not look like one that found nothing; jobspy swallows per-board failures into its own loggers, so these tests pin the per-source breakdown, warning flag and run summary."""
-import logging
+"""A JobSpy board that hard-fails must not look like one that found nothing. jobspy (1.4+) names
+each failed board in `jobs_df.attrs["errors"]`; these tests pin the per-source breakdown, warning
+flag and run summary built from it."""
 import sys
 import types
 
@@ -8,38 +9,23 @@ import pytest
 from backend.models.db import ScrapeLog, Search
 
 
-def _board_logger(name):
-    """A logger shaped like jobspy's own create_logger(): propagate=False, which is why a root-only capture handler never sees a board failure."""
-    logger = logging.getLogger(name)
-    logger.propagate = False
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        logger.addHandler(logging.NullHandler())
-    return logger
-
-
-def _fake_jobspy(rows, log_errors=(), level=logging.ERROR):
-    """Install a stand-in jobspy module whose scrape_jobs returns rows and emits log_errors on non-propagating loggers, like the real library does.
-
-    `level` is the level the board reports at. Since python-jobspy 1.2.0 every
-    board-level failure is an ERROR. An entry can carry its own level as a third item.
-    """
+def _fake_jobspy(rows, errors=None, warnings=None):
+    """Install a stand-in jobspy module whose scrape_jobs returns rows, with the board errors and
+    warnings in `attrs` the way the real library (1.4+) reports them."""
     import pandas as pd
 
     # compose_location() imports jobspy.model; load the real one before the
     # stand-in shadows the package, so this file also passes when run alone.
     import jobspy.model  # noqa: F401
 
-    # loggers must exist before _capture_source_errors() enumerates them
-    boards = [_board_logger(entry[0]) for entry in log_errors]
-
     def scrape_jobs(**kwargs):
-        for logger, entry in zip(boards, log_errors):
-            logger.log(entry[2] if len(entry) > 2 else level, entry[1])
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        df.attrs = {"errors": dict(errors or {}), "warnings": dict(warnings or {})}
+        return df
 
     mod = types.ModuleType("jobspy")
     mod.scrape_jobs = scrape_jobs
+    mod.model = sys.modules["jobspy.model"]
     sys.modules["jobspy"] = mod
     return mod
 
@@ -59,13 +45,25 @@ def _first_run_auth(db):
     db.commit()
 
 
-def _search(db, sources):
+def _search(db, sources, country=None):
     s = Search(name="ZZ Search", search_mode="keyword", active=True, sources=sources,
                search_term="program manager", title_include_keywords=[],
                title_exclude_keywords=[], company_filter=[], company_exclude=[])
+    if country is not None:
+        s.country = country
     db.add(s)
     db.commit()
     return s
+
+
+# The literal texts python-jobspy 1.4.1 reports. jobspy/util.py check_status() raises
+# "response status code <n>" and adds a hint on 403 and 429.
+ZIP_REDIRECTED = "response status code 307"   # measured from an EU address
+ZIP_FORBIDDEN = "response status code 403 (blocked: use a proxy)"
+RATE_LIMITED = "response status code 429 (blocked: use a proxy)"
+GOOGLE_NO_DATA = "no job data returned"
+GOOGLE_NO_DATA_1_3 = "Google returned no job data"
+LINKEDIN_JOB_TYPE_WARNING = "job_type isn't supported, ignoring it"
 
 
 # ── the source module ───────────────────────────────────────────────────────
@@ -90,16 +88,11 @@ def test_breakdown_counts_each_board(test_db, monkeypatch):
 
 
 def test_breakdown_records_a_refused_board(test_db, monkeypatch):
-    """Each board's ERROR record is captured; an undiagnosed HTTP failure is condensed to its status code."""
+    """Each failed board is recorded; an undiagnosed HTTP failure is condensed to its status code."""
     from backend.scraper.sources.jobspy import GOOGLE_BLOCKED, _run_sync
 
-    _fake_jobspy(
-        [_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
-        log_errors=[
-            ("JobSpy:LinkedIn", "LinkedIn response status code 429"),
-            ("JobSpy:Google", GOOGLE_NO_DATA),
-        ],
-    )
+    _fake_jobspy([_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
+                 errors={"linkedin": RATE_LIMITED, "google": GOOGLE_NO_DATA})
     search = _search(test_db, ["indeed", "linkedin", "google"])
 
     result = _run_sync(search)
@@ -113,44 +106,42 @@ def test_breakdown_records_a_refused_board(test_db, monkeypatch):
 
 
 # ── known blocks ────────────────────────────────────────────────────────────
-# The literal texts python-jobspy 1.3.0 logs. Every board-level failure is an
-# ERROR, and jobspy/ziprecruiter/__init__.py logs the status code without a body.
-ZIP_REDIRECTED = "ZipRecruiter response status code 307"   # measured from an EU address
-ZIP_FORBIDDEN = "ZipRecruiter response status code 403"
-ZIP_RATE_LIMITED = "ZipRecruiter response status code 429"
-GOOGLE_NO_DATA = "Google returned no job data"
-# jobspy/linkedin/__init__.py logs this at WARNING on every run that sets job_type.
-LINKEDIN_JOB_TYPE_WARNING = "LinkedIn: job_type isn't supported, ignoring it"
 
-
-@pytest.mark.parametrize("logger_name, level, message, expected", [
-    ("JobSpy:ZipRecruiter", logging.ERROR, ZIP_REDIRECTED, "ZIP_RECRUITER_REDIRECTED"),
-    ("JobSpy:ZipRecruiter", logging.ERROR, ZIP_FORBIDDEN, "ZIP_RECRUITER_BLOCKED"),
-    ("JobSpy:Google", logging.ERROR, GOOGLE_NO_DATA, "GOOGLE_BLOCKED"),
+@pytest.mark.parametrize("site, message, expected", [
+    ("zip_recruiter", ZIP_REDIRECTED, "ZIP_RECRUITER_REDIRECTED"),
+    ("zip_recruiter", ZIP_FORBIDDEN, "ZIP_RECRUITER_BLOCKED"),
+    ("google", GOOGLE_NO_DATA, "GOOGLE_BLOCKED"),
+    ("google", GOOGLE_NO_DATA_1_3, "GOOGLE_BLOCKED"),
     # A failure nobody diagnosed keeps its current text.
-    ("JobSpy:ZipRecruiter", logging.ERROR, ZIP_RATE_LIMITED, "429"),
-    ("JobSpy:ZipRecruiter", logging.ERROR, "ZipRecruiter: Read timed out", "ZipRecruiter: Read timed out"),
+    ("zip_recruiter", RATE_LIMITED, "429"),
+    ("zip_recruiter", "Read timed out", "Read timed out"),
     # A signature counts only on its own board.
-    ("JobSpy:Indeed", logging.ERROR, ZIP_FORBIDDEN, "403"),
-    ("JobSpy:Indeed", logging.ERROR, GOOGLE_NO_DATA, GOOGLE_NO_DATA),
+    ("indeed", ZIP_FORBIDDEN, "403"),
+    ("indeed", GOOGLE_NO_DATA, GOOGLE_NO_DATA),
 ])
-def test_a_known_block_signature_gets_a_stable_text(logger_name, level, message, expected):
+def test_a_known_block_signature_gets_a_stable_text(site, message, expected):
+    import pandas as pd
     import backend.scraper.sources.jobspy as js
 
-    _board_logger(logger_name)
-    with js._capture_source_errors(["indeed", "zip_recruiter", "google"]) as capture:
-        logging.getLogger(logger_name).log(level, message)
-    assert list(capture.errors.values()) == [getattr(js, expected, expected)]
+    df = pd.DataFrame()
+    df.attrs = {"errors": {site: message}}
+    assert js._errors_of(df) == {site: getattr(js, expected, expected)}
+
+
+def test_errors_of_a_frame_without_attrs_is_empty():
+    import pandas as pd
+    from backend.scraper.sources.jobspy import _errors_of
+
+    assert _errors_of(pd.DataFrame()) == {}
+    assert _errors_of(None) == {}
 
 
 def test_google_that_returned_rows_records_no_error(test_db, monkeypatch):
-    """A Google board that returned rows was not blocked, whatever "no job data" record reached the capture."""
+    """A Google board that returned rows was not blocked; a "no job data" error came from a later page."""
     from backend.scraper.sources.jobspy import _run_sync
 
-    _fake_jobspy(
-        [_row("google", "Program Manager", "Acme", "https://google.test/a")],
-        log_errors=[("JobSpy:Google", GOOGLE_NO_DATA)],
-    )
+    _fake_jobspy([_row("google", "Program Manager", "Acme", "https://google.test/a")],
+                 errors={"google": GOOGLE_NO_DATA})
     result = _run_sync(_search(test_db, ["google"]))
 
     google = result["source_breakdown"]["google"]
@@ -168,10 +159,7 @@ async def test_the_test_run_reports_each_failed_board(test_db, rows):
     from backend.api.routes_searches import test_search
     from backend.scraper.sources.jobspy import GOOGLE_BLOCKED, ZIP_RECRUITER_REDIRECTED
 
-    _fake_jobspy(rows, log_errors=[
-        ("JobSpy:ZipRecruiter", ZIP_REDIRECTED),
-        ("JobSpy:Google", GOOGLE_NO_DATA),
-    ])
+    _fake_jobspy(rows, errors={"zip_recruiter": ZIP_REDIRECTED, "google": GOOGLE_NO_DATA})
     search = _search(test_db, ["indeed", "zip_recruiter", "google"])
 
     out = await test_search(str(search.id), db=test_db)
@@ -183,51 +171,38 @@ async def test_the_test_run_reports_each_failed_board(test_db, rows):
     assert out["source_breakdown"] == ({"indeed": 1} if rows else {})
 
 
-# The capture handler attaches to every JobSpy logger in the process. The
-# scheduler runs in the same process, so another run's board failure can reach
-# this run's capture. Only the boards this search uses may be reported.
-
 @pytest.mark.asyncio
-async def test_the_test_run_ignores_a_failure_of_a_board_it_does_not_use(test_db):
+async def test_the_test_run_reports_only_boards_it_asked_for(test_db):
     from backend.api.routes_searches import test_search
-    from backend.scraper.sources.jobspy import ZIP_RECRUITER_BLOCKED, _capture_source_errors
 
-    # The ZipRecruiter record stands for the overlapping scheduled run.
     _fake_jobspy([_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
-                 log_errors=[("JobSpy:ZipRecruiter", ZIP_FORBIDDEN)])
+                 errors={"zip_recruiter": ZIP_FORBIDDEN})
     search = _search(test_db, ["linkedin", "indeed"])
 
-    with _capture_source_errors(["zip_recruiter"]) as scheduled:
-        out = await test_search(str(search.id), db=test_db)
+    out = await test_search(str(search.id), db=test_db)
 
-    assert scheduled.errors == {"zip_recruiter": ZIP_RECRUITER_BLOCKED}
     assert out["source_errors"] == {}
     assert out["source_breakdown"] == {"indeed": 1}
 
 
-def test_a_run_ignores_a_failure_of_a_board_it_does_not_use(test_db, monkeypatch):
-    """The scheduled path merges captured errors with setdefault, so it would add the foreign board too."""
-    from backend.scraper.sources.jobspy import ZIP_RECRUITER_BLOCKED, _capture_source_errors, _run_sync
+def test_a_run_reports_only_boards_it_asked_for(test_db, monkeypatch):
+    """The scheduled path merges errors with setdefault, so it would add a foreign board too."""
+    from backend.scraper.sources.jobspy import _run_sync
 
     _fake_jobspy([_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
-                 log_errors=[("JobSpy:ZipRecruiter", ZIP_FORBIDDEN)])
+                 errors={"zip_recruiter": ZIP_FORBIDDEN})
 
-    with _capture_source_errors(["zip_recruiter"]) as other:
-        result = _run_sync(_search(test_db, ["indeed"]))
+    result = _run_sync(_search(test_db, ["indeed"]))
 
-    assert other.errors == {"zip_recruiter": ZIP_RECRUITER_BLOCKED}
     assert set(result["source_breakdown"]) == {"indeed"}
     assert "error" not in result["source_breakdown"]["indeed"]
 
 
 def test_breakdown_records_an_indeed_failure(test_db, monkeypatch):
-    """The real Indeed failure path in 1.3.0: ERROR level, the library's own message text."""
     from backend.scraper.sources.jobspy import _run_sync
 
-    _fake_jobspy(
-        [_row("linkedin", "Product Manager", "Beta", "https://linkedin.test/c")],
-        log_errors=[("JobSpy:Indeed", "Indeed response status code 503")],
-    )
+    _fake_jobspy([_row("linkedin", "Product Manager", "Beta", "https://linkedin.test/c")],
+                 errors={"indeed": "response status code 503"})
     search = _search(test_db, ["indeed", "linkedin"])
 
     result = _run_sync(search)
@@ -237,43 +212,14 @@ def test_breakdown_records_an_indeed_failure(test_db, monkeypatch):
     assert bd["linkedin"]["seen"] == 1
 
 
-def test_ordinary_info_chatter_stays_out_of_the_breakdown(test_db, monkeypatch):
-    """A progress line is not an error; jobspy logs "finished scraping" at INFO on every successful board."""
-    from backend.scraper.sources.jobspy import _run_sync
-
-    _fake_jobspy(
-        [_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
-        log_errors=[("JobSpy:Indeed", "finished scraping")],
-        level=logging.INFO,
-    )
-    search = _search(test_db, ["indeed"])
-
-    result = _run_sync(search)
-
-    assert "error" not in result["source_breakdown"]["indeed"]
-    assert result["source_breakdown"]["indeed"]["seen"] == 1
-
-
-def test_a_warning_record_does_not_count_whatever_it_says(test_db, monkeypatch):
-    """Since python-jobspy 1.2.0 a WARNING is per-job trouble or advice; only ERROR marks a board failed."""
-    from backend.scraper.sources.jobspy import _capture_source_errors
-
-    _board_logger("JobSpy:ZipRecruiter")
-    with _capture_source_errors(["zip_recruiter"]) as capture:
-        logging.getLogger("JobSpy:ZipRecruiter").warning("ZipRecruiter response status code 404 for job abc")
-        logging.getLogger("JobSpy:ZipRecruiter").warning("skipping job: bad salary")
-    assert capture.errors == {}
-
-
-def test_the_linkedin_job_type_warning_does_not_fail_a_board_that_returned_rows(test_db, monkeypatch):
-    """Regression for the 1.3.0 bump: we always pass job_type, so LinkedIn logs this warning on every run."""
+def test_a_board_warning_does_not_fail_it(test_db, monkeypatch):
+    """A warning is advice or per-job trouble (LinkedIn says it on every run that sets job_type)."""
     from backend.scraper.sources.jobspy import _run_sync
 
     _fake_jobspy(
         [_row("linkedin", "Product Manager", "Beta", "https://linkedin.test/c"),
          _row("indeed", "Program Manager", "Acme", "https://indeed.test/a")],
-        log_errors=[("JobSpy:LinkedIn", LINKEDIN_JOB_TYPE_WARNING, logging.WARNING),
-                    ("JobSpy:LinkedIn", "LinkedIn: empty page at start=25", logging.WARNING)],
+        warnings={"linkedin": [LINKEDIN_JOB_TYPE_WARNING, "empty page at start=25"]},
     )
     result = _run_sync(_search(test_db, ["indeed", "linkedin"]))
 
@@ -283,55 +229,36 @@ def test_the_linkedin_job_type_warning_does_not_fail_a_board_that_returned_rows(
     assert not any("error" in v for v in result["source_breakdown"].values())
 
 
-def test_board_logger_does_not_propagate_to_root():
-    """Pins the library behavior the capture works around: while it holds, a root-only handler is a no-op against a real board failure."""
-    from backend.scraper.sources.jobspy import _SourceLogCapture
+def test_condense_error_keeps_non_http_text():
+    from backend.scraper.sources.jobspy import _condense_error
 
-    board = _board_logger("JobSpy:ZipRecruiter")
-    assert board.propagate is False
-
-    root_only = _SourceLogCapture()
-    logging.getLogger().addHandler(root_only)
-    try:
-        board.error("ZipRecruiter response status code 403")
-    finally:
-        logging.getLogger().removeHandler(root_only)
-    assert root_only.errors == {}
+    assert _condense_error(ZIP_FORBIDDEN) == "403"
+    assert _condense_error("Google returned no job data") == "Google returned no job data"
 
 
-def test_capture_attaches_to_the_non_propagating_board_logger():
-    """The context manager itself, exercised directly against the real condition."""
-    from backend.scraper.sources.jobspy import ZIP_RECRUITER_BLOCKED, _capture_source_errors
+# ── a country jobspy no longer knows ────────────────────────────────────────
 
-    _board_logger("JobSpy:ZipRecruiter")
-    with _capture_source_errors(["indeed", "zip_recruiter"]) as capture:
-        logging.getLogger("JobSpy:ZipRecruiter").error(ZIP_FORBIDDEN)
-    assert capture.errors == {"zip_recruiter": ZIP_RECRUITER_BLOCKED}
-
-
-def test_capture_handler_is_removed_afterwards(test_db):
-    """No logger — root or board — may keep collecting after the call returns."""
+def test_a_run_with_a_dropped_country_says_so(test_db, monkeypatch):
+    """jobspy 1.4 dropped ten countries with no Indeed site; such a search fails with a reason."""
     from backend.scraper.sources.jobspy import _run_sync
 
-    board = _board_logger("JobSpy:Indeed")
-    before_root = len(logging.getLogger().handlers)
-    before_board = len(board.handlers)
+    _fake_jobspy([_row("indeed", "Program Manager", "Acme", "https://indeed.test/a")])
+    result = _run_sync(_search(test_db, ["indeed"], country="bulgaria"))
 
-    _fake_jobspy([], log_errors=[("JobSpy:Indeed", "boom 500")])
-    _run_sync(_search(test_db, ["indeed"]))
-
-    assert len(logging.getLogger().handlers) == before_root
-    assert len(board.handlers) == before_board
+    assert result["new_jobs"] == 0
+    assert "no site for the country 'bulgaria'" in result["error"]
 
 
-def test_condense_error_keeps_non_http_text():
-    from backend.scraper.sources.jobspy import _condense_error, _site_key
+@pytest.mark.asyncio
+async def test_the_test_run_with_a_dropped_country_is_a_400(test_db):
+    from fastapi import HTTPException
+    from backend.api.routes_searches import test_search
 
-    assert _condense_error("ZipRecruiter response status code 403") == "403"
-    assert _condense_error("Google returned no job data") == "Google returned no job data"
-    assert _site_key("JobSpy:ZipRecruiter") == "zip_recruiter"
-    assert _site_key("JobSpy:Google") == "google"
-    assert _site_key("uvicorn.error") is None
+    _fake_jobspy([])
+    search = _search(test_db, ["indeed"], country="bulgaria")
+    with pytest.raises(HTTPException) as exc:
+        await test_search(str(search.id), db=test_db)
+    assert exc.value.status_code == 400
 
 
 # ── the ScrapeLog row ───────────────────────────────────────────────────────

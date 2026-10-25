@@ -203,6 +203,7 @@ def list_jobs(
 
     from backend.analyzer.score_keys import resume_names
     names = resume_names(db)
+    also_on = _also_on(db, job_ids)
     rows = [
         _job_to_dict(
             j,
@@ -210,6 +211,7 @@ def list_jobs(
             in_flight=in_flight_map.get(str(j.id), []),
             in_flight_detail=in_flight_detail_map.get(str(j.id), []),
             names=names,
+            also_on=also_on.get(j.id, []),
         )
         for j in jobs
     ]
@@ -687,19 +689,29 @@ def job_facets(
     }
 
 
-def _known_posting(db, external_id: str, content_hash: str):
-    """The stored row a saved posting already is. Two-layer dedup: the same URL
-    (external_id), or the same company + title reached by another URL (content_hash).
+def _known_posting(db, external_id: str, content_hash: str, url: str | None = None):
+    """The stored row a saved posting already is: the same URL (external_id), the same
+    company + title reached by another URL (content_hash), or the same posting under another
+    spelling of its link (posting_key, scraper/_shared/postings.py). A duplicate answers with
+    the posting it repeats.
 
     An `ignored` row matches on its URL only (R30 S-10). It is a scraper's dedup memory of a
     job one search's filters dropped, and it must not refuse the user's own save of the same
     role from another site. New ignored rows carry no content_hash (`mark_ignored`); the
     status test covers the ones stored with a hash before that."""
-    return db.query(Job).filter(
+    from backend.scraper._shared.postings import posting_key
+    not_ignored = (Job.status.is_(None)) | (Job.status != "ignored")
+    row = db.query(Job).filter(
         (Job.external_id == external_id)
-        | ((Job.content_hash == content_hash)
-           & ((Job.status.is_(None)) | (Job.status != "ignored")))
+        | ((Job.content_hash == content_hash) & not_ignored)
     ).first()
+    key = posting_key(url) if url else None
+    if row is None and key:
+        row = (db.query(Job).filter(Job.posting_key == key, not_ignored)
+               .order_by(Job.discovered_at.asc()).first())
+    if row is not None and row.status == "duplicate" and row.duplicate_of:
+        row = db.query(Job).filter(Job.id == row.duplicate_of).first() or row
+    return row
 
 
 @router.post("/save-from-extension")
@@ -727,7 +739,7 @@ async def save_from_extension(body: dict, db: Session = Depends(get_db)):
 
     # Two-layer dedup: external_id (URL-based) first, falling back to content_hash
     # (company+title) for cross-source catches where the same job was saved via a different URL.
-    existing = _known_posting(db, external_id, content_hash)
+    existing = _known_posting(db, external_id, content_hash, url)
     if existing:
         if existing.status == "skip":
             existing.status = "new"
@@ -880,7 +892,7 @@ def create_manual_job(body: dict, background_tasks: BackgroundTasks, db: Session
     # content_hash (company+title) for the same posting reached by another URL.
     external_id = make_external_id(company, title, url)
     content_hash = make_content_hash(company, title)
-    existing = _known_posting(db, external_id, content_hash)
+    existing = _known_posting(db, external_id, content_hash, url)
     if existing:
         # Report the row, change nothing: an `applied` or `ignored` posting must
         # not fall back to `new` because the user pasted its URL a second time.
@@ -1052,6 +1064,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
         tailored_resume_id=tailored[0] if tailored else None,
         in_flight=[r.job_type for r in running],
         in_flight_detail=[{"job_type": r.job_type, "meta": r.meta} for r in running],
+        also_on=_also_on(db, [job.id]).get(job.id, []),
     )
 
 
@@ -1288,8 +1301,25 @@ def _normalize_report(report, best_cv):
     return report
 
 
+def _also_on(db, job_ids) -> dict:
+    """{job id: [{"source", "url", "location"}, ...]}: where else each posting was found (its
+    duplicates, scraper/_shared/posting_links.py), one entry per source and link, oldest first."""
+    if not job_ids:
+        return {}
+    rows = (db.query(Job.duplicate_of, Job.source, Job.url, Job.location)
+            .filter(Job.duplicate_of.in_(job_ids))
+            .order_by(Job.discovered_at.asc()).all())
+    out: dict = {}
+    for original, source, url, location in rows:
+        entry = {"source": source, "url": url, "location": location}
+        if entry not in out.setdefault(original, []):
+            out[original].append(entry)
+    return out
+
+
 def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = None,
-                 in_flight_detail: list[dict] | None = None, names: dict | None = None) -> dict:
+                 in_flight_detail: list[dict] | None = None, names: dict | None = None,
+                 also_on: list | None = None) -> dict:
     """`names` is {résumé id: name} for the account (score_keys.resume_names), loaded once by a
     list caller; a single job loads it itself."""
     from backend.analyzer.score_keys import display, resume_names
@@ -1308,6 +1338,12 @@ def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = 
         "company": j.company,
         "title": j.title,
         "url": j.url,
+        # The employer's own posting when `url` is a job board listing (posting_links.py).
+        "apply_url": j.apply_url,
+        "posting_key": j.posting_key,
+        "duplicate_of": str(j.duplicate_of) if j.duplicate_of else None,
+        # Other sources that found this posting; empty for a duplicate itself.
+        "also_on": also_on or [],
         "source": j.source,
         "search_id": str(j.search_id) if j.search_id else None,
         "description": j.description,

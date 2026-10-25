@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from backend.models.db import SessionLocal, Job, Search, get_existing_external_ids
 from backend.accounts.settings import get_setting
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.posting_links import counts_as_new
+from backend.scraper._shared.postings import resolve_short_links
 
 logger = logging.getLogger("jobnavigator.linkedin")
 
@@ -902,6 +904,7 @@ async def run(search: Search) -> dict:
                 and make_external_id(j["company"], j["title"], j.get("apply_url") or j["url"]) not in existing_ids
             ])
 
+            landed = await resolve_short_links([j.get("apply_url") or j["url"] for j in kept_jobs])
             for j in kept_jobs:
                 # Use apply URL (company career page) as primary, LinkedIn URL as fallback
                 job_url = j.get("apply_url") or j["url"]
@@ -929,6 +932,7 @@ async def run(search: Search) -> dict:
                     company=j["company"],
                     title=j["title"],
                     url=job_url,
+                    apply_url=landed.get(job_url),
                     source="linkedin_personal",
                     search_id=search.id,
                     location=j.get("location") or None,
@@ -971,7 +975,7 @@ async def run(search: Search) -> dict:
                     with db.begin_nested():
                         db.add(job)
                         db.flush()
-                    new_jobs += 1
+                    new_jobs += counts_as_new(job)
                     existing_ids.add(ext_id)
                 except IntegrityError:
                     logger.debug(f"Duplicate external_id for '{j['title']}' at {j.get('company')}, skipping")
