@@ -56,11 +56,9 @@ Copy `backend/scraper/sources/trulyremote.py` (shared fetch, detail pages, previ
    - ids: `make_external_id`, `make_content_hash` (`_shared/dedup.py`);
    - `await prefetch_h1b(companies)` before the first `db.add`, then `await analyze_inline(job, db=db)` per job (`_shared/analysis.py`);
    - a job you drop after reading its page, or whose description hits a body-exclusion phrase, is saved through `mark_ignored(job)` (no `content_hash`), so its URL is never read again but saving it by hand still works.
-4. Register the mode:
-   - `run_search` dispatch and `_search_mode_is_valid` in `backend/scraper/orchestrator.py` (plus `_NEEDS_QUERY_MODES` if it needs a term or URL);
-   - `SLOW_TEST_MODES` and a `preview` branch in `test_search` (`backend/api/routes_searches.py`);
-   - to share fetches across accounts: `is_shareable_search` and `search_key` (and `search_fetch_params` if needed) in `backend/scraper/targets.py`.
-5. Frontend `frontend/src/screens/Searches.jsx`: `MODES`, `MODE_OPTIONS`, `TESTABLE`, the editor fields; a badge colour pair in `theme.css` (light and dark); source labels in `JobFeed.jsx` and `Applications.jsx`.
+4. Register the mode: one `SearchMode(...)` entry in `backend/scraper/search_modes.py` (label, `module`, and the flags: `shareable` to share fetches across accounts, `background_test` for a slow Test, `needs_query` / `needs_url`, `boards`, `paid`, `fetch_params`). The run dispatch, the API's mode and source checks, the Test path and shared fetches all read it.
+5. Frontend: the matching entry in `frontend/src/searchModes.js` (label, badge, `cls`, `needsQuery`, default sources; a test fails when the two tables differ), the editor fields in `frontend/src/screens/Searches.jsx`, a badge colour pair for its `cls` in `theme.css` (light and dark), and source labels in `JobFeed.jsx` and `Applications.jsx`.
+6. If its links name a posting on a job system, teach `backend/scraper/_shared/postings.py` to read the posting key (and bump `READER_VERSION`), so its jobs join the same posting from other sources.
 
 ## Add an ATS handler
 
@@ -70,6 +68,7 @@ Copy `backend/scraper/ats/lever.py` (pure HTTP) or `meta.py` (Playwright) and `b
 2. Register it in `backend/scraper/sources/company_pages.py`: the import, `_dispatch_ats`, the ATS chain in `_fetch_postings`, and `_needs_browser` if it is pure HTTP.
 3. In `backend/api/routes_companies.py`: `detect_scrape_type` and the Test scrape chain in `test_scrape_company`.
 4. Optional: a description fetcher in `backend/scraper/ats/_descriptions.py`; `detectAts` / `ATS_SLUGS` in `frontend/src/screens/Companies.jsx` for the chip.
+5. Read its job links in `backend/scraper/_shared/postings.py` (a posting key, then bump `READER_VERSION`). If the API returns the whole board in one go, add it to `_full_board` in `backend/scraper/_shared/missing_postings.py`, so postings that leave the board are marked closed.
 
 ## Add a résumé or cover-letter template
 

@@ -31,6 +31,7 @@ E2E: 13 cases · 11 passed · 0 failed · 2 skipped · 118s
 | `theme` | the `theme.js` storage migration in a real browser: legacy `jobnavigator_dark_mode` → `jobnavigator_appearance`; `jobnavigator_skin` → `jobnavigator_theme` (old key removed); a light\|dark value parked in `jobnavigator_theme` moves to appearance while the skin still wins the palette; an unknown palette falls back to `default`; the modern keys are honoured and mirrored onto `.jn-v2` | localStorage only |
 | `cron` | Settings' cron helper: eleven expressions from the checked table at the bottom of `frontend/src/time.js`, read live from the field without ever saving, then the setting is re-read from the API to prove it is untouched | read-only |
 | `welcome` | the first-run overlay: a profile with no welcome mark sees it, dismissal writes `jobnavigator_welcomed`, a second load does not replay it, a legacy mark also suppresses it, and Escape closes it (checked over both the Feed and Stats) | localStorage only |
+| `newui` | the upgrade notice (`NewUiModal.jsx`): an existing profile sees it once, Escape and "Got it" write the versioned seen-mark, a fresh profile gets the first-run tour instead; the owner's telemetry dialog waits behind either overlay and opens when it closes, with Yes preselected (closed with Escape, nothing saved); old `/classic` bookmarks land on the same page | localStorage only; `/api/telemetry` answered in the browser |
 | `persona-import` | the Persona import path with `POST /api/persona/import` **and** the modal's résumé list route-mocked: the parsed result renders, the success toast names the counts, the real POST never leaves the browser, and the persona row is re-read afterwards to prove it | route-mocked |
 | `feed-collapse` | the Feed's analysis fold (`jn_feed_analysis_collapsed`) survives a reload and toggles back | localStorage only |
 | `modals` | six overlays — Feed keyboard shortcuts, Feed Source menu, Companies Add-company modal, Searches row ⋯ menu, Résumés New-résumé modal, Settings Model-catalog modal — each opens, closes on Escape, and closes on an outside/scrim click | opens only, submits nothing |
@@ -108,8 +109,16 @@ All four still create only `ZZE` rows and delete them again.
   probes (overflow, rail, console, overlays), `row_index()`, and the `ZZE` bookkeeping
 - `case_*.py` — one file per group
 
-`h.py` is **not** modified: it seeds the legacy `jobnavigator_dark_mode` key, so
+`h.py` seeds the legacy `jobnavigator_dark_mode` key, so
 `_common.mpage()` / `seeded_page()` set `jobnavigator_appearance` +
 `jobnavigator_theme` through `extra_ls` instead. Use `seeded_page()` (not
 `mpage()`) in any case that reloads — `h.context()`'s init script re-seeds on
 every navigation and would mask what the app itself wrote.
+
+Overlays: `h.context()` marks the upgrade notice seen (`jobnavigator_newui_seen`),
+and every context (`h.context()`, `_common.raw_ctx()`) answers `GET /api/telemetry`
+with `asked: true` (`h.telemetry_answer`), so the owner's one-time telemetry dialog
+never covers a screen under test and the install's real choice is never read or
+written. A case that tests the dialog passes `raw_ctx(..., telemetry={...})`
+(`case_newui.py` does: the dialog comes right after the upgrade notice or the
+first-run tour).

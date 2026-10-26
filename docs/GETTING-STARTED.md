@@ -73,7 +73,7 @@ You can have several base résumés (say, one for data roles, one for management
 
 **Companies** is your target list. Nothing creates companies for you; you add them (or apply to a job, which creates its company).
 
-A few well-known companies are seeded but switched off so you can see the shape. To add your own: **Add company**, give it a name and paste the career page URL. The ATS is auto-detected (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, Rippling, Oracle HCM, Phenom, TalentBrew, Amazon, Meta, Google; anything else goes through the generic Playwright reader). Per company you can set:
+A few well-known companies are seeded but switched off so you can see the shape. To add your own: **Add company**, give it a name and paste the career page URL. The ATS is auto-detected (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, Rippling, Oracle HCM, Phenom, TalentBrew, Amazon, Uber, Meta, Google; anything else goes through the generic Playwright reader). Per company you can set:
 
 - **Score new jobs against**: which base résumés, and Off / Light / Full.
 - **Title include / exclude** and other import rules so only relevant roles come in.
@@ -92,7 +92,7 @@ Turn the company on and press its run button once. The result shows on the row (
 - **LinkedIn Personal**: your own LinkedIn session through Playwright. Read the notice in Settings › Integrations › LinkedIn first.
 - **Apify**: paid scrapers from the Apify Store for Indeed, LinkedIn, Glassdoor, and keyword search across every company on Greenhouse, Lever, Ashby and Workday. Put your Apify API token in Settings › Apify and press **Check key**. Apify bills your account for each result, so keep Results wanted low (at most 200 per board) and the run interval long. A new Apify search starts paused; resume it on its card once the boards look right. Every run carries a spend cap and stops after 15 minutes, and Test asks before it runs, with the estimated cost. With several accounts each account uses its own token; the owner can let a member inherit the owner's token (and pay for that member's runs). **The Apify Creator plan does not work:** it cannot run Store actors, and every board fails with `403 public-actor-disabled`. Use the Free plan or a paid plan.
 
-Each search has its own auto-scoring depth, title include/exclude, company include/exclude, minimum score, and a run interval. "Skip active companies" leaves out companies you already scrape directly. Run it once by hand; afterwards the scheduler runs it on its interval.
+Each search has its own auto-scoring depth, title include/exclude, company include/exclude, minimum score, and a run interval. "Skip my active companies" leaves out companies you already scrape directly. Run it once by hand; afterwards the scheduler runs it on its interval.
 
 Two searches are always present and cannot be run or deleted: **Extension** and **Extension LI**. They are the inboxes for jobs the Chrome extension sends.
 
@@ -106,6 +106,8 @@ From a row you can:
 - **Tailor**: copies a base résumé for this job with a review step. The copy scores itself and shows as ✦.
 - **Cover letter**: generated from the paired résumé, your Persona and a voice preset.
 - **Save** moves the job into Applications; **Skip** hides it.
+
+One posting is one job, however many sites list it: a copy (the same posting under another link, the same role in another city, or a repost) is listed on the original's row under **Also listed** and kept out of the feed; Settings › Copies of a posting can send any kind to New instead. **Open** and the preview use the employer's own posting whenever one is known; the **Link** filter (Direct, Board link, Easy Apply) shows which jobs have one, and a mock LinkedIn account (step 8) finds it for LinkedIn listings. A job's posting is checked when you open it: a closed one gets a red dot on its card and **Closed posting** in its panel, and the **Posting** filter (Open / Closed) appears once one is found.
 
 The posting preview is an iframe. Sites that refuse framing stay blank unless the extension is installed (see below); **Open** always works.
 
@@ -121,7 +123,7 @@ It gives you:
 
 - **Posting preview**: lifts the frame-blocking headers only for frames the dashboard opens, so previews of most career pages work.
 - **Save any job**: from any page, one click sends title, company, URL and the description to the Extension search.
-- **LinkedIn capture**: while you browse `linkedin.com/jobs/collections/*` it collects job ids and imports them with full details. This needs a separate LinkedIn account under Settings › Integrations › LinkedIn; do not use your real one.
+- **LinkedIn capture**: while you browse `linkedin.com/jobs/collections/*` it collects job ids and imports them with full details through the mock account's session (Settings › LinkedIn, step 8); do not use your real account as the mock.
 - **Autofill**: on ATS application forms it fills fields from your Persona and drafts answers to free-text questions with the LLM (toggle in the popup).
 
 If you change the extension's files later, remove and re-add it; a plain reload does not pick up new URL patterns.
@@ -131,6 +133,8 @@ If you change the extension's files later, remove and re-add it; a plain reload 
 **Telegram**: create a bot with @BotFather, put the token in `.env` as `TELEGRAM_BOT_TOKEN`, restart, then enter your chat id under Settings › Integrations › Notifications and enable notifications. You get new-job alerts, a daily digest and scrape health, with inline actions.
 
 **Gmail**: create OAuth credentials in Google Cloud (Gmail read-only scope), put client id and secret in `.env` and restart. In the same OAuth client add `<your dashboard address>/api/gmail/callback` (e.g. `http://localhost/api/gmail/callback`) under Authorized redirect URIs. Then each account connects its own mailbox under Settings › Email classification › Gmail › Connect Gmail. The older route still works for the owner: run `py backend/gmail_oauth_setup.py` (or `python`) on your machine once and paste the refresh token it prints into `.env` as `GMAIL_REFRESH_TOKEN`; the owner uses it until they connect in the app. Members never use it. The backend then polls each connected mailbox, classifies replies and updates the matching application.
+
+**LinkedIn**: Settings › LinkedIn has two sessions, each with its own **Sign in** (LinkedIn emails a PIN; the row asks for it). The **Main account** is yours and only LinkedIn Personal searches use it. The **Mock account** is a separate LinkedIn account you create for the tool: the extension's LinkedIn capture uses it, and after every scrape it looks up the employer's own link for LinkedIn listings (one request every 2 seconds, up to 200 per run). It is optional, but without it LinkedIn listings keep their LinkedIn link. Never enter your real account as the mock one; the lookup refuses to run on it.
 
 **H-1B**: Settings › Pipeline holds the global exclude phrases scanned in every description and the cron that refreshes the sponsorship dataset. Ignore it if visa sponsorship is not your concern.
 
@@ -150,7 +154,9 @@ One install can hold up to five accounts, for a household or a couple of friends
 
 ## 9. Scheduling, backups, upkeep
 
-Settings › Pipeline › Scheduler holds every interval and cron: scraping, email polling, backups, cleanup of old unsaved jobs, auto-reject of stale applications. Each cron field explains itself and offers presets.
+Settings › Pipeline › Scheduler holds every interval and cron: scraping, email polling, backups, cleanup of old unsaved jobs, auto-reject of stale applications. Each cron field explains itself and offers presets. The scrape interval counts from the last scheduled scrape, so restarts do not reset it; one that is overdue runs two minutes after the backend starts. Crons (backups, cleanup) run only while the machine is on.
+
+**Telemetry.** After the first sign-in the owner is asked once whether the install may send anonymous scraper/AI health (**Essentials**) and app usage (**Yes**) to help the project see what needs maintaining first; Settings › Telemetry changes it and lists what is sent. Nothing is sent before that choice, and `JN_TELEMETRY=off` in `.env` turns it off for good.
 
 Backups are plain-SQL `pg_dump` files (`backups/jobnavigator_<timestamp>.sql`, newest 5 kept) written on the backup cron; you can trigger one from Settings › System. Removing an account takes one first (`backups/pre_remove_<timestamp>_<name>.sql`; the newest 5 are kept, older ones are deleted on the next removal). The files are made restorable on the bundled postgres:16 (the pg17-only `SET transaction_timeout` line is stripped). To restore into an empty database, strict mode:
 
