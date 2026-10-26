@@ -21,9 +21,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 logger = logging.getLogger("jobnavigator.postings")
 
-# Raised whenever a reader changes what key a link gets; on start, stored jobs are keyed
-# again when the install's version is older (seed.migrate_posting_keys).
-READER_VERSION = 2
+# Raised whenever a reader changes what key a link gets, or the linking rules change
+# (posting_links.py); on start, stored jobs are keyed and linked again when the install's
+# version is older (seed.migrate_posting_keys). 3: a role skipped in one place shows elsewhere.
+READER_VERSION = 3
 
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 

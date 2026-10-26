@@ -670,6 +670,8 @@ def run_migrations(db):
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duplicate_of UUID REFERENCES jobs(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_jobs_acct_posting_key ON jobs (account_id, posting_key)",
         "CREATE INDEX IF NOT EXISTS ix_jobs_duplicate_of ON jobs (duplicate_of)",
+        # 3.2: a role skipped in one place, shown again in another
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS same_role_as UUID REFERENCES jobs(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_jobs_acct_content_hash ON jobs (account_id, content_hash)",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_summary",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_strengths",
@@ -1477,7 +1479,7 @@ def migrate_posting_keys(db, batch: int = 1000) -> dict:
         row.value = str(READER_VERSION)
     db.commit()
     logger.info(f"Posting keys (readers v{READER_VERSION}): {rekeyed} jobs keyed again, "
-                f"{unlinked} duplicates without proof back in the feed, {linked} untouched copies linked")
+                f"{unlinked} hidden copies back in the feed (no proof, or a role skipped elsewhere), {linked} untouched copies linked")
     return {"rekeyed": rekeyed, "unlinked": unlinked, "linked": linked}
 
 

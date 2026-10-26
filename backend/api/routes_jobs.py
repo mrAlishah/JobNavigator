@@ -204,6 +204,7 @@ def list_jobs(
     from backend.analyzer.score_keys import resume_names
     names = resume_names(db)
     also_on = _also_on(db, job_ids)
+    skipped = _skipped_roles(db, jobs)
     rows = [
         _job_to_dict(
             j,
@@ -212,6 +213,7 @@ def list_jobs(
             in_flight_detail=in_flight_detail_map.get(str(j.id), []),
             names=names,
             also_on=also_on.get(j.id, []),
+            same_role_skipped=skipped.get(j.id),
         )
         for j in jobs
     ]
@@ -1065,6 +1067,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
         in_flight=[r.job_type for r in running],
         in_flight_detail=[{"job_type": r.job_type, "meta": r.meta} for r in running],
         also_on=_also_on(db, [job.id]).get(job.id, []),
+        same_role_skipped=_skipped_roles(db, [job]).get(job.id),
     )
 
 
@@ -1317,9 +1320,20 @@ def _also_on(db, job_ids) -> dict:
     return out
 
 
+def _skipped_roles(db, jobs) -> dict:
+    """{job id: {"id", "location"}}: the job the user skipped that is the same role as this one
+    in another place (posting_links.py `same_role_as`)."""
+    want = {j.same_role_as for j in jobs if getattr(j, "same_role_as", None)}
+    if not want:
+        return {}
+    found = {i: loc for i, loc in db.query(Job.id, Job.location).filter(Job.id.in_(list(want))).all()}
+    return {j.id: {"id": str(j.same_role_as), "location": found[j.same_role_as]}
+            for j in jobs if getattr(j, "same_role_as", None) in found}
+
+
 def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = None,
                  in_flight_detail: list[dict] | None = None, names: dict | None = None,
-                 also_on: list | None = None) -> dict:
+                 also_on: list | None = None, same_role_skipped: dict | None = None) -> dict:
     """`names` is {résumé id: name} for the account (score_keys.resume_names), loaded once by a
     list caller; a single job loads it itself."""
     from backend.analyzer.score_keys import display, resume_names
@@ -1344,6 +1358,7 @@ def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = 
         "duplicate_of": str(j.duplicate_of) if j.duplicate_of else None,
         # Other sources that found this posting; empty for a duplicate itself.
         "also_on": also_on or [],
+        "same_role_skipped": same_role_skipped,
         "source": j.source,
         "search_id": str(j.search_id) if j.search_id else None,
         "description": j.description,

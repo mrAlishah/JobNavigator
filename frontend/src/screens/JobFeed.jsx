@@ -1459,6 +1459,9 @@ export default function V2JobFeed() {
                           d.also_on?.length > 0 && <span key="also" style={{ whiteSpace: 'nowrap' }}>Also listed:{' '}
                             {d.also_on.map((a, i) => <React.Fragment key={a.url}>{i ? '; ' : ''}<Link href={a.url} target="_blank" title={a.url} style={{ fontSize: 'inherit', lineHeight: 'inherit' }}>{a.source !== d.source ? srcLabel(a.source, apifyBoards) : (a.location && a.location !== d.location ? a.location : 'another link')}</Link></React.Fragment>)}
                           </span>,
+                          // the same role, skipped elsewhere: shown again because this place may fit
+                          d.same_role_skipped && <span key="skipped" style={{ whiteSpace: 'nowrap' }}>Skipped in{' '}
+                            <Link onClick={() => setSearchParams(p => { p.set('job', d.same_role_skipped.id); return p })} title="The same role, which you skipped in another place" style={{ fontSize: 'inherit', lineHeight: 'inherit' }}>{d.same_role_skipped.location || 'another place'}</Link></span>,
                           d.status === 'duplicate' && <span key="dup" title="A copy of a posting or role already in your feed; its own row lists this one under Also listed">Duplicate</span>,
                         ].filter(Boolean).flatMap((el, i) => i ? [<span key={`sep${i}`} style={{ color: 'var(--line)' }}>|</span>, el] : [el])}
                       </div>

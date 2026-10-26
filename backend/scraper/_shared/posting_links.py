@@ -19,6 +19,10 @@ posting, so its link stays known (no re-import), the feed hides it, and the orig
 lists it under "Also listed". Rows the user acted on (saved, applied, skipped) are never
 turned into duplicates. Filtered rows ("ignored") are neither linked nor link targets.
 
+A copy in a place the original is not in is not hidden under an original the user skipped:
+a role skipped in Seattle may fit in New York. It stays in the feed with `same_role_as`
+pointing at the skipped job, so the feed can say so.
+
 This runs in a before_flush listener registered after the account stamping
 (accounts/scoping.py), so `account_id` is already set; every query names the account.
 """
@@ -156,27 +160,61 @@ def _listing_only(job) -> bool:
     return not is_employer_key(job.posting_key)
 
 
+def _places(job) -> set:
+    """The places a job names: its parsed place list, else its primary parsed place."""
+    rows = {(r.country, r.region, r.city) for r in (getattr(job, "locations", None) or [])}
+    primary = (job.loc_country, job.loc_region, job.loc_city)
+    if any(primary):
+        rows.add(primary)
+    return {p for p in rows if any(p)}
+
+
+def new_place(job, original) -> bool:
+    """True when `job` names a place `original` does not. Without parsed places on both, any
+    difference in the location text counts: when unsure, the copy is shown, not hidden."""
+    a, b = _places(job), _places(original)
+    if a and b:
+        return bool(a - b)
+    return _norm(job.location) != _norm(original.location)
+
+
+def skipped_elsewhere(job, original) -> bool:
+    """`original` was skipped, and `job` is the role somewhere it is not: not a copy to hide."""
+    return original.status == "skip" and new_place(job, original)
+
+
+def _pick(job, candidates, elsewhere):
+    """The first candidate that may hold `job` as its copy; a skipped one in another place
+    is noted in `elsewhere` (a one-item list) instead."""
+    for o in candidates:
+        if skipped_elsewhere(job, o):
+            elsewhere[:] = elsewhere or [o]
+            continue
+        return o
+    return None
+
+
 def find_original(session, job, batch: Batch):
-    """The job the account already has for this posting or role (rules 1 and 2), or None."""
+    """(the job the account already has for this posting or role, rules 1 and 2, or None;
+    the job the user skipped in another place, or None)."""
     from backend.models.db import Job
 
     key, acct = job.posting_key, job.account_id
+    elsewhere: list = []
     keys = [k for k in dict.fromkeys([key] + keys_of(job)) if k]
     if keys:
-        for k in keys:
-            hit = batch.keys.get((acct, k))
-            if hit is not None and hit is not job and hit.status not in NOT_TARGETS:
-                return hit
+        hits = [batch.keys.get((acct, k)) for k in keys]
+        hits = [h for h in hits if h is not None and h is not job and h.status not in NOT_TARGETS]
         q = (session.query(Job)
              .filter(Job.account_id == acct, Job.posting_key.in_(keys), _visible(Job)))
         if job.id is not None:
             q = q.filter(Job.id != job.id)
-        hit = q.order_by(Job.discovered_at.asc()).first()
+        hit = _pick(job, hits + q.order_by(Job.discovered_at.asc()).all(), elsewhere)
         if hit is not None:
-            return hit
+            return hit, None
     # Rule 2. An employer posting skips the untouched listing-only rows: rule 3 makes those its copies.
     if not job.content_hash or not job.description:
-        return None
+        return None, (elsewhere or [None])[0]
     employer = is_employer_key(key)
     candidates = _same_title(session, job, batch, _visible)
     candidates += [o for o in batch.titles.get((acct, job.content_hash), [])
@@ -185,8 +223,10 @@ def find_original(session, job, batch: Batch):
         candidates = [o for o in candidates if not (_listing_only(o) and (o.status or "new") == "new")]
     proven = _proven(job, candidates)
     if proven and not company_template(session, job, batch):
-        return proven[0]
-    return None
+        hit = _pick(job, proven, elsewhere)
+        if hit is not None:
+            return hit, None
+    return None, (elsewhere or [None])[0]
 
 
 def listing_copies(session, job, batch: Batch) -> list:
@@ -229,10 +269,12 @@ def link_new_jobs(session, flush_context=None, instances=None) -> None:
                     batch.add(job)
                 continue
             try:
-                original = find_original(session, job, batch)
+                original, elsewhere = find_original(session, job, batch)
                 if original is not None:
                     mark_duplicate(job, original)
                     continue
+                if elsewhere is not None:
+                    job.same_role_as = _ensure_id(elsewhere)
                 for copy in listing_copies(session, job, batch):
                     mark_duplicate(copy, job)
             except Exception as e:  # linking must never stop a job from being stored
@@ -290,10 +332,11 @@ def relink_account(db, account_id, batch: int = 500) -> dict:
     """Bring one account's stored duplicates in line with the rules above.
 
     1. A duplicate linked by company and title alone (the 3.1 rule) that shares no posting key
-       with its original and whose text does not prove one role goes back to the feed.
+       with its original and whose text does not prove one role goes back to the feed, and so does
+       a copy hidden under a skipped original in another place (with `same_role_as` set).
     2. Visible rows that share a posting key, or that are one role by rule 2: the row the user
-       acted on most keeps it and every other row still at status "new" becomes its duplicate.
-       A row the user acted on is never changed.
+       acted on most keeps it and every other row still at status "new" becomes its duplicate,
+       except under a skipped row in another place. A row the user acted on is never changed.
     Returns {"unlinked": n, "linked": n}."""
     from backend.models.db import Job
 
@@ -307,26 +350,39 @@ def relink_account(db, account_id, batch: int = 500) -> dict:
         originals.update({o.id: o for o in db.query(Job).filter(Job.id.in_(want[i:i + batch])).all()})
     for d in dups:
         o = originals.get(d.duplicate_of)
-        if o is None or _all_keys(d) & _all_keys(o) or _same_role_stored(d, o, templates):
+        if o is None:
+            continue
+        if skipped_elsewhere(d, o):
+            d.status, d.duplicate_of, d.same_role_as = "new", None, o.id
+            unlinked += 1
+            continue
+        if _all_keys(d) & _all_keys(o) or _same_role_stored(d, o, templates):
             continue
         d.status, d.duplicate_of = "new", None
         unlinked += 1
     db.commit()
 
     cols = (Job.id, Job.posting_key, Job.url, Job.apply_url, Job.status, Job.discovered_at,
-            Job.content_hash, Job.company, Job.title, Job.location, Job.description)
+            Job.content_hash, Job.company, Job.title, Job.location, Job.description,
+            Job.loc_country, Job.loc_region, Job.loc_city, Job.same_role_as)
     rows = (db.query(*cols).filter(Job.account_id == account_id, Job.duplicate_of.is_(None),
                                    _visible(Job)).all())
     rows.sort(key=_rank)
     moves: dict = {}
+    notes: dict = {}
     by_key: dict = {}
     for r in rows:
-        keeper = next((by_key[k] for k in _all_keys(r) if k in by_key), None)
-        if keeper is not None and (r.status or "new") == "new":
-            moves[r.id] = keeper.id
-            continue
+        if (r.status or "new") == "new":
+            elsewhere: list = []
+            same = [k for key in _all_keys(r) for k in by_key.get(key, [])]
+            keeper = _pick(r, same, elsewhere)
+            if keeper is not None:
+                moves[r.id] = keeper.id
+                continue
+            if elsewhere:
+                notes[r.id] = elsewhere[0].id
         for k in _all_keys(r):
-            by_key.setdefault(k, r)
+            by_key.setdefault(k, []).append(r)
     by_title: dict = {}
     window = timedelta(days=SAME_ROLE_DAYS)
     for r in rows:
@@ -334,18 +390,30 @@ def relink_account(db, account_id, batch: int = 500) -> dict:
             continue
         kept = by_title.setdefault(r.content_hash, [])
         if (r.status or "new") == "new":
-            keeper = next((k for k in kept
-                           if (not r.discovered_at or not k.discovered_at or abs(r.discovered_at - k.discovered_at) <= window)
-                           and _same_role_stored(r, k, templates)), None)
+            elsewhere = []
+            proven = [k for k in kept
+                      if (not r.discovered_at or not k.discovered_at or abs(r.discovered_at - k.discovered_at) <= window)
+                      and _same_role_stored(r, k, templates)]
+            keeper = _pick(r, proven, elsewhere)
             if keeper is not None:
                 moves[r.id] = keeper.id
+                notes.pop(r.id, None)
                 continue
+            if elsewhere and r.id not in notes:
+                notes[r.id] = elsewhere[0].id
         kept.append(r)
     items = list(moves.items())
     for i in range(0, len(items), batch):
         part = dict(items[i:i + batch])
         for job in db.query(Job).filter(Job.id.in_(list(part))).all():
             job.status, job.duplicate_of = DUPLICATE, part[job.id]
+        db.commit()
+    already = {r.id for r in rows if r.same_role_as}
+    noted = [(i, o) for i, o in notes.items() if i not in already]
+    for i in range(0, len(noted), batch):
+        part = dict(noted[i:i + batch])
+        for job in db.query(Job).filter(Job.id.in_(list(part))).all():
+            job.same_role_as = part[job.id]
         db.commit()
     # A duplicate whose original became a duplicate points at the posting that stays visible.
     for _ in range(5):

@@ -336,6 +336,8 @@ class Job(AccountScoped, Base):
     posting_key = Column(String, nullable=True, index=True)
     duplicate_of = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"),
                           nullable=True, index=True)
+    # 3.2: the same role, which the user skipped in another place; this copy stays in the feed.
+    same_role_as = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
     # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))

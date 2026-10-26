@@ -7,10 +7,12 @@ from backend.tests.test_same_role import BODY
 
 
 def _job(db, url, company="Twitch", title="Sr. Product Manager, Commerce", source="jobright",
-         status="new", apply_url=None, days_old=0, commit=True, description=None, location=None):
+         status="new", apply_url=None, days_old=0, commit=True, description=None, location=None, city=None):
     job = Job(external_id=make_external_id(company, title, url), content_hash=make_content_hash(company, title),
               company=company, title=title, url=url, apply_url=apply_url, source=source, status=status,
               seen=False, saved=status == "saved", description=description, location=location)
+    if city:
+        job.loc_country, job.loc_region, job.loc_city = "US", city[1], city[0]
     if days_old:
         job.discovered_at = datetime.now(timezone.utc) - timedelta(days=days_old)
     db.add(job)
@@ -241,7 +243,7 @@ def test_backfill_keys_and_links_untouched_copies(test_db):
 
     # rows stored before 3.1: no keys, no linking (the listener is bypassed)
     saved_hook = posting_links.find_original
-    posting_links.find_original = lambda *a, **k: None
+    posting_links.find_original = lambda *a, **k: (None, None)
     posting_links_listing = posting_links.listing_copies
     posting_links.listing_copies = lambda *a, **k: []
     try:
@@ -257,7 +259,8 @@ def test_backfill_keys_and_links_untouched_copies(test_db):
 
     with unscoped():
         out = migrate_posting_keys(test_db)
-        assert install_row(test_db, POSTING_KEYS_MIGRATED_KEY).value == "2"
+        from backend.scraper._shared.postings import READER_VERSION
+        assert install_row(test_db, POSTING_KEYS_MIGRATED_KEY).value == str(READER_VERSION)
         assert migrate_posting_keys(test_db) == {}, "runs once per reader version"
     assert out == {"rekeyed": 3, "unlinked": 0, "linked": 2}
     for j in (old, applied, copy):
@@ -271,7 +274,7 @@ def _stored(db, *jobs):
     """Store rows as an older version did: the listener's linking is bypassed."""
     from backend.scraper._shared import posting_links
     saved = posting_links.find_original, posting_links.listing_copies
-    posting_links.find_original = lambda *a, **k: None
+    posting_links.find_original = lambda *a, **k: (None, None)
     posting_links.listing_copies = lambda *a, **k: []
     try:
         return [_job(db, *a, **k) for a, k in jobs]
@@ -309,7 +312,7 @@ def test_backfill_v2_unlinks_title_only_copies_and_links_proven_roles(test_db):
 
     with unscoped():
         out = migrate_posting_keys(test_db)
-    assert out["unlinked"] == 1 and out["linked"] == 4
+    assert out["unlinked"] == 1 and out["linked"] == 3
     for j in (guess, nyc, cupertino, site, icims, per_city_a, per_city_b, acted):
         test_db.refresh(j)
     assert guess.status == "new" and guess.duplicate_of is None, "a title alone proves nothing"
@@ -318,7 +321,9 @@ def test_backfill_v2_unlinks_title_only_copies_and_links_proven_roles(test_db):
     assert site.posting_key == icims.posting_key == "icims:uscareers-docusign:30296"
     assert icims.duplicate_of == site.id
     assert acted.status == "skip" and acted.duplicate_of is None, "a row the user acted on is never moved"
-    assert per_city_a.duplicate_of == per_city_b.duplicate_of == acted.id, "and keeps the role"
+    # skipped in Columbus: Wilmington stays in the feed (and says so), Irving goes under Wilmington
+    assert per_city_a.status == "new" and per_city_a.same_role_as == acted.id
+    assert per_city_b.duplicate_of == per_city_a.id
 
 
 def test_backfill_keeps_an_employer_key_taken_over_from_a_copy(test_db):
@@ -331,3 +336,73 @@ def test_backfill_keeps_an_employer_key_taken_over_from_a_copy(test_db):
         migrate_posting_keys(test_db)
     test_db.refresh(listing)
     assert listing.posting_key == "greenhouse:4012345"
+
+
+WD = "https://wf.wd1.myworkdayjobs.com/WellsFargoJobs/job/{}/Lead-Product-Manager_R-505105"
+
+
+def test_a_role_skipped_in_one_city_shows_in_another(test_db):
+    """You skipped the Seattle listing because of the city; the same requisition in New York may
+    fit, so it stays in the feed and says where you skipped it. Seattle again stays hidden."""
+    skipped = _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM", status="skip",
+                   location="Seattle, WA", city=("Seattle", "WA"), days_old=5)
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"))
+    again = _job(test_db, WD.format("Seattle-Washington"), company="Wells Fargo", title="LPM",
+                 location="Seattle, Washington", city=("Seattle", "WA"))
+    assert ny.status == "new" and ny.duplicate_of is None and ny.same_role_as == skipped.id
+    assert again.status == "duplicate", "the same place as the skipped row stays hidden"
+    assert again.duplicate_of in (skipped.id, ny.id)
+
+
+def test_a_role_skipped_elsewhere_by_text_too(test_db):
+    """Rule 2 (same text, another id) follows the same rule; without parsed places any
+    difference in the location text counts."""
+    skipped = _job(test_db, "https://job-boards.greenhouse.io/axon/jobs/7805142003", company="Axon",
+                   title="SPM", status="skip", location="Seattle, WA", description=BODY, days_old=3)
+    ny = _job(test_db, "https://job-boards.greenhouse.io/axon/jobs/7805135003", company="Axon",
+              title="SPM", location="New York, NY", description=BODY)
+    assert ny.status == "new" and ny.same_role_as == skipped.id
+
+
+def test_a_role_saved_or_applied_elsewhere_stays_hidden(test_db):
+    """You are already on that role: another city's copy goes under it as before."""
+    applied = _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM", status="applied",
+                   location="Seattle, WA", city=("Seattle", "WA"))
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"))
+    assert ny.status == "duplicate" and ny.duplicate_of == applied.id and ny.same_role_as is None
+
+
+def test_a_visible_copy_in_the_same_place_is_preferred_over_the_skip(test_db):
+    """Skipped in Seattle, already shown in New York: a second New York copy goes under that one."""
+    _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM", status="skip",
+         location="Seattle, WA", city=("Seattle", "WA"), days_old=5)
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"), days_old=1)
+    ny2 = _job(test_db, WD.format("New-York-City"), company="Wells Fargo", title="LPM",
+               location="New York, NY", city=("New York", "NY"))
+    assert ny2.status == "duplicate" and ny2.duplicate_of == ny.id
+
+
+def test_backfill_shows_a_copy_hidden_under_a_role_skipped_elsewhere(test_db, api_client):
+    from backend.accounts.context import unscoped
+    from backend.models.db import Setting
+    from backend.seed import POSTING_KEYS_MIGRATED_KEY, migrate_posting_keys
+    test_db.add(Setting(key="dashboard_api_key", value=""))
+    skipped, ny = _stored(test_db,
+        ((WD.format("SEATTLE-WA"),), dict(company="Wells Fargo", title="LPM", status="skip",
+                                          location="Seattle, WA", city=("Seattle", "WA"), days_old=2)),
+        ((WD.format("NEW-YORK-NY"),), dict(company="Wells Fargo", title="LPM",
+                                           location="New York, NY", city=("New York", "NY"))))
+    ny.status, ny.duplicate_of = "duplicate", skipped.id   # hidden by the 3.2 rules
+    test_db.query(Setting).filter(Setting.key == POSTING_KEYS_MIGRATED_KEY).delete()
+    test_db.add(Setting(key=POSTING_KEYS_MIGRATED_KEY, value="2"))
+    test_db.commit()
+    with unscoped():
+        out = migrate_posting_keys(test_db)
+    test_db.refresh(ny)
+    assert out["unlinked"] == 1
+    assert ny.status == "new" and ny.duplicate_of is None and ny.same_role_as == skipped.id
+    body = api_client.get(f"/api/jobs/{ny.id}").json()
+    assert body["same_role_skipped"] == {"id": str(skipped.id), "location": "Seattle, WA"}
