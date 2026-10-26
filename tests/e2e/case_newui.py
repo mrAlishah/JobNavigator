@@ -19,6 +19,8 @@ user's own storage is never involved:
 frontend it drives is whatever the last `docker compose build frontend` produced,
 so the orchestrator must BUILD the frontend before this case means anything.
 """
+import re
+
 from _suite import case
 import _common as C
 import h
@@ -26,6 +28,7 @@ import h
 NEWUI_TITLE = 'Welcome to the new JobNavigator'
 TOUR_TITLE = 'Welcome to JobNavigator'
 SEEN_KEY = 'jobnavigator_newui_seen'
+TELEMETRY_TITLE = 'Allow telemetry?'   # TelemetryChoice.jsx, asked of the owner once
 VERSION = '3.1'
 
 # The tour's own title is a PREFIX of the upgrade modal's, so "is the tour up?"
@@ -122,6 +125,28 @@ def _newui(c):
             c.check('and no tour either', not _tour_only(pg))
         finally:
             pg.context.close()
+
+        # ── 2b. the owner's telemetry question comes right after either overlay ──
+        # GET /api/telemetry is answered "not asked yet" (the install's real choice is never read
+        # or written: the dialog is closed with Escape, which saves nothing).
+        ask = {'level': 'unset', 'asked': False, 'owner': True, 'locked': False}
+        for label, seed, close in (
+                ('after the upgrade notice', {'jobnavigator_welcomed': '1'}, NEWUI_TITLE),
+                ('after the first-run tour', {}, TOUR_TITLE)):
+            pg = C.raw_page(b, ls=seed, telemetry=ask)
+            try:
+                C.go(pg, '/feed', settle=1200)
+                c.check(f'telemetry waits {label}', C.body_has(pg, close) and not C.body_has(pg, TELEMETRY_TITLE))
+                pg.keyboard.press('Escape')
+                pg.wait_for_timeout(1200)
+                c.check(f'telemetry is asked {label}', C.body_has(pg, TELEMETRY_TITLE))
+                c.check('Yes is preselected', pg.get_by_role('radio', name=re.compile('^Yes')).first
+                        .get_attribute('aria-checked') == 'true')
+                pg.keyboard.press('Escape')
+                pg.wait_for_timeout(450)
+                c.check('Escape closes it without a choice', not C.body_has(pg, TELEMETRY_TITLE))
+            finally:
+                pg.context.close()
 
         # ── 3. old /classic bookmarks ────────────────────────────────────────
         # newui_seen is pre-set so the modal is out of the way. Every v1 path had

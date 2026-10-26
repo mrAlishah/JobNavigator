@@ -59,16 +59,19 @@ def live_only(ctx, what):
 _SEED_GUARD = '__jn_e2e_seeded'
 
 
-def raw_ctx(b, ls=None, width=1440, height=900, api_key=True):
+def raw_ctx(b, ls=None, width=1440, height=900, api_key=True, telemetry=None):
     """A context with ONLY the keys given (plus the API key unless api_key=False).
 
     The seed runs once per context, not once per navigation, so a reload sees
     whatever the app itself wrote — which is the whole point of the migration case.
+    `telemetry`: what GET /api/telemetry answers (h.telemetry_answer); default "already asked",
+    so the owner's one-time telemetry dialog stays out of the way.
     """
     store = dict(ls or {})
     if api_key:
         store['jobnavigator_api_key'] = KEY
     ctx = b.new_context(viewport={'width': width, 'height': height})
+    h.telemetry_answer(ctx, **(telemetry or {}))
     sets = ''.join(f'localStorage.setItem({json.dumps(k)},{json.dumps(v)});' for k, v in store.items())
     ctx.add_init_script(
         f"try{{if(!localStorage.getItem({json.dumps(_SEED_GUARD)})){{"
