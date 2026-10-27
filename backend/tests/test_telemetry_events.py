@@ -207,7 +207,9 @@ def test_no_names_or_text_in_any_event(test_db):
                            error="Zyxcorp Secret Title Qq qqsearchterm timed out"))
     test_db.commit()
     with unscoped():
-        payload = json.dumps(E.daily_events(test_db, "full")).lower()
+        events = E.daily_events(test_db, "full")
+    payload = json.dumps(events).lower()
     for secret in ("zyxcorp/", "secret title", "qqsearchterm", "qqsearchname", "/jobs/4000001"):
         assert secret not in payload, secret
-    assert "job-boards.greenhouse.io" in payload          # Full's failing board host
+    hosts = [d.get("failing_hosts") for n, d in events if n == "scraper_health"]
+    assert any(h == "job-boards.greenhouse.io" for h in hosts)   # Full's failing board host

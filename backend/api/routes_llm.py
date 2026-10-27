@@ -1,5 +1,4 @@
 """LLM helper endpoints — live model catalogs for the Settings model picker; OpenRouter's is public, OpenAI/Anthropic require a resolved API key, and results are cached ~1h per provider."""
-import hashlib
 import os
 import re
 import time
@@ -13,7 +12,7 @@ logger = logging.getLogger("jobnavigator.llm")
 router = APIRouter(prefix="/llm", tags=["settings"])
 
 _CACHE_TTL = 3600  # 1 hour
-_cache = {}  # provider -> {"at": float, "models": list}
+_cache = {}  # provider, or (provider, key) for a keyed catalog -> {"at": float, "models": list}
 
 def _resolve_key(db, provider: str) -> str:
     """The provider's API key (one per provider, so a key set while only Scoring used that
@@ -133,7 +132,8 @@ async def list_models(provider: str = "openrouter"):
 
     # MT-15: a keyed catalog is cached per key, so an account with its own key never gets the
     # list another account's key fetched (an OpenAI org's catalog can differ).
-    cache_key = f"{provider}:{hashlib.sha256(key.encode()).hexdigest()[:16]}" if key else provider
+    # (in memory only, like the key itself; never logged or returned)
+    cache_key = (provider, key) if key else provider
     hit = _cache.get(cache_key)
     if hit and (now - hit["at"]) < _CACHE_TTL:
         return {"models": hit["models"], "cached": True}

@@ -18,6 +18,8 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from backend.scraper._shared.urls import host_matches
+
 PM_TITLE = re.compile(r"\bproduct manager\b", re.I)
 TITLE_EXCLUDE = re.compile(
     r"technical|program|marketing|\bdata\b|analytics|security|hardware|principal|director|head of|"
@@ -89,7 +91,7 @@ def _eligible(job) -> bool:
         return False
     if NON_US.search(job.location or ""):
         return False
-    if not job.company or not job.url or "linkedin.com" in job.url:
+    if not job.company or not job.url or host_matches(job.url, "linkedin.com"):
         return False
     return True
 
