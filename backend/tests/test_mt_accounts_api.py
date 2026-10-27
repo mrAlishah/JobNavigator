@@ -219,7 +219,7 @@ def test_member_is_forbidden_on_owner_endpoints(client, test_db, owner, owner_pi
 def _owner_world(db, owner_id):
     with use_account(owner_id):
         p = db.query(Persona).first() or Persona(account_id=owner_id)
-        p.contact = {"name": "Viktor", "email": "v@example.com"}
+        p.contact = {"name": "Jordan", "email": "v@example.com"}
         p.preferences = {"tone": "plain"}
         p.qa_bank = [{"question": "Visa?", "answer": "No"}, {"question": "Start?", "answer": "Now"}]
         db.add(p)
@@ -273,7 +273,7 @@ def test_copy_everything_from_the_owner_remaps_ids(client, test_db, owner, owner
     assert copied["resumes"] == 2 and copied["companies"] == 1 and copied["searches"] == 1
 
     p = _rows(test_db, Persona, new_id)[0]
-    assert p.contact == {"name": "Viktor", "email": "v@example.com"} and p.preferences == {"tone": "plain"}
+    assert p.contact == {"name": "Jordan", "email": "v@example.com"} and p.preferences == {"tone": "plain"}
     assert [q["question"] for q in p.qa_bank] == ["Visa?", "Start?"]
 
     resumes = {r.name: r for r in _rows(test_db, Resume, new_id)}

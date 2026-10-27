@@ -16,7 +16,7 @@ const api = (await import('../api')).default
 const { default: Settings } = await import('../screens/Settings')
 const { AccountsTable, nonDefaultPolicies } = await import('../screens/SettingsAccounts')
 
-const OWNER = { id: 'o1', name: 'Viktor', color: '#2f6fed', role: 'owner', has_pin: false }
+const OWNER = { id: 'o1', name: 'Jordan', color: '#2f6fed', role: 'owner', has_pin: false }
 const MILA = { id: 'm1', name: 'Mila', color: '#2e9e6b', role: 'member', has_pin: false }
 const ALEX = { id: 'm2', name: 'Alex', color: '#d9534f', role: 'member', has_pin: false }
 const SECTIONS = [
@@ -61,7 +61,7 @@ describe('Settings › member policies (owner)', () => {
     expect(sw('Mila').getAttribute('aria-checked')).toBe('false')
     expect(sw('Alex').getAttribute('aria-checked')).toBe('false')
     // the owner's own row has no switch
-    const ownerRow = document.querySelector('[data-account-row="Viktor"]')
+    const ownerRow = document.querySelector('[data-account-row="Jordan"]')
     expect(within(ownerRow).queryByRole('switch')).toBeNull()
   })
 

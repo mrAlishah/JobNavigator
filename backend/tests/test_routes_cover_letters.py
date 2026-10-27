@@ -13,7 +13,7 @@ def _seed_first_run(db):
 
 def _make_resume(db, name="PM"):
     r = Resume(id=uuid.uuid4(), name=name, is_base=True,
-               json_data={"header": {"name": "Viktor"}, "summary": "PM."})
+               json_data={"header": {"name": "Jordan"}, "summary": "PM."})
     db.add(r)
     db.commit()
     return r
@@ -189,7 +189,7 @@ def test_generate_persona_base_validates_content(api_client, test_db, monkeypatc
 
     # fill persona, stub launch_background → 202
     p = test_db.query(Persona).filter(Persona.id == 1).first()
-    p.resume_content = {"header": {"name": "Viktor"}, "summary": "PM."}
+    p.resume_content = {"header": {"name": "Jordan"}, "summary": "PM."}
     test_db.commit()
     import backend.api.routes_cover_letters as rcl
     monkeypatch.setattr(rcl, "launch_background", lambda *a, **kw: "run-1")
@@ -302,7 +302,7 @@ def test_generate_inner_resolves_jd_from_url(test_db, monkeypatch):
     async def fake_body(resume_data, preferences, jd, voice_instruction, length, prompt_template):
         seen["jd"] = jd
         return {"greeting": "Dear Acme,", "body_paragraphs": ["p"], "closing": "Regards,",
-                "signature": "Viktor"}
+                "signature": "Jordan"}
 
     @asynccontextmanager
     async def fake_track(*a, **kw):

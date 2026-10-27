@@ -100,7 +100,7 @@ describe('PinDialog', () => {
 })
 
 describe('AddAccountModal', () => {
-  const owner = { id: 'o1', name: 'Viktor', color: '#2f6fed', role: 'owner', has_pin: true }
+  const owner = { id: 'o1', name: 'Jordan', color: '#2f6fed', role: 'owner', has_pin: true }
   it('an owner without a PIN goes straight to the form and adds a PIN-less member (D3)', async () => {
     api.post.mockResolvedValue({ data: { account: { id: 'm1', name: 'Alex' }, copied: {} } })
     const onCreated = vi.fn()
@@ -122,7 +122,7 @@ describe('AddAccountModal', () => {
     expect(screen.queryByRole('group', { name: 'Items to copy' })).toBeNull()
     // pick the owner as the copy source through the Select's trigger
     fireEvent.click(screen.getByLabelText('Copy from account'))
-    fireEvent.click(screen.getByText('Viktor (owner)'))
+    fireEvent.click(screen.getByText('Jordan (owner)'))
     const group = screen.getByRole('group', { name: 'Items to copy' })
     expect(group.querySelectorAll('[role="checkbox"]')).toHaveLength(COPY_ITEMS.length)
     fireEvent.click(screen.getByRole('checkbox', { name: 'Companies' }))      // untick one
@@ -138,7 +138,7 @@ describe('AddAccountModal', () => {
   it('shows the API message for a refused add', async () => {
     api.post.mockRejectedValue({ response: { status: 409, data: { detail: 'name_taken', message: 'x' } } })
     render(<AddAccountModal accounts={[owner]} me={owner} onClose={() => {}} onCreated={() => {}} />)
-    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Viktor' } })
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Jordan' } })
     fireEvent.click(screen.getByText('Add account', { selector: '[role="button"], button' }))
     await flush()
     expect(screen.getByText(/already has that name/)).toBeTruthy()
@@ -210,7 +210,7 @@ describe('role helpers', () => {
   it('scope tags', () => {
     expect(scopeTag('appearance', { idx, member: false })).toEqual({ label: 'Per device', tone: 'neutral' })
     expect(scopeTag('advanced', { idx, member: true })).toEqual({ label: 'Owner only', tone: 'good' })
-    expect(scopeTag('models', { idx, member: true, ownerName: 'Viktor' }).label).toBe('Inherited from Viktor')
+    expect(scopeTag('models', { idx, member: true, ownerName: 'Jordan' }).label).toBe('Inherited from Jordan')
     expect(scopeTag('exclude', { idx, member: true }).label).toBe('Yours')
     expect(scopeTag('notifications', { idx, member: false })).toBe(null)   // no Per account badge for the owner
     expect(scopeTag('notifications', { idx, member: true }).label).toBe('Yours')
@@ -223,9 +223,9 @@ describe('LockCard / UnlockPill', () => {
   it('the lock card unlocks with the owner PIN', async () => {
     api.post.mockResolvedValue({ data: { ok: true, unlocked_until: '2026-10-05T12:15:00+00:00' } })
     const onUnlocked = vi.fn()
-    render(<LockCard ownerName="Viktor" sectionTitle="Advanced" onUnlocked={onUnlocked} />)
+    render(<LockCard ownerName="Jordan" sectionTitle="Advanced" onUnlocked={onUnlocked} />)
     expect(screen.getByText(/Shared by everyone on this install/)).toBeTruthy()
-    typePin('9999', 'Viktor’s PIN')
+    typePin('9999', 'Jordan’s PIN')
     await flush()
     expect(api.post).toHaveBeenCalledWith('/auth/verify-owner-pin', { pin: '9999' })
     expect(onUnlocked).toHaveBeenCalledWith(Date.parse('2026-10-05T12:15:00+00:00'))
@@ -233,9 +233,9 @@ describe('LockCard / UnlockPill', () => {
   it('a wrong owner PIN says so and stays locked', async () => {
     api.post.mockRejectedValue({ response: { status: 401, data: { detail: 'wrong_pin', tries_left: 4 } } })
     const onUnlocked = vi.fn()
-    render(<LockCard ownerName="Viktor" sectionTitle="Advanced" inherited onUnlocked={onUnlocked} />)
-    expect(screen.getByText(/Inherited from Viktor/)).toBeTruthy()
-    typePin('1111', 'Viktor’s PIN')
+    render(<LockCard ownerName="Jordan" sectionTitle="Advanced" inherited onUnlocked={onUnlocked} />)
+    expect(screen.getByText(/Inherited from Jordan/)).toBeTruthy()
+    typePin('1111', 'Jordan’s PIN')
     await flush()
     expect(onUnlocked).not.toHaveBeenCalled()
     expect(screen.getByText('Wrong PIN · 4 tries left')).toBeTruthy()
@@ -243,8 +243,8 @@ describe('LockCard / UnlockPill', () => {
   it('without an owner PIN the lock card is a plain Unlock button (D3)', async () => {
     api.post.mockResolvedValue({ data: { ok: true, unlocked_until: '2026-10-05T12:15:00+00:00' } })
     const onUnlocked = vi.fn()
-    render(<LockCard ownerName="Viktor" sectionTitle="Advanced" ownerHasPin={false} onUnlocked={onUnlocked} />)
-    expect(screen.queryAllByLabelText(/Viktor’s PIN digit/)).toHaveLength(0)
+    render(<LockCard ownerName="Jordan" sectionTitle="Advanced" ownerHasPin={false} onUnlocked={onUnlocked} />)
+    expect(screen.queryAllByLabelText(/Jordan’s PIN digit/)).toHaveLength(0)
     expect(screen.getByText(/only a privacy latch/)).toBeTruthy()
     fireEvent.click(screen.getByText('Unlock', { selector: '[role="button"], button' }))
     await flush()
@@ -254,21 +254,21 @@ describe('LockCard / UnlockPill', () => {
   it('without an owner PIN the pill dialog has a plain Unlock too', async () => {
     api.post.mockResolvedValue({ data: { ok: true, unlocked_until: '2026-10-05T12:15:00+00:00' } })
     const onUnlocked = vi.fn()
-    render(<UnlockPill ownerName="Viktor" unlockedUntil={null} ownerHasPin={false} onUnlocked={onUnlocked} onLock={() => {}} />)
-    fireEvent.click(screen.getByLabelText('Owner sections locked — unlock as Viktor'))
-    expect(screen.queryAllByLabelText(/Viktor’s PIN digit/)).toHaveLength(0)
-    fireEvent.click(screen.getByLabelText('Unlock the shared settings as Viktor'))
+    render(<UnlockPill ownerName="Jordan" unlockedUntil={null} ownerHasPin={false} onUnlocked={onUnlocked} onLock={() => {}} />)
+    fireEvent.click(screen.getByLabelText('Owner sections locked — unlock as Jordan'))
+    expect(screen.queryAllByLabelText(/Jordan’s PIN digit/)).toHaveLength(0)
+    fireEvent.click(screen.getByLabelText('Unlock the shared settings as Jordan'))
     await flush()
     expect(onUnlocked).toHaveBeenCalled()
   })
   it('the pill reads locked ↔ unlocked and Lock calls back', async () => {
     const onLock = vi.fn().mockResolvedValue()
-    const { rerender } = render(<UnlockPill ownerName="Viktor" unlockedUntil={null} onUnlocked={() => {}} onLock={onLock} />)
-    expect(screen.getByText(/Owner sections locked · Unlock as Viktor/)).toBeTruthy()
-    fireEvent.click(screen.getByLabelText('Owner sections locked — unlock as Viktor'))
-    expect(screen.getAllByLabelText(/Viktor’s PIN digit/)).toHaveLength(4)
-    rerender(<UnlockPill ownerName="Viktor" unlockedUntil={Date.now() + 600000} onUnlocked={() => {}} onLock={onLock} />)
-    expect(screen.getByText(/Unlocked as Viktor · until/)).toBeTruthy()
+    const { rerender } = render(<UnlockPill ownerName="Jordan" unlockedUntil={null} onUnlocked={() => {}} onLock={onLock} />)
+    expect(screen.getByText(/Owner sections locked · Unlock as Jordan/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Owner sections locked — unlock as Jordan'))
+    expect(screen.getAllByLabelText(/Jordan’s PIN digit/)).toHaveLength(4)
+    rerender(<UnlockPill ownerName="Jordan" unlockedUntil={Date.now() + 600000} onUnlocked={() => {}} onLock={onLock} />)
+    expect(screen.getByText(/Unlocked as Jordan · until/)).toBeTruthy()
     fireEvent.click(screen.getByText('Lock'))
     await flush()
     expect(onLock).toHaveBeenCalled()
@@ -277,14 +277,14 @@ describe('LockCard / UnlockPill', () => {
 
 // ── QA F2 · D2 Accounts section with one account, R6-07 rename/recolour, T7-06 ──
 describe('AccountsTable (owner, always shown)', () => {
-  const me = { id: 'o1', name: 'Viktor', color: '#2f6fed', role: 'owner', has_pin: false }
+  const me = { id: 'o1', name: 'Jordan', color: '#2f6fed', role: 'owner', has_pin: false }
   const one = { accounts: [{ ...me, is_self: true, counts: { jobs: 12 } }], max_accounts: 5, self_id: 'o1' }
   it('with one account: own row, PIN, API token, Edit, Add account; no Remove', () => {
     const onAdd = vi.fn()
     render(<AccountsTable data={one} me={me} onAdd={onAdd} onChanged={() => {}} push={() => {}} />)
     const rows = screen.getAllByRole('row')
     expect(rows).toHaveLength(1)
-    expect(rows[0].getAttribute('data-account-row')).toBe('Viktor')
+    expect(rows[0].getAttribute('data-account-row')).toBe('Jordan')
     expect(screen.getByText('12 jobs')).toBeTruthy()
     expect(screen.getByLabelText('Set your PIN')).toBeTruthy()
     expect(screen.getByLabelText('Create an API token for scripts')).toBeTruthy()
@@ -329,14 +329,14 @@ describe('EditAccountModal', () => {
   it('Save stays off until something changes, then sends only what changed', async () => {
     api.patch.mockResolvedValue({ data: {} })
     const onSaved = vi.fn()
-    render(<EditAccountModal account={{ id: 'o1', name: 'Viktor', color: '#2f6fed' }} self onClose={() => {}} onSaved={onSaved} />)
+    render(<EditAccountModal account={{ id: 'o1', name: 'Jordan', color: '#2f6fed' }} self onClose={() => {}} onSaved={onSaved} />)
     const save = screen.getByText('Save', { selector: '[role="button"], button' })
     expect(save.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(screen.getAllByRole('radio')[1])
     fireEvent.click(save)
     await flush()
     expect(api.patch).toHaveBeenCalledWith('/accounts/o1', { color: '#d9534f' })
-    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ color: '#d9534f', name: 'Viktor' }))
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ color: '#d9534f', name: 'Jordan' }))
   })
 })
 
