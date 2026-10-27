@@ -107,7 +107,7 @@ From a row you can:
 - **Cover letter**: generated from the paired résumé, your Persona and a voice preset.
 - **Save** moves the job into Applications; **Skip** hides it.
 
-One posting is one job, however many sites list it: a copy (the same posting under another link, the same role in another city, or a repost) is listed on the original's row under **Also listed** and kept out of the feed; Settings › Copies of a posting can send any kind to New instead. **Open** and the preview use the employer's own posting whenever one is known; the **Link** filter (Direct, Board link, Easy Apply) shows which jobs have one, and a mock LinkedIn account (step 8) finds it for LinkedIn listings. A job's posting is checked when you open it: a closed one gets a red dot on its card and **Closed posting** in its panel, and the **Posting** filter (Open / Closed) appears once one is found.
+One posting is one job, however many sites list it: a copy (the same posting under another link, the same role in another city, or a repost) is listed on the original's row under **Also listed** and kept out of the feed; Settings › Copies of a posting can send any kind to New instead. **Open** and the preview use the employer's own posting whenever one is known; the **Link** filter (Direct, Board link; Easy Apply counts as Direct) shows which jobs have one, and a mock LinkedIn account (step 8) finds it for LinkedIn listings. A job's posting is checked when you open it: a closed one gets a red dot on its card and **Closed posting** in its panel, and the **Posting** filter (Open / Closed) appears once one is found.
 
 The posting preview is an iframe. Sites that refuse framing stay blank unless the extension is installed (see below); **Open** always works.
 

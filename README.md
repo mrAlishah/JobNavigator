@@ -112,7 +112,7 @@ Follow steps here manually or ask AI to: [Upgrading from 2.x](CHANGELOG.md#upgra
 | **Cover letters** | Generated from the paired résumé and persona; voice and length presets, 7 templates, PDF |
 | **One job per posting** | A posting key read from the link (over 30 job systems and career sites); copies of a posting or of one role (another link, another city, a repost) proven from the text and listed under Also listed, Ignored or New per kind |
 | **Direct links** | The employer's own posting instead of a board listing whenever one is known (short links and ad redirectors followed, LinkedIn listings looked up through a mock account); a Still open? check marks closed postings |
-| **Jobs** | Filters (incl. Link: Direct / Board / Easy Apply, and Posting: Open / Closed), sorting, keyboard shortcuts (`?`), full report, collapsible analysis pane, bulk actions with undo, posting preview |
+| **Jobs** | Filters (incl. Link: Direct / Board link, and Posting: Open / Closed), sorting, keyboard shortcuts (`?`), full report, collapsible analysis pane, bulk actions with undo, posting preview |
 | **Applications** | Stages, interviews, notes, status history (funnel and Sankey in Stats), a prep handover for any AI chat |
 | **Persona** | Contact, work authorization, compensation, preferences, résumé content, Q&A bank; import from a résumé or PDF |
 | **Extension** | Passive LinkedIn capture, save any job from any page, ATS form autofill and AI answers to free-text questions from your Persona |
