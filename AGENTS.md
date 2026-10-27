@@ -1,31 +1,24 @@
 # Personal SoT Bootstrap
 
-Canonical Personal SoT:
-
 - Repository: `mrAlishah/myPersonal-SoT`
 - Ref: `main`
 - Entrypoint: `workspace/adapters/runtime_entrypoint.md`
 - Local checkout: `~/Projects/myPersonal-SoT`
 
-Before planning implementation, changing code, or performing mutating Git operations:
+Before coding or mutating Git:
+1. Resolve the current SoT from local `main` without switching branches.
+2. Otherwise use authenticated private GitHub access.
+3. Follow the canonical entrypoint and its referenced contracts.
+4. Load `workspace/context/personal/policies/development_conventions.md`.
+5. Do not use stale or copied policies.
 
-1. Prefer the current local checkout when it exists and is readable.
-2. Otherwise use authenticated access to the private GitHub repository.
-3. Read the canonical entrypoint and follow its referenced contracts.
-4. Load and follow `workspace/context/personal/policies/development_conventions.md`.
-5. Resolve only the additional SoT context, policies, profiles, and contracts required by the current task.
-6. Treat the current canonical SoT as authoritative; do not substitute remembered, copied, or stale instructions.
+If canonical instructions are unavailable, report and stop dependent mutations.
 
-If neither canonical SoT source is accessible, report the limitation and stop before dependent code or Git mutations.
+## Coding tools
 
-Repository-owned code, tests, configuration, and repository-specific instructions remain authoritative for this repository and must be reconciled with applicable Personal SoT policy.
+- Superpowers: check and apply an applicable skill before starting substantive work.
+- Serena: prefer symbolic search, references, and targeted code reads/edits; avoid full-file reads when unnecessary.
+- RTK: let the installed hook rewrite supported shell commands; bypass it only when raw output is required.
+- Ponytail: prefer the smallest maintainable solution; reuse existing code, platform features, and dependencies before adding abstractions.
 
-## Change log
-
-Record every feature, change, fix or removal made in this fork in `myCHANGELOG.md`
-(repository root, Keep a Changelog format) as part of the same change:
-
-- add it under `## [Unreleased]` in `### Added`, `### Changed`, `### Fixed` or `### Removed`;
-- one bullet per change: a bold lead, then what the user sees or what now behaves differently;
-- do not edit `CHANGELOG.md`; it follows upstream releases, and fork entries there turn into merge conflicts;
-- if the file is missing on the current branch, create it with the header of the existing `myCHANGELOG.md`.
+If a tool is unavailable or unsuitable for the task, use the native alternative instead.

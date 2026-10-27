@@ -20,7 +20,7 @@ services:
 
   caddy:
     ports: !override
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8082:80"
       - "127.0.0.1:8443:443"
   adminer:
     image: adminer:latest
