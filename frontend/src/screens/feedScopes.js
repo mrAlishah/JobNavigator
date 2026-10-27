@@ -49,7 +49,7 @@ export function companyGroups(tracked, facet, picked, query) {
     name: c.name,
     count: [c.name, ...(c.aliases || [])].reduce((n, k) => n + (byName[lc(k)] || 0), 0),
     inactive: c.active === false,
-  })).filter((c) => shown(c.name))
+  })).filter((c) => shown(c.name) && (c.count > 0 || isPicked(c.name)))
   const trackedNames = new Set((tracked || []).map((c) => lc(c.name)))
   const rest = (facet || []).filter((c) => !trackedNames.has(lc(c.name)) && shown(c.name))
     .sort((a, b) => isPicked(b.name) - isPicked(a.name))   // stable: keeps the backend's count order
