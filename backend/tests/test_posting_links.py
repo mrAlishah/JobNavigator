@@ -27,7 +27,7 @@ def test_two_spellings_of_one_greenhouse_posting_are_one_job(test_db):
     other = _job(test_db, "https://boards.greenhouse.io/embed/job_app?token=8686812002&utm_source=jobright")
 
     assert first.posting_key == again.posting_key == "greenhouse:8686811002"
-    assert again.status == "duplicate" and again.duplicate_of == first.id
+    assert again.status == "ignored" and again.duplicate_of == first.id
     assert first.status == "new" and first.duplicate_of is None
     assert other.status == "new", "a different posting id is a different job"
 
@@ -36,7 +36,7 @@ def test_copies_in_one_flush_link_to_the_first(test_db):
     a = _job(test_db, "https://jobs.citi.com/job/new-york/ach-product-lead/287/96335791200", commit=False)
     b = _job(test_db, "https://jobs.citi.com/job/-/-/287/96335791200?source=APPLICANT_SOURCE-3-354", commit=False)
     test_db.commit()
-    assert b.status == "duplicate" and b.duplicate_of == a.id
+    assert b.status == "ignored" and b.duplicate_of == a.id
 
 
 def test_a_listing_with_the_postings_text_is_its_copy(test_db):
@@ -46,7 +46,7 @@ def test_a_listing_with_the_postings_text_is_its_copy(test_db):
     listing = _job(test_db, "https://www.linkedin.com/jobs/view/senior-product-manager-at-airwallex-4445868057",
                    company="Airwallex", title="Senior Product Manager", source="levels_fyi", description=BODY)
     assert listing.posting_key == "linkedin:4445868057"
-    assert listing.status == "duplicate" and listing.duplicate_of == posting.id
+    assert listing.status == "ignored" and listing.duplicate_of == posting.id
 
 
 def test_a_title_alone_proves_nothing(test_db):
@@ -78,7 +78,7 @@ def test_one_role_listed_per_city_is_one_job(test_db):
     second = _job(test_db, "https://job-boards.greenhouse.io/axon/jobs/7805135003", company="Axon",
                   title="Senior Product Manager", location="New York, New York, United States",
                   description=BODY + " Ref R-482211-3. New York, New York. $171,000.")
-    assert second.status == "duplicate" and second.duplicate_of == first.id
+    assert second.status == "ignored" and second.duplicate_of == first.id
 
 
 def test_one_other_word_keeps_two_roles(test_db):
@@ -110,7 +110,7 @@ def test_a_role_in_one_flush_links_to_the_first(test_db):
     b = _job(test_db, "https://www.amazon.jobs/en/jobs/10566263/x", company="Amazon", title="Sr. PM",
              description=BODY, commit=False)
     test_db.commit()
-    assert b.status == "duplicate" and b.duplicate_of == a.id
+    assert b.status == "ignored" and b.duplicate_of == a.id
 
 
 def test_two_employer_postings_with_one_title_stay_two_jobs(test_db):
@@ -134,7 +134,7 @@ def test_the_employer_posting_takes_over_an_untouched_listing(test_db):
     test_db.refresh(listing)
     assert bare.status == "new", "a listing without text is not proven a copy"
     assert posting.status == "new"
-    assert listing.status == "duplicate" and listing.duplicate_of == posting.id
+    assert listing.status == "ignored" and listing.duplicate_of == posting.id
 
 
 def test_a_saved_listing_keeps_the_role(test_db):
@@ -149,7 +149,7 @@ def test_a_saved_listing_keeps_the_role(test_db):
     test_db.refresh(saved)
     assert saved.status == "saved" and saved.duplicate_of is None
     assert again.status == "saved" and again.duplicate_of is None
-    assert posting.status == "duplicate" and posting.duplicate_of == saved.id
+    assert posting.status == "ignored" and posting.duplicate_of == saved.id
 
 
 def test_an_indeed_row_with_an_employer_link_joins_the_company_scrape(test_db):
@@ -177,10 +177,11 @@ def test_the_original_gets_the_employer_link_it_lacked(test_db):
     again = _job(test_db, "https://www.indeed.com/viewjob?jk=0362E90102D8AC2C&vjs=3", company="Acme", title="PM",
                  source="jobspy_indeed", apply_url="https://jobs.lever.co/acme/1cafb489-9cae-4417-b272-832617484de0")
     test_db.refresh(listing)
-    assert again.status == "duplicate" and again.duplicate_of == listing.id
+    assert again.status == "ignored" and again.duplicate_of == listing.id
     assert listing.status == "saved"
     assert listing.apply_url == "https://jobs.lever.co/acme/1cafb489-9cae-4417-b272-832617484de0"
     assert listing.posting_key == "lever:1cafb489-9cae-4417-b272-832617484de0"
+    assert listing.link_kind == "direct", "the original that takes its copy's employer link turns direct"
 
 
 def test_filtered_rows_are_neither_linked_nor_targets(test_db):
@@ -232,7 +233,7 @@ def test_saving_another_spelling_from_the_extension_finds_the_posting(test_db, a
 def test_counts_as_new():
     from backend.scraper._shared.posting_links import counts_as_new
     assert counts_as_new(Job(status="new"))
-    assert not counts_as_new(Job(status="duplicate"))
+    assert not counts_as_new(Job(status="ignored"))
 
 
 def test_backfill_keys_and_links_untouched_copies(test_db):
@@ -266,8 +267,8 @@ def test_backfill_keys_and_links_untouched_copies(test_db):
     for j in (old, applied, copy):
         test_db.refresh(j)
     assert applied.status == "applied" and applied.duplicate_of is None, "the applied row keeps the posting"
-    assert old.status == "duplicate" and old.duplicate_of == applied.id
-    assert copy.status == "duplicate" and copy.duplicate_of == applied.id
+    assert old.status == "ignored" and old.duplicate_of == applied.id
+    assert copy.status == "ignored" and copy.duplicate_of == applied.id
 
 
 def _stored(db, *jobs):
@@ -303,7 +304,7 @@ def test_backfill_v2_unlinks_title_only_copies_and_links_proven_roles(test_db):
         (("https://www.linkedin.com/jobs/view/4464485176",),
          dict(company="Wells Fargo", title="LPM", description=BODY, location="Columbus, OH", status="skip")),
     )
-    guess.status, guess.duplicate_of = "duplicate", posting.id  # the 3.1 title-only link
+    guess.status, guess.duplicate_of = "ignored", posting.id  # the 3.1 title-only link
     nyc.posting_key, cupertino.posting_key = "apple:200684524-2459", "apple:200684524-0836"  # 3.1 keys
     site.posting_key = "site:careers.docusign.com:30296"
     test_db.query(Setting).filter(Setting.key == POSTING_KEYS_MIGRATED_KEY).delete()
@@ -351,7 +352,7 @@ def test_a_role_skipped_in_one_city_shows_in_another(test_db):
     again = _job(test_db, WD.format("Seattle-Washington"), company="Wells Fargo", title="LPM",
                  location="Seattle, Washington", city=("Seattle", "WA"))
     assert ny.status == "new" and ny.duplicate_of is None and ny.same_role_as == skipped.id
-    assert again.status == "duplicate", "the same place as the skipped row stays hidden"
+    assert again.status == "ignored", "the same place as the skipped row stays hidden"
     assert again.duplicate_of in (skipped.id, ny.id)
 
 
@@ -371,7 +372,7 @@ def test_a_role_saved_or_applied_elsewhere_stays_hidden(test_db):
                    location="Seattle, WA", city=("Seattle", "WA"))
     ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
               location="New York, NY", city=("New York", "NY"))
-    assert ny.status == "duplicate" and ny.duplicate_of == applied.id and ny.same_role_as is None
+    assert ny.status == "ignored" and ny.duplicate_of == applied.id and ny.same_role_as is None
 
 
 def test_a_visible_copy_in_the_same_place_is_preferred_over_the_skip(test_db):
@@ -382,7 +383,7 @@ def test_a_visible_copy_in_the_same_place_is_preferred_over_the_skip(test_db):
               location="New York, NY", city=("New York", "NY"), days_old=1)
     ny2 = _job(test_db, WD.format("New-York-City"), company="Wells Fargo", title="LPM",
                location="New York, NY", city=("New York", "NY"))
-    assert ny2.status == "duplicate" and ny2.duplicate_of == ny.id
+    assert ny2.status == "ignored" and ny2.duplicate_of == ny.id
 
 
 def test_backfill_shows_a_copy_hidden_under_a_role_skipped_elsewhere(test_db, api_client):
@@ -395,7 +396,7 @@ def test_backfill_shows_a_copy_hidden_under_a_role_skipped_elsewhere(test_db, ap
                                           location="Seattle, WA", city=("Seattle", "WA"), days_old=2)),
         ((WD.format("NEW-YORK-NY"),), dict(company="Wells Fargo", title="LPM",
                                            location="New York, NY", city=("New York", "NY"))))
-    ny.status, ny.duplicate_of = "duplicate", skipped.id   # hidden by the 3.2 rules
+    ny.status, ny.duplicate_of = "ignored", skipped.id   # hidden by the 3.2 rules
     test_db.query(Setting).filter(Setting.key == POSTING_KEYS_MIGRATED_KEY).delete()
     test_db.add(Setting(key=POSTING_KEYS_MIGRATED_KEY, value="2"))
     test_db.commit()
@@ -406,3 +407,208 @@ def test_backfill_shows_a_copy_hidden_under_a_role_skipped_elsewhere(test_db, ap
     assert ny.status == "new" and ny.duplicate_of is None and ny.same_role_as == skipped.id
     body = api_client.get(f"/api/jobs/{ny.id}").json()
     assert body["same_role_skipped"] == {"id": str(skipped.id), "location": "Seattle, WA"}
+
+
+def test_new_jobs_get_their_link_kind(test_db):
+    posting = _job(test_db, "https://job-boards.greenhouse.io/acme/jobs/4012345", company="Acme", title="PM")
+    listing = _job(test_db, "https://www.linkedin.com/jobs/view/4461186967", company="Acme", title="Other")
+    ignored = _job(test_db, "https://www.linkedin.com/jobs/view/4461186968", company="Acme", title="X",
+                   status="ignored")
+    assert posting.link_kind == "direct" and listing.link_kind == "board" and ignored.link_kind == "board"
+
+
+def test_backfill_keeps_easy_apply(test_db):
+    from backend.accounts.context import unscoped
+    from backend.models.db import Setting
+    from backend.seed import POSTING_KEYS_MIGRATED_KEY, migrate_posting_keys
+    easy, indeed = _stored(test_db,
+        (("https://www.linkedin.com/jobs/view/4461186967",), dict(company="Acme", title="PM")),
+        (("https://www.indeed.com/viewjob?jk=0362e90102d8ac2c",),
+         dict(company="Acme", title="PM2", apply_url="https://boards.greenhouse.io/acme/jobs/4012345")))
+    easy.link_kind, indeed.link_kind = "easy_apply", None
+    test_db.query(Setting).filter(Setting.key == POSTING_KEYS_MIGRATED_KEY).delete()
+    test_db.add(Setting(key=POSTING_KEYS_MIGRATED_KEY, value="3"))
+    test_db.commit()
+    with unscoped():
+        migrate_posting_keys(test_db)
+    test_db.refresh(easy)
+    test_db.refresh(indeed)
+    assert easy.link_kind == "easy_apply"
+    assert indeed.link_kind == "direct"
+
+
+# ── Task 10: three kinds of copies, each to Ignored (default) or New ─────────
+
+def _copy_setting(db, kind, value):
+    from backend.models.db import Setting
+    db.add(Setting(key=f"dedup_copy_{kind}", value=value))
+    db.commit()
+
+
+def test_a_copy_in_the_same_city_is_ignored_and_listed(test_db, api_client):
+    from backend.models.db import Setting
+    test_db.add(Setting(key="dashboard_api_key", value=""))
+    orig = _job(test_db, "https://job-boards.greenhouse.io/acme/jobs/4012345", company="Acme", title="PM",
+                location="Seattle, WA", city=("Seattle", "WA"))
+    copy = _job(test_db, "https://boards.greenhouse.io/embed/job_app?token=4012345", company="Acme", title="PM",
+                location="Seattle, WA", city=("Seattle", "WA"))
+    assert copy.status == "ignored" and copy.copy_kind == "link" and copy.duplicate_of == orig.id
+    body = api_client.get(f"/api/jobs/{orig.id}").json()
+    assert [a["url"] for a in body["also_on"]] == ["https://boards.greenhouse.io/embed/job_app?token=4012345"]
+
+
+def test_another_city_is_its_own_kind_and_can_stay_in_the_feed(test_db):
+    orig = _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM",
+                location="Seattle, WA", city=("Seattle", "WA"), days_old=2)
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"))
+    assert ny.status == "ignored" and ny.copy_kind == "city" and ny.duplicate_of == orig.id
+    _copy_setting(test_db, "city", "new")
+    austin = _job(test_db, WD.format("AUSTIN-TX"), company="Wells Fargo", title="LPM",
+                  location="Austin, TX", city=("Austin", "TX"))
+    assert austin.status == "new" and austin.copy_kind == "city" and austin.duplicate_of == orig.id
+
+
+def test_a_repost_in_the_same_city_is_its_own_kind(test_db):
+    _job(test_db, "https://www.amazon.jobs/en/jobs/10566262/x", company="Amazon", title="Sr. PM",
+         description=BODY, location="Bellevue, WA", city=("Bellevue", "WA"))
+    again = _job(test_db, "https://www.amazon.jobs/en/jobs/10566263/x", company="Amazon", title="Sr. PM",
+                 description=BODY, location="Bellevue, WA", city=("Bellevue", "WA"))
+    assert again.status == "ignored" and again.copy_kind == "repost"
+    _copy_setting(test_db, "repost", "new")
+    third = _job(test_db, "https://www.amazon.jobs/en/jobs/10566264/x", company="Amazon", title="Sr. PM",
+                 description=BODY, location="Bellevue, WA", city=("Bellevue", "WA"))
+    assert third.status == "new" and third.copy_kind == "repost"
+
+
+def test_a_copy_left_in_the_feed_is_never_an_original(test_db):
+    _copy_setting(test_db, "city", "new")
+    orig = _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM",
+                location="Seattle, WA", city=("Seattle", "WA"), days_old=2)
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"), days_old=1)
+    ny2 = _job(test_db, WD.format("New-York-City"), company="Wells Fargo", title="LPM",
+               location="New York, NY", city=("New York", "NY"))
+    assert ny.status == "new" and ny.duplicate_of == orig.id
+    assert ny2.duplicate_of == orig.id and ny2.copy_kind == "city"
+
+
+def test_a_copy_counts_as_new_only_when_it_stays_in_the_feed():
+    from backend.scraper._shared.posting_links import counts_as_new
+    assert counts_as_new(Job(status="new")) and not counts_as_new(Job(status="ignored"))
+
+
+def test_backfill_turns_old_duplicates_into_classified_copies(test_db):
+    from backend.accounts.context import unscoped
+    from backend.models.db import Setting
+    from backend.seed import POSTING_KEYS_MIGRATED_KEY, migrate_posting_keys
+    orig, old = _stored(test_db,
+        (("https://job-boards.greenhouse.io/acme/jobs/4012345",), dict(company="Acme", title="PM", days_old=2,
+                                                                        location="Seattle, WA", city=("Seattle", "WA"))),
+        (("https://boards.greenhouse.io/embed/job_app?token=4012345",), dict(company="Acme", title="PM",
+                                                                             location="Seattle, WA", city=("Seattle", "WA"))))
+    old.status, old.duplicate_of = "duplicate", orig.id   # the 3.2-dev status
+    test_db.query(Setting).filter(Setting.key == POSTING_KEYS_MIGRATED_KEY).delete()
+    test_db.add(Setting(key=POSTING_KEYS_MIGRATED_KEY, value="5"))
+    test_db.commit()
+    with unscoped():
+        migrate_posting_keys(test_db)
+    test_db.refresh(old)
+    assert old.status == "ignored" and old.copy_kind == "link" and old.duplicate_of == orig.id
+
+
+def test_the_api_names_a_copys_original(test_db, api_client):
+    from backend.models.db import Setting
+    test_db.add(Setting(key="dashboard_api_key", value=""))
+    _copy_setting(test_db, "city", "new")
+    orig = _job(test_db, WD.format("SEATTLE-WA"), company="Wells Fargo", title="LPM",
+                location="Seattle, WA", city=("Seattle", "WA"), days_old=1)
+    ny = _job(test_db, WD.format("NEW-YORK-NY"), company="Wells Fargo", title="LPM",
+              location="New York, NY", city=("New York", "NY"))
+    body = api_client.get(f"/api/jobs/{ny.id}").json()
+    assert body["copy_kind"] == "city"
+    assert body["copy_of"] == {"id": str(orig.id), "location": "Seattle, WA", "source": "jobright"}
+    assert api_client.get(f"/api/jobs/{orig.id}").json()["copy_of"] is None
+
+
+def test_a_title_variant_with_the_same_text_is_the_same_role(test_db):
+    """PayPal posted one role as "Senior Lead Product Manager" and "Sr Lead Product Manager";
+    the other spelling is not a second title using the company's template."""
+    a = _job(test_db, "https://paypal.eightfold.ai/careers/job/274911111", company="PayPal",
+             title="Senior Lead Product Manager", description=BODY)
+    b = _job(test_db, "https://www.linkedin.com/jobs/view/4461186967", company="PayPal",
+             title="Sr Lead Product Manager", source="levels_fyi", description=BODY)
+    assert b.status == "ignored" and b.duplicate_of == a.id
+    assert a.role_hash == b.role_hash and a.content_hash != b.content_hash
+
+
+def test_a_title_variant_with_other_text_stays_a_job(test_db):
+    _job(test_db, "https://paypal.eightfold.ai/careers/job/274911111", company="PayPal",
+         title="Senior Lead Product Manager", description=BODY)
+    b = _job(test_db, "https://www.linkedin.com/jobs/view/4461186967", company="PayPal",
+             title="Sr Lead Product Manager", source="levels_fyi",
+             description=BODY.replace("card issuing", "merchant onboarding"))
+    assert b.status == "new"
+
+
+def test_backfill_links_stored_title_variants(test_db):
+    from backend.accounts.context import unscoped
+    from backend.seed import migrate_posting_keys
+    a, b = _stored(test_db,
+        (("https://job-boards.greenhouse.io/digitalocean/jobs/7001",),
+         dict(company="DigitalOcean", title="Principal Product Manager - Inference Engine", description=BODY, days_old=2)),
+        (("https://www.linkedin.com/jobs/view/4461186968",),
+         dict(company="DigitalOcean", title="Principal Product Manager, Inference Engine", description=BODY,
+              source="levels_fyi")))
+    for j in (a, b):
+        j.role_hash = None   # stored before role_hash existed
+    test_db.commit()
+    with unscoped():
+        out = migrate_posting_keys(test_db)
+    test_db.refresh(a)
+    test_db.refresh(b)
+    assert out["linked"] == 1
+    assert b.status == "ignored" and b.duplicate_of == a.id
+
+
+def _city_text(city):
+    return BODY + f" This role is based in our {city} office."
+
+
+def test_a_role_per_city_named_only_in_the_text_is_a_city_copy(test_db):
+    boston = _job(test_db, "https://job-boards.greenhouse.io/digitalocean/jobs/7101", company="DigitalOcean",
+                  title="Staff PM", location="United States", description=_city_text("Boston"))
+    denver = _job(test_db, "https://job-boards.greenhouse.io/digitalocean/jobs/7102", company="DigitalOcean",
+                  title="Staff PM", location="United States", description=_city_text("Denver"))
+    assert denver.duplicate_of == boston.id and denver.copy_kind == "city"
+
+
+def test_a_role_skipped_in_a_city_only_the_text_names_shows_in_another(test_db):
+    skipped = _job(test_db, "https://job-boards.greenhouse.io/digitalocean/jobs/7101", company="DigitalOcean",
+                   title="Staff PM", location="United States", description=_city_text("Boston"),
+                   status="skip", days_old=2)
+    denver = _job(test_db, "https://job-boards.greenhouse.io/digitalocean/jobs/7102", company="DigitalOcean",
+                  title="Staff PM", location="United States", description=_city_text("Denver"))
+    assert denver.status == "new" and denver.duplicate_of is None and denver.same_role_as == skipped.id
+
+
+def test_a_skipped_posting_stored_without_a_place_stays_skipped(test_db):
+    """Uber's old list stored no location; the same posting read again from jobs.uber.com names
+    New York City. A posting with no place cannot be elsewhere: the copy stays hidden."""
+    skipped = _job(test_db, "https://www.uber.com/careers/list/160013", company="Uber", title="Lead PM - Catalog",
+                   status="skip", days_old=30)
+    again = _job(test_db, "https://jobs.uber.com/en/jobs/160013/", company="Uber", title="Lead PM - Catalog",
+                 location="New York City, New York, United States", city=("New York", "NY"))
+    assert again.posting_key == skipped.posting_key == "site:uber.com:160013"
+    assert again.status == "ignored" and again.duplicate_of == skipped.id and again.same_role_as is None
+
+
+def test_an_office_list_in_the_text_does_not_overrule_the_location(test_db):
+    """Intuit: both postings are in Mountain View; their texts list slightly different offices."""
+    skipped = _job(test_db, "https://jobs.intuit.com/job/mountain-view/staff-pm/27595/1001", company="Intuit",
+                   title="Staff PM", location="Mountain View, CA", city=("Mountain View", "CA"),
+                   description=_city_text("Seattle"), status="skip", days_old=2)
+    again = _job(test_db, "https://jobs.intuit.com/job/mountain-view/staff-pm/27595/1002", company="Intuit",
+                 title="Staff PM", location="Mountain View, CA", city=("Mountain View", "CA"),
+                 description=_city_text("Ottawa"))
+    assert again.status == "ignored" and again.duplicate_of == skipped.id and again.same_role_as is None

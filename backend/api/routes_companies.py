@@ -55,6 +55,9 @@ def detect_scrape_type(url: str) -> str:
         return "Rippling API"
     if _is_amazon(url):
         return "Amazon API"
+    from backend.scraper.ats.uber import is_uber as _is_uber
+    if _is_uber(url):
+        return "Uber API"
     if _is_smartrecruiters(url):
         return "SmartRecruiters API"
     if _is_meta_careers(url):

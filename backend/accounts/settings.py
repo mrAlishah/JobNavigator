@@ -64,7 +64,8 @@ def _llm_keys() -> list:
 
 # (id, label, scope, default mode, Settings-screen sections it appears in, keys)
 _SECTIONS = [
-    ("feed", "Feed", POLICY, OWN, ["feed"], ["feed_zoom_floater"]),
+    # shown under Display on the Settings screen, with the browser-only look rows
+    ("feed", "Feed", POLICY, OWN, ["appearance"], ["feed_zoom_floater"]),
     # claude_code_oauth_token: the Claude Code subscription login per account (MT-15).
     ("models", "Models", POLICY, INHERIT, ["models"], _llm_keys() + ["llm_models_list", "claude_code_oauth_token"]),
     # The host's local model servers: one address per install, so a member cannot point the
@@ -100,6 +101,9 @@ _SECTIONS = [
     ("exclude", "Global exclude", POLICY, OWN, ["exclude"], [
         "body_exclusion_phrases", "title_exclude_global", "company_exclude_global"]),
     ("dedup", "Dedup tracking params", OWNER_ONLY, INHERIT, ["dedup"], ["dedup_tracking_params"]),
+    # where each kind of copy goes (posting_links.py): ignored (default) or new
+    ("copies", "Copies of a posting", POLICY, INHERIT, ["copies"], [
+        "dedup_copy_link", "dedup_copy_city", "dedup_copy_repost"]),
     # MT-17: telegram_bot_mode / telegram_bot_token pick a member's own bot (the owner always
     # uses the household bot); telegram_own_webhook_secret signs that bot's webhook (never served).
     ("notifications", "Notifications", OWN_ALWAYS, OWN, ["notifications"], [
@@ -115,15 +119,18 @@ _SECTIONS = [
     # owner's; 'inherit' = the member's Apify searches bill the owner's Apify account.
     ("apify", "Apify", POLICY, OWN, ["apify"], ["apify_api_key"]),
     ("linkedin", "LinkedIn", POLICY, OWN, ["linkedin"], [
-        "linkedin_email", "linkedin_password", "linkedin_mock_email", "linkedin_mock_password",
-        "linkedin_use_mock_account"]),
+        "linkedin_email", "linkedin_password", "linkedin_mock_email", "linkedin_mock_password"]),
     ("advanced", "Advanced", OWNER_ONLY, INHERIT, ["advanced"], ["proxy_url", "dashboard_api_key"]),
+    # telemetry/level.py: one choice per install, the owner's (JN_TELEMETRY overrides it)
+    ("telemetry", "Telemetry", OWNER_ONLY, INHERIT, ["telemetry"], ["telemetry_level"]),
     # Not a section of the Settings screen. MT-19: the token is connected from a row in Email
     # classification (GET /api/gmail/connect); gmail_token_status = the "expired" marker after
     # an invalid_grant (never served).
     ("gmail", "Gmail", OWN_ALWAYS, OWN, [], ["gmail_processed_ids", "gmail_refresh_token", "gmail_token_status"]),
     # account_cookie_secret: HMAC key of the jn_account cookie (MT-10); never served.
-    ("system", "System", OWNER_ONLY, INHERIT, [], ["llm_seeded_models", "llm_local_seed_cleared", "account_cookie_secret"]),
+    # telemetry_install_id / telemetry_last_sent_at: telemetry state, never served.
+    ("system", "System", OWNER_ONLY, INHERIT, [], ["llm_seeded_models", "llm_local_seed_cleared", "account_cookie_secret",
+                                                   "telemetry_install_id", "telemetry_last_sent_at"]),
 ]
 
 SETTING_SECTIONS = {

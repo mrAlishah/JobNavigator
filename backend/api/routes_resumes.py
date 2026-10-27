@@ -24,6 +24,7 @@ from backend import resume_template_overrides as _template_overrides
 from backend import resume_template_aliases as _aliases
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
 from backend.job_monitor import launch_background, JobAlreadyRunningError
+from backend.scraper._shared.link_kinds import job_link
 
 
 # ── Persona experience merge helpers ─────────────────────────────────────────
@@ -1625,7 +1626,7 @@ async def tailor_resume(body: dict, db: Session = Depends(get_db)):
     # text (description → live fetch → cached page) later, so this just confirms something exists without the slow fetch.
     if job_id:
         job = get_owned_or_404(db, Job, job_id)
-        if not ((job.description or "").strip() or (job.url or "").strip() or (job.cached_page_text or "").strip()):
+        if not ((job.description or "").strip() or (job_link(job) or "").strip() or (job.cached_page_text or "").strip()):
             raise HTTPException(400, "Job has no description, URL, or cached page to tailor from")
 
     # Fast-fail: the prompt template must exist
@@ -1688,9 +1689,9 @@ async def _resolve_tailoring_jd(job, db=None) -> str:
     """
     if (job.description or "").strip():
         return job.description
-    if (job.url or "").strip():
+    if (job_link(job) or "").strip():
         from backend.scraper.ats._descriptions import _fetch_job_description
-        fetched = await _fetch_job_description(job.url)
+        fetched = await _fetch_job_description(job_link(job))
         if fetched and fetched.strip():
             job.description = fetched
             if db is not None:
@@ -1760,7 +1761,7 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
                     raise RuntimeError(f"Tailor: job {job_id} missing at execution time")
                 job_name = f"{job.company} \u2014 {job.title}" if job.company else (job.title or "")
                 job_ref = SimpleNamespace(id=job.id, description=job.description,
-                                          url=job.url, cached_page_text=job.cached_page_text)
+                                          url=job_link(job), cached_page_text=job.cached_page_text)
 
             # Persona-as-base uses a constrained prompt (select 3-5 bullets per role from the
             # rich pool); falls back to the standard cv_tailor_prompt if unconfigured.
@@ -2453,7 +2454,7 @@ async def _score_resume_impl(resume_id: str, depth: str):
             job_title = job.title
             job_ref = SimpleNamespace(id=job.id, company=job.company, title=job.title,
                                       description=job.description,
-                                      cached_page_text=job.cached_page_text, url=job.url)
+                                      cached_page_text=job.cached_page_text, url=job_link(job))
         else:
             jd_text = _tailor_context_jd(resume.json_data or {})
             if not jd_text:

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import ClosedMark from '../ClosedMark'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../api'
+import { track } from '../telemetry'
 import { useFlushBeforeSwitch } from '../accounts'
 import '../theme.css'
 import { useToasts, ToastStack } from '../Toast'
@@ -169,6 +171,7 @@ export default function ResumeEditor() {
     setTailorOpen(false)
     try {
       const { data: started } = await api.post('/resumes/tailor', { base_resume_id: baseId, job_id: jobId || undefined, job_description: jobDescription || undefined })
+      track('tailor_started', { from: jobId ? 'job' : 'pasted' })
       // the run_id lets the watcher read the run's real status
       pendingRef.current.push({ scope: `${baseId}:${jobId || 'freeform'}`, runId: started?.run_id || null, jobId: jobId || null, company: company || null, since: Date.now() })
       pushToast({ kind: 'progress', msg: company ? `Tailoring for ${company}… runs in the background.` : 'Tailoring from a pasted description… runs in the background.' })
@@ -189,6 +192,7 @@ export default function ResumeEditor() {
         pushToast({ kind: 'success', msg: `Copy created for ${company}.`, action: 'Open ↗', onAction: () => navigate(`/resumes/${data.id}`) })
       } else {
         const { data: started } = await api.post('/resumes/tailor', { base_resume_id: baseId, job_id: doc.job_id })
+        track('tailor_started', { from: 'job' })
         pendingRef.current.push({ scope: `${baseId}:${doc.job_id}`, runId: started?.run_id || null, jobId: doc.job_id, company, since: Date.now() })
         pushToast({ kind: 'progress', msg: `Tailoring for ${company}… runs in the background.` })
       }
@@ -319,6 +323,7 @@ export default function ResumeEditor() {
     const scope = doc.job_id ? `${doc.job_id}:resume:${id}` : `resume:${id}`
     try {
       const { data: started } = await api.post(`/resumes/${id}/score-check`, { depth })
+      track('score_run', { depth })
       const runId = started?.run_id || null   // identifies the run below
       pushToast({ kind: 'progress', msg: `Scoring (${depth}) — runs in the background.` })
       const t0 = Date.now()
@@ -590,7 +595,7 @@ export default function ResumeEditor() {
             <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, lineHeight: '18px' }}>
               {!ctxReady ? NBSP : <>
               {jobData?.company
-                ? <>Tailored for <span style={{ color: 'var(--text)' }}>{jobData.company}{jobData.title ? ` — ${jobData.title}` : ''}</span></>
+                ? <>Tailored for <span style={{ color: 'var(--text)' }}>{jobData.company}{jobData.title ? ` — ${jobData.title}` : ''}</span><ClosedMark jobId={doc.job_id} /></>
                 : (jobless && freeformJd ? 'Tailored from a pasted description' : 'Tailored copy')}
               {doc.parent_id && (() => {
                 // A freeform copy has no "→" to split on, so the name heuristic returns the
@@ -783,6 +788,7 @@ export function DownloadMenu({ id, template, format, onError, beforeDownload }) 
     try {
       await beforeDownload?.()
       const r = await api.get(`/resumes/${id}/${kind}`, { responseType: 'blob', params: { template, format } })
+      track('resume_exported', { format: kind, template })
       if (__DEMO__ && kind === 'pdf') {   // the demo prints the rendered template through the browser
         const { printHtml, blobText } = await loadDemo('pdf.js')
         await printHtml(await blobText(r.data)); return

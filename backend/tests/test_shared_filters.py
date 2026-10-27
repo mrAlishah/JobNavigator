@@ -9,6 +9,20 @@ def test_garbage_titles_has_common_entries():
         assert p in GARBAGE_TITLES
 
 
+def test_job_site_navigation_is_not_a_job():
+    """Uber's moved careers site left only "Saved jobs" and its language switcher on the page."""
+    from backend.scraper._shared.filters import _validate_job
+    for title in ("Saved jobs", "German, Deutsch", "English, English", "French - Français", "Back to search results"):
+        assert _validate_job(title, "https://jobs.uber.com/en/jobs/saved-jobs/"), title
+
+
+def test_titles_that_name_a_language_are_still_jobs():
+    from backend.scraper._shared.filters import _validate_job
+    for title in ("German Speaking Account Manager", "Product Manager, German Market",
+                  "Spanish, Portuguese and English Support Lead", "English Teacher"):
+        assert _validate_job(title, "https://jobs.example.com/jobs/12345") is None, title
+
+
 def test_garbage_substrings_is_list():
     from backend.scraper._shared.filters import GARBAGE_SUBSTRINGS
     assert isinstance(GARBAGE_SUBSTRINGS, list)

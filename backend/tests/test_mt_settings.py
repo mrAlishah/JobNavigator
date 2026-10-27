@@ -46,11 +46,11 @@ def test_every_known_key_has_exactly_one_section():
 
 
 # The Settings screen's section ids (frontend/src/screens/Settings.jsx), minus 'appearance'
-# (per browser, not a DB setting). The backend container does not mount the frontend, so
-# the list is kept here and re-read from the source when it is available.
-SCREEN_SECTIONS = {"feed", "models", "scoring", "tailoring", "resumes", "letters", "autofill", "prep",
-                   "emailclass", "scheduler", "exclude", "dedup", "notifications", "tracer",
-                   "apify", "jobright", "linkedin", "advanced"}
+# (Display: per-browser rows plus the feed section's one setting). The backend container does
+# not mount the frontend, so the list is kept here and re-read from the source when it is available.
+SCREEN_SECTIONS = {"models", "scoring", "tailoring", "resumes", "letters", "autofill", "prep",
+                   "emailclass", "scheduler", "exclude", "dedup", "copies", "notifications", "tracer",
+                   "apify", "jobright", "linkedin", "advanced", "telemetry"}
 
 
 def test_ui_sections_match_the_settings_screen():
@@ -63,7 +63,8 @@ def test_ui_sections_match_the_settings_screen():
         screen.discard("appearance")
         assert screen == SCREEN_SECTIONS
     ui = {u for sec in S.SETTING_SECTIONS.values() for u in sec["ui"]}
-    assert ui == screen
+    assert ui - {"appearance"} == screen
+    assert S.SETTING_SECTIONS["feed"]["ui"] == ["appearance"]
     # every screen section that is itself a table section keeps the screen's id
     assert {sid for sid in S.SETTING_SECTIONS if sid in screen} == screen
 

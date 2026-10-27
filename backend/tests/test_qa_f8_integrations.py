@@ -399,7 +399,7 @@ def test_refresh_cli_runs_under_the_named_account(test_db, accounts, monkeypatch
     a, b = accounts
     seen = []
     before = current_account.get()
-    monkeypatch.setattr(rls, "_run", lambda: seen.append(current_account.get()) or 0)
+    monkeypatch.setattr(rls, "_run", lambda which="mock": seen.append(current_account.get()) or 0)
     assert rls.main(["--account", "partner"]) == 0
     assert rls.main(["--account", str(b)]) == 0
     assert rls.main([]) == 0
@@ -416,7 +416,7 @@ def test_refresh_cli_runs_under_the_named_account(test_db, accounts, monkeypatch
 
 def test_refresh_cli_unknown_account(test_db, accounts, monkeypatch, capsys):
     from backend import refresh_linkedin_session as rls
-    monkeypatch.setattr(rls, "_run", lambda: pytest.fail("must not run"))
+    monkeypatch.setattr(rls, "_run", lambda which="mock": pytest.fail("must not run"))
     assert rls.main(["--account", "nobody"]) == 1
     assert "No single account" in capsys.readouterr().err
 
@@ -434,11 +434,14 @@ def test_removal_forgets_pin_file_codes_states_progress_and_counters(test_db, ac
     monkeypatch.setattr(C, "LI_ACCOUNTS_ROOT", str(tmp_path / "li"))
     pin = tmp_path / f"li_pin_{b}.txt"
     pin.write_text("123456")
+    main_pin = tmp_path / f"li_pin_{b}.txt.main"
+    main_pin.write_text("111111")
     owner_pin = tmp_path / "li_pin.txt"
     owner_pin.write_text("654321")
     code_a = tg.create_link_code(a)["code"]
     tg.create_link_code(b)
-    rls._MEMBER_STATES[b] = {"phase": "awaiting_pin", "detail": ""}
+    rls._MEMBER_STATES[(b, "mock")] = {"phase": "awaiting_pin", "detail": ""}
+    rls._MEMBER_STATES[(b, "main")] = {"phase": "running", "detail": ""}
     with use_account(b):
         _linkedin_import_progress["status"] = "running"
     with use_account(a):
@@ -447,9 +450,9 @@ def test_removal_forgets_pin_file_codes_states_progress_and_counters(test_db, ac
     A._touched[str(b)] = 1.0
     try:
         delete_account_rows(test_db, b)
-        assert not pin.exists() and owner_pin.exists()
+        assert not pin.exists() and not main_pin.exists() and owner_pin.exists()
         assert [e[0] for e in tg._link_codes.values()] == [a] and code_a in tg._link_codes
-        assert b not in rls._MEMBER_STATES
+        assert not [k for k in rls._MEMBER_STATES if k[0] == b], "both sessions' states are dropped"
         assert str(b) not in _linkedin_import_progress._by_account
         with use_account(a):
             assert _linkedin_import_progress["status"] == "done"
@@ -458,3 +461,13 @@ def test_removal_forgets_pin_file_codes_states_progress_and_counters(test_db, ac
     finally:
         rls._MEMBER_STATES.clear()
         _linkedin_import_progress.reset_all()
+
+
+def test_refresh_cli_names_the_session(test_db, monkeypatch):
+    """Task 8: --session picks the main or the mock session; mock by default."""
+    from backend import refresh_linkedin_session as rls
+    seen = []
+    monkeypatch.setattr(rls, "_run", lambda which="mock": seen.append(which) or 0)
+    assert rls.main([]) == 0
+    assert rls.main(["--session", "main"]) == 0
+    assert seen == ["mock", "main"]

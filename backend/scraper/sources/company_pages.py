@@ -15,7 +15,7 @@ from backend.scraper._shared.dedup import make_external_id, make_content_hash, m
 from backend.scraper._shared.posting_links import counts_as_new
 from backend.scraper.ats import (
     workday, greenhouse, lever, ashby, oracle_hcm,
-    phenom, talentbrew, rippling, smartrecruiters, meta, google, amazon, generic,
+    phenom, talentbrew, rippling, smartrecruiters, meta, google, amazon, uber, generic,
 )
 from backend.scraper.ats._descriptions import _fetch_descriptions_parallel
 
@@ -46,6 +46,8 @@ async def _dispatch_ats(url: str, debug: bool = False, shared_browser=None, max_
         return await smartrecruiters.scrape(url, debug=debug)
     if amazon.is_amazon(url):
         return await amazon.scrape(url, debug=debug)
+    if uber.is_uber(url):
+        return await uber.scrape(url, debug=debug)
     if meta.is_meta(url):
         return await meta.scrape(url, browser=shared_browser, max_pages=max_pages, debug=debug)
     if google.is_google(url):
@@ -153,7 +155,7 @@ def _needs_browser(urls):
         if (phenom.is_phenom(u) or talentbrew.is_talentbrew(u) or oracle_hcm.is_oracle_hcm(u)
                 or lever.is_lever(u) or workday.is_workday(u) or ashby.is_ashby(u)
                 or greenhouse.is_greenhouse(u) or rippling.is_rippling(u)
-                or smartrecruiters.is_smartrecruiters(u) or amazon.is_amazon(u)):
+                or smartrecruiters.is_smartrecruiters(u) or amazon.is_amazon(u) or uber.is_uber(u)):
             continue
         # Meta, Google, levels.fyi, or generic Playwright — needs browser
         return True
@@ -181,7 +183,7 @@ async def _fetch_postings(company, target_urls: list, browser) -> tuple[list, li
                     or workday.is_workday(target_url) or ashby.is_ashby(target_url)
                     or greenhouse.is_greenhouse(target_url) or rippling.is_rippling(target_url)
                     or smartrecruiters.is_smartrecruiters(target_url)
-                    or amazon.is_amazon(target_url)
+                    or amazon.is_amazon(target_url) or uber.is_uber(target_url)
                     or meta.is_meta(target_url) or google.is_google(target_url)):
                 page_jobs = await _dispatch_ats(target_url, debug=False, shared_browser=browser, max_pages=max_pages)
             else:
@@ -246,6 +248,7 @@ async def scrape_single_career_page(company: Company, shared_browser=None,
                 # This account's run includes the fetch it rode on, so durations compare.
                 start_time -= shared_fetch.duration
 
+        all_postings = list(unique_jobs)   # before the title filters: what the board lists
         if not unique_jobs:
             duration = time.time() - start_time
             return {
@@ -415,6 +418,12 @@ async def scrape_single_career_page(company: Company, shared_browser=None,
                 return {"jobs_found": len(unique_jobs), "new_jobs": 0, "error": None,
                         "duration": time.time() - start_time, "deleted": True}
             comp.last_scraped_at = datetime.now(timezone.utc)
+            # Postings gone from a full scrape twice in a row are marked closed.
+            from backend.scraper._shared.missing_postings import note_scrape
+            missing = note_scrape(db, comp, target_urls, all_postings, url_errors)
+            if missing["closed"] or missing["reopened"]:
+                logger.info(f"{company_name}: {missing['closed']} closed (missing from the board), "
+                            f"{missing['reopened']} open again")
 
             db.commit()
             if refreshed:

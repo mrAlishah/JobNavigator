@@ -83,6 +83,75 @@ def configure_scheduler():
         backup_cron, digest_cron, h1b_cron, cleanup_cron, reject_cron)
 
 
+OVERDUE_DELAY = timedelta(minutes=2)
+
+
+def _last_scheduled_scrape():
+    """Start of the last scheduled scrape that ran or is running (a failed one, e.g. cut off
+    by a shutdown, does not count), or None."""
+    from backend.accounts.context import unscoped
+    from backend.models.db import JobRun
+    db = SessionLocal()
+    try:
+        with unscoped():   # the scheduled scrape's JobRun is the owner's; this is install-level
+            row = (db.query(JobRun.started_at)
+                   .filter(JobRun.job_type == "scrape_all", JobRun.trigger == "scheduler",
+                           JobRun.status.in_(("completed", "running")))
+                   .order_by(JobRun.started_at.desc()).first())
+    finally:
+        db.close()
+    if not row or not row[0]:
+        return None
+    ts = row[0]
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def next_scrape_time(interval_minutes: int, now=None):
+    """The interval counts from the last scheduled scrape, not from when the backend started:
+    a restart (the PC is off at night) would otherwise start the count again every time, and
+    an interval longer than the uptime would never fire. Overdue (or never run): two minutes
+    from now."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        last = _last_scheduled_scrape()
+    except Exception as e:
+        logger.error(f"Could not read the last scheduled scrape: {e}")
+        last = None
+    due = last + timedelta(minutes=interval_minutes) if last else now
+    return max(due, now + OVERDUE_DELAY)
+
+
+TELEMETRY_DELAY = timedelta(minutes=3)
+
+
+def next_telemetry_time(now=None):
+    """A day after the last telemetry send (restarts do not send again), or three minutes from
+    now when that is past or nothing was sent yet."""
+    from backend.accounts.context import unscoped
+    from backend.accounts.settings import get_install_setting
+    from backend.telemetry.level import LAST_SENT_KEY
+    now = now or datetime.now(timezone.utc)
+    last = None
+    try:
+        with unscoped():
+            db = SessionLocal()
+            try:
+                raw = get_install_setting(db, LAST_SENT_KEY)
+            finally:
+                db.close()
+        last = datetime.fromisoformat(raw) if raw else None
+    except Exception as e:
+        logger.error(f"Could not read the last telemetry send: {e}")
+    due = last + timedelta(days=1) if last else now
+    return max(due, now + TELEMETRY_DELAY)
+
+
+@scheduled_job
+async def run_telemetry_daily():
+    from backend.telemetry.umami import send_daily
+    await send_daily()
+
+
 def _register_jobs(scrape_interval, email_interval, backup_cron, digest_cron, h1b_cron,
                    cleanup_cron, reject_cron):
     def _add_cron_job(func, job_id, cron_expr):
@@ -116,6 +185,7 @@ def _register_jobs(scrape_interval, email_interval, backup_cron, digest_cron, h1
             IntervalTrigger(minutes=scrape_interval),
             id="scrape_all",
             replace_existing=True,
+            next_run_time=next_scrape_time(scrape_interval),
         )
 
     if email_interval > 0:
@@ -125,6 +195,15 @@ def _register_jobs(scrape_interval, email_interval, backup_cron, digest_cron, h1
             id="email_check",
             replace_existing=True,
         )
+
+    # Telemetry (telemetry/umami.py): sends only what the owner allowed, else does nothing.
+    scheduler.add_job(
+        run_telemetry_daily,
+        IntervalTrigger(minutes=24 * 60),
+        id="telemetry_daily",
+        replace_existing=True,
+        next_run_time=next_telemetry_time(),
+    )
 
     # Cron-based jobs (empty = disabled)
     _add_cron_job(run_db_backup, "db_backup", backup_cron)                   # install-level
@@ -420,6 +499,34 @@ async def _digest_for_account():
                 run.summary = DIGEST_SKIPPED_SUMMARY
             else:
                 run.summary = _activity_summary(started, "telegram", "alert") or "Digest sent"
+    except JobAlreadyRunningError as e:
+        logger.warning(f"Scheduler skipped: {e}")
+
+
+@scheduled_job
+@as_owner
+async def lookup_after_scrape():
+    """Install-level, after every scrape (job_monitor.on_scrape_finished): LinkedIn listings of
+    every account get the employer's link through the mock account
+    (scraper/_shared/linkedin_lookup.py). Nothing pending = no run."""
+    from backend.accounts.context import unscoped
+    from backend.job_monitor import tracked_run, JobAlreadyRunningError
+    from backend.scraper._shared import linkedin_lookup as ll
+    with unscoped():   # install-level: every account's rows
+        db = SessionLocal()
+        try:
+            if not ll.pending_ids(db, limit=1) and not ll.pending_short_links(db, limit=1):
+                return
+        finally:
+            db.close()
+    try:
+        async with tracked_run("linkedin_lookup", "after scrape") as run:
+            out = await ll.run_lookup(per_run=ll.PER_RUN)
+            run.summary = (f"{out['looked_up']} looked up - {out['employer']} employer links - "
+                           f"{out['easy_apply']} Easy Apply - {out.get('closed', 0)} closed - "
+                           f"{out['cached']} from earlier answers - "
+                           f"{out['short_links']} short links followed"
+                           + (f" - stopped: {out['stopped']}" if out["stopped"] else ""))
     except JobAlreadyRunningError as e:
         logger.warning(f"Scheduler skipped: {e}")
 

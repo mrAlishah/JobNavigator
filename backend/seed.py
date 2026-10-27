@@ -39,7 +39,6 @@ DEFAULT_SETTINGS = {
     "linkedin_password": ("", "LinkedIn account password for personal scrape mode"),
     "linkedin_mock_email": ("", "LinkedIn mock account email for Extension Voyager API"),
     "linkedin_mock_password": ("", "LinkedIn mock account password for Extension Voyager API"),
-    "linkedin_use_mock_account": ("false", "Sign the extension session in with the mock account. false = use the personal account (linkedin_email/linkedin_password)"),
     "jobright_email": ("", "Jobright.ai account email"),
     "jobright_password": ("", "Jobright.ai account password"),
     "jobright_session_id": ("", "Jobright.ai session cookie (auto-managed, 60-day expiry)"),
@@ -49,6 +48,11 @@ DEFAULT_SETTINGS = {
     # Billed per result by Apify; `_api_key` suffix keeps it redacted on GET /settings.
     "apify_api_key": ("", "Apify API token for the Apify search mode"),
     "reject_cron": ("0 4 * * *", "Auto-reject cron (min hour day month dow). Empty = disabled"),
+    "dedup_copy_link": ("ignored", "A copy of a posting under another link in the same city: ignored or new"),
+    "dedup_copy_city": ("ignored", "A copy of a posting or role in another city: ignored or new"),
+    "dedup_copy_repost": ("ignored", "The same role reposted under a new id in the same city: ignored or new"),
+    # telemetry/level.py: the owner's choice, empty until asked (JN_TELEMETRY overrides it)
+    "telemetry_level": ("", "Telemetry: full (Yes) or essentials; empty = not asked yet"),
     "backup_cron": ("0 3 * * *", "Backup cron schedule (min hour day month dow). Empty = disabled"),
     "scoring_rubric": ("Score each resume using these criteria (each 0-20, sum to 0-100):\n1. SKILLS MATCH (weight: 20): How many required technical skills/tools does the candidate have?\n2. EXPERIENCE LEVEL (weight: 20): Does seniority/years match? (entry-level resume for senior role = low)\n3. DOMAIN FIT (weight: 20): Has the candidate worked in the same industry/domain?\n4. ROLE ALIGNMENT (weight: 20): Does the candidate's career trajectory match this role type?\n5. REQUIREMENTS MET (weight: 20): Does the candidate meet stated requirements (education, certs, clearance)?\n\nUse the FULL 0-100 range. 90+ = perfect match. 50-70 = decent with gaps. Below 30 = poor match.\nAvoid clustering scores — differentiate meaningfully between resumes and jobs.", "Editable resume scoring rubric"),
     "scoring_output_light": ('Return ONLY this JSON:\n{\n  "scores": {CV_NAMES_HERE: 0-100},\n  "best_cv": "CV_NAME"\n}', "Light scoring output schema"),
@@ -462,6 +466,7 @@ ENUM_SETTING_VALUES = {
     "tailor_auto_quick_score": {"off", "false", "no", "0", "true", "yes", "1", ""} | _DEPTHS,
     "tracer_links_url_style": {"path", "param", "path_jobid", "param_jobid"},
     "telegram_bot_mode": {"household", "own"},
+    "telemetry_level": {"", "full", "essentials"},   # "" = not asked yet (asked again)
 }
 
 
@@ -564,14 +569,6 @@ def seed_settings(db):
         if key not in existing:
             db.add(Setting(key=key, value=value, description=desc))
     db.commit()
-    # One-shot: a DB that already holds a mock account keeps signing in with it;
-    # every other DB starts on the personal account.
-    if "linkedin_use_mock_account" not in existing:
-        mock = install_row(db, "linkedin_mock_email")
-        if mock is not None and (mock.value or "").strip():
-            db.query(Setting).filter(Setting.key == "linkedin_use_mock_account",
-                                     Setting.account_id.is_(None)).update({"value": "true"})
-            db.commit()
     # One-shot: seeded empty above so the row is visible in /api/settings; the
     # real cryptographically random value is generated here on first run.
     row = install_row(db, "telegram_webhook_secret")
@@ -670,9 +667,24 @@ def run_migrations(db):
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS duplicate_of UUID REFERENCES jobs(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_jobs_acct_posting_key ON jobs (account_id, posting_key)",
         "CREATE INDEX IF NOT EXISTS ix_jobs_duplicate_of ON jobs (duplicate_of)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS copy_kind VARCHAR(10)",
+        # 3.2: is the posting still open (still_open.py)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS open_state VARCHAR(10)",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS open_reason VARCHAR",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS open_checked_at TIMESTAMPTZ",
+        # 3.2: whether the job's link reaches the employer's site (link_kinds.py)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS link_kind VARCHAR(12)",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_acct_link_kind ON jobs (account_id, link_kind)",
         # 3.2: a role skipped in one place, shown again in another
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS same_role_as UUID REFERENCES jobs(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_jobs_acct_content_hash ON jobs (account_id, content_hash)",
+        # 3.2: title variants ("Sr" / "Senior") of one role (same_role.role_hash)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS role_hash VARCHAR",
+        "CREATE INDEX IF NOT EXISTS ix_jobs_acct_role_hash ON jobs (account_id, role_hash)",
+        # 3.2: postings missing from full company scrapes (missing_postings.py)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS missed_scrapes INTEGER",
+        "ALTER TABLE companies ADD COLUMN IF NOT EXISTS board_signature VARCHAR(64)",
+        "ALTER TABLE companies ADD COLUMN IF NOT EXISTS board_count INTEGER",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_summary",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_strengths",
         "ALTER TABLE jobs DROP COLUMN IF EXISTS fit_gaps",
@@ -1131,6 +1143,10 @@ def seed_h1b_slugs(db):
 def cleanup_removed_settings(db):
     """Remove settings that have been removed from DEFAULT_SETTINGS."""
     removed_keys = [
+        # 3.2: two LinkedIn sessions, each with its own Sign in, replaced the switch
+        "linkedin_use_mock_account",
+        # the employer-link lookup runs after every scrape at a fixed pace (3.2 had a cron)
+        "linkedin_lookup_cron", "linkedin_lookup_per_run",
         "followup_reminder_days",
         "h1b_exclusion_phrases",
         "language_exclude_phrases",
@@ -1438,7 +1454,7 @@ def migrate_posting_keys(db, batch: int = 1000) -> dict:
     """On start, when the stored posting keys were read by older readers (postings.READER_VERSION):
     key every stored job again and bring its duplicates in line (scraper/_shared/posting_links.py).
 
-    Every job gets `posting_key` from its links, and `apply_url` when its link wraps the employer's
+    Every job gets `role_hash` (same_role.role_hash), `posting_key` from its links, and `apply_url` when its link wraps the employer's
     posting (a click tracker); no request is made. A key a row took over from its duplicate (an
     employer key on a board listing) is kept when its own link names no employer posting. Then each
     account is relinked (posting_links.relink_account): duplicates linked by company and title alone,
@@ -1446,8 +1462,10 @@ def migrate_posting_keys(db, batch: int = 1000) -> dict:
     are one role become duplicates. Rows the user acted on are never changed.
     Returns {"rekeyed": n, "unlinked": n, "linked": n}."""
     from backend.models.db import Account, Job
+    from backend.scraper._shared.link_kinds import classify
     from backend.scraper._shared.posting_links import employer_link, key_of, relink_account
     from backend.scraper._shared.postings import READER_VERSION, is_employer_key
+    from backend.scraper._shared.same_role import role_hash
     row = install_row(db, POSTING_KEYS_MIGRATED_KEY)
     done = int(row.value) if row is not None and str(row.value or "").isdigit() else 0
     if done >= READER_VERSION:
@@ -1457,6 +1475,7 @@ def migrate_posting_keys(db, batch: int = 1000) -> dict:
     jobs = (job for i in range(0, len(ids), batch)
             for job in _chunk_then_commit(db, Job, ids[i:i + batch]))
     for job in jobs:
+        job.role_hash = role_hash(job.company, job.title) if (job.company or job.title) else None
         key = key_of(job)
         taken_over = is_employer_key(job.posting_key) and not is_employer_key(key)
         if key != job.posting_key and not taken_over:
@@ -1466,6 +1485,7 @@ def migrate_posting_keys(db, batch: int = 1000) -> dict:
             link = employer_link(job.url)
             if link and link != job.url:
                 job.apply_url = link
+        classify(job)
     db.commit()
     unlinked = linked = 0
     for (account_id,) in db.query(Account.id).all():

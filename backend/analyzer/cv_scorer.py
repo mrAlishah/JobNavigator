@@ -9,6 +9,7 @@ from backend.analyzer.llm_logger import log_llm_call
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, parse_model_json
 from backend.models.db import SessionLocal, Job
 from backend.accounts.settings import get_setting
+from backend.scraper._shared.link_kinds import job_link
 
 logger = logging.getLogger("jobnavigator.cv_scorer")
 
@@ -486,7 +487,7 @@ def _alert_snapshot(job: Job):
     """
     from types import SimpleNamespace
     return SimpleNamespace(
-        id=job.id, company=job.company, title=job.title, url=job.url,
+        id=job.id, company=job.company, title=job.title, url=job_link(job),
         location=job.location, remote=job.remote,
         salary_min=job.salary_min, salary_max=job.salary_max,
         h1b_verdict=job.h1b_verdict,
@@ -684,8 +685,8 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                 preloaded_text = _job_text_from_row(job)
                 if preloaded_text:
                     to_score.append((job_ref, cv_texts, depth, preloaded_text))
-                elif job.url:
-                    needs_fetch.append((job_ref, cv_texts, depth, job.url))
+                elif job_link(job):
+                    needs_fetch.append((job_ref, cv_texts, depth, job_link(job)))
                 else:
                     job.cv_scores = {"_skipped": "no_text_available"}
                     job.best_cv_score = None
@@ -844,7 +845,7 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
 
         job_title = job.title
         job_company = job.company
-        job_url = job.url
+        job_url = job_link(job)
 
         if cv_ids:
             cv_texts = _cv_texts_for_ids(db, cv_ids)

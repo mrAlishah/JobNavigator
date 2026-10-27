@@ -93,7 +93,27 @@ def list_searches(db: Session = Depends(get_db)):
             latest_sub, and_(ScrapeLog.search_id == latest_sub.c.search_id,
                              ScrapeLog.ran_at == latest_sub.c.mx)).all()
     }
-    return [_search_to_dict(s, last_log.get(str(s.id))) for s in searches]
+    rates = _direct_rates(db)
+    out = []
+    for s in searches:
+        row = _search_to_dict(s, last_log.get(str(s.id)))
+        row["direct_rate"] = rates.get(s.id)
+        out.append(row)
+    return out
+
+
+def _direct_rates(db) -> dict:
+    """{search id: {"direct": n, "total": n}}: how many of each search's jobs of the last 90 days
+    (filtered ones left out) can be applied to directly: the employer's link, or Easy Apply."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import case, func
+    from backend.models.db import Job
+    since = datetime.now(timezone.utc) - timedelta(days=90)
+    rows = (db.query(Job.search_id, func.count(Job.id),
+                     func.sum(case((Job.link_kind.in_(("direct", "easy_apply")), 1), else_=0)))
+            .filter(Job.search_id.isnot(None), Job.status != "ignored", Job.discovered_at >= since)
+            .group_by(Job.search_id).all())
+    return {sid: {"direct": int(direct or 0), "total": int(total)} for sid, total, direct in rows if total}
 
 
 @router.get("/countries")

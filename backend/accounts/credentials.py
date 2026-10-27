@@ -130,7 +130,10 @@ def claude_code_token(db) -> str:
 # Tests point the constants at tmp dirs.
 LI_ACCOUNTS_ROOT = "/root/.linkedin_api/accounts"
 LI_EXTENSION_OWNER = "/root/.linkedin_api/li_cookies.json"
-LI_PERSONAL_OWNER = "/tmp/linkedin_cookies.json"
+LI_PERSONAL_OWNER = "/root/.linkedin_api/linkedin_cookies.json"
+# Where the owner's main jar lived until 3.2: /tmp is wiped on every rebuild, so each one signed the
+# main account out; a jar still there moves to LI_PERSONAL_OWNER on first use.
+LI_PERSONAL_LEGACY = "/tmp/linkedin_cookies.json"
 LI_PIN_OWNER = "/tmp/li_pin.txt"
 LI_EXTENSION_FILE = "li_cookies.json"
 LI_PERSONAL_FILE = "linkedin_cookies.json"
@@ -195,6 +198,13 @@ def linkedin_personal_cookies(db=None) -> str:
     """Cookie jar of the LinkedIn Personal scraper (also loaded by the session refresh)."""
     member = session_member(db)
     if member is None:
+        if not os.path.exists(LI_PERSONAL_OWNER) and os.path.exists(LI_PERSONAL_LEGACY):
+            try:
+                import shutil
+                os.makedirs(os.path.dirname(LI_PERSONAL_OWNER), exist_ok=True)
+                shutil.move(LI_PERSONAL_LEGACY, LI_PERSONAL_OWNER)
+            except OSError:
+                return LI_PERSONAL_LEGACY
         return LI_PERSONAL_OWNER
     return os.path.join(linkedin_session_dir(member), LI_PERSONAL_FILE)
 

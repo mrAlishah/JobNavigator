@@ -89,6 +89,10 @@ async def test_configure_scheduler_from_a_member_request_thread_fires_clean(
     monkeypatch.setattr(sched_mod, "run_all_scrapes", _probe)
     monkeypatch.setattr(sched_mod, "IntervalTrigger",
                         lambda minutes: IntervalTrigger(seconds=0.2))
+    # the first scrape fires now, not after the usual overdue delay
+    from datetime import datetime, timezone
+    monkeypatch.setattr(sched_mod, "next_scrape_time",
+                        lambda minutes: datetime.now(timezone.utc))
     real = AsyncIOScheduler()
     monkeypatch.setattr(sched_mod, "scheduler", real)
     contextvars.Context().run(real.start)     # boot: clean, as the lifespan does

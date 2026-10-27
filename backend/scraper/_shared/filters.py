@@ -60,6 +60,11 @@ GARBAGE_TITLES = {
     "terms of use", "terms and conditions", "sitemap",
     "careers blog", "my profile", "my account", "my applications",
     "locations", "teams", "departments", "categories",
+    # job-site navigation (Uber's "Saved jobs" was its only "job" for four months)
+    "saved jobs", "my saved jobs", "saved positions", "job cart", "my jobs", "my job cart",
+    "recently viewed jobs", "all jobs", "view all jobs", "see all jobs", "browse jobs",
+    "browse all jobs", "back to jobs", "back to search", "back to search results",
+    "candidate home", "candidate login", "candidate profile", "job seeker login",
 }
 
 # Substrings that indicate garbage even in longer text
@@ -79,6 +84,18 @@ _LOCALE_NAMES = {
     "english", "english (us)", "english (uk)",
     "日本語", "한국어", "中文", "简体中文", "繁體中文", "ภาษาไทย", "العربية", "עברית",
 }
+# A locale switcher names the language in English and in itself: "German, Deutsch", "English, English".
+_LANGUAGE_NAMES = _LOCALE_NAMES | {
+    "german", "french", "spanish", "portuguese", "italian", "dutch", "polish", "swedish", "norwegian",
+    "danish", "finnish", "czech", "romanian", "hungarian", "turkish", "indonesian", "malay",
+    "vietnamese", "japanese", "korean", "chinese", "thai", "arabic", "hebrew", "english",
+}
+_LOCALE_PAIR = re.compile(r"^\s*([^,()\-–]+?)\s*(?:,|\s[-–]\s)\s*([^,()\-–]+?)\s*$")
+
+
+def _is_locale_pair(title_lower: str) -> bool:
+    m = _LOCALE_PAIR.match(title_lower)
+    return bool(m) and m.group(1) in _LANGUAGE_NAMES and m.group(2) in _LANGUAGE_NAMES
 
 
 # ── Boolean expression parser for title_include_expr ──────────────────────────
@@ -205,7 +222,7 @@ def _validate_job(title: str, url: str) -> str | None:
     for sub in GARBAGE_SUBSTRINGS:
         if sub in title_lower:
             return f"Garbage substring: '{sub}'"
-    if title_lower in _LOCALE_NAMES:
+    if title_lower in _LOCALE_NAMES or _is_locale_pair(title_lower):
         return "Locale/language name"
     if re.match(r'^[\d\s\-\.]+$', title_clean):
         return "Title is just numbers/symbols"

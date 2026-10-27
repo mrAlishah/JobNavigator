@@ -460,15 +460,17 @@ def forget_account_memory(account_id) -> None:
     from backend.accounts import auth as acct_auth
     from backend.accounts.credentials import member_pin_file
     key = str(account_id)
-    try:
-        os.remove(member_pin_file(account_id))
-    except OSError:
-        pass
+    for pin in (member_pin_file(account_id), member_pin_file(account_id) + ".main"):   # mock, main
+        try:
+            os.remove(pin)
+        except OSError:
+            pass
     acct_auth._clear(account_id)
     acct_auth._touched.pop(key, None)
     refresh = sys.modules.get("backend.refresh_linkedin_session")
     if refresh is not None:
-        for k in [k for k in refresh._MEMBER_STATES if str(k) == key]:
+        # keyed (account id, session) since the two LinkedIn sessions split
+        for k in [k for k in refresh._MEMBER_STATES if str(k[0] if isinstance(k, tuple) else k) == key]:
             refresh._MEMBER_STATES.pop(k, None)
     li = sys.modules.get("backend.scraper.sources.linkedin_extension")
     if li is not None:

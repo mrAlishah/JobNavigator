@@ -175,6 +175,10 @@ Install: `chrome://extensions` › Developer mode › Load unpacked › `extensi
 | **Telegram** | `TELEGRAM_BOT_TOKEN` (the household bot) | Notifications › Link Telegram, or its own bot |
 | **Gmail** | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`; add `<dashboard>/api/gmail/callback` as a redirect URI | Email classification › Gmail › Connect Gmail |
 
+## Telemetry
+
+If the owner allows it (asked once, changeable in Settings › Telemetry), JobNavigator sends anonymous scraper/AI health and usage data to a self-hosted Umami to improve the product and better understand what needs fixing first. Never your private information, job titles, search terms, résumé text or keys. Set `JN_TELEMETRY=off` in `.env` to turn it off.
+
 ## Tech Stack
 
 | Layer | Technology |

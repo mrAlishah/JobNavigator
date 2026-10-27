@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
+import { track } from '../telemetry'
 import { useToasts, ToastStack } from '../Toast'
 import ConfirmDialog from '../ConfirmDialog'
 import CopyFrom from '../CopyFrom'
@@ -100,6 +101,12 @@ const noteFor = (mode) => {
   if (mode === 'extension') return ['Jobs come from the “Save to Job Feed” button on any website. The filters and auto-score depth below apply to each job as it is saved.', 'sm-levels']
   if (mode === 'linkedin_extension') return ['Jobs are captured while you browse linkedin.com/jobs/collections pages. The filters below are applied on import.', 'sm-levels']
   return null
+}
+
+// share of the search's jobs (last 90 days) with a direct link to the employer; said from five jobs on
+const directRate = (s) => {
+  const r = s.direct_rate
+  return r && r.total >= 5 ? ` · ${Math.round((100 * r.direct) / r.total)}% direct links` : ''
 }
 
 // one-line summary of what this search does; `boards` names the Apify boards
@@ -410,8 +417,8 @@ function ConfigForm({ d, set }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <Label>Import rules</Label>
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, minHeight: 31 }}>
-            <Check checked={d.exclude_active_companies} label="Skip active companies"
-              title="Their Company scrapes already bring these postings"
+            <Check checked={d.exclude_active_companies} label="Skip my active companies"
+              title="Leaves out jobs from companies you scrape (active in Companies, aliases included): their own careers page already brings those in"
               onChange={(v) => set({ exclude_active_companies: v })} />
             {m === 'jobright' && <Check checked={d.require_salary} label="Require salary" title="Drop results without a listed salary"
               onChange={(v) => set({ require_salary: v })} />}
@@ -592,7 +599,7 @@ export default function Searches() {
     if (busy) return
     if (!newDraft.name.trim()) { pushToast({ kind: 'error', msg: 'Name is required' }); return }
     setBusy('new')
-    try { const { data } = await api.post('/searches', toPayload(newDraft)); setNewOpen(false); setNewDraft(NEW_DRAFT); load(); loadAux(); bumpCounts(); notePaused(data, 'created') }
+    try { const { data } = await api.post('/searches', toPayload(newDraft)); track('search_created', { mode: newDraft.search_mode }); setNewOpen(false); setNewDraft(NEW_DRAFT); load(); loadAux(); bumpCounts(); notePaused(data, 'created') }
     catch (e) { fail(e, 'Could not create this search') }
     finally { if (mounted.current) setBusy(null) }
   }
@@ -615,7 +622,7 @@ export default function Searches() {
   const runNow = async (s) => {
     if (running[s.id] || configError(s)) return
     setRunning((m) => ({ ...m, [s.id]: true }))
-    try { await api.post(`/searches/${s.id}/run`) } catch (e) {
+    try { await api.post(`/searches/${s.id}/run`); track('search_run', { mode: s.search_mode }) } catch (e) {
       // The scheduled scrape is running: nothing was started, so drop the spinner.
       if (e.response?.data?.detail === 'scheduled_scrape_running') {
         pushToast({ kind: 'error', msg: 'The scheduled scrape is running — try again when it finishes' })
@@ -715,6 +722,7 @@ export default function Searches() {
   const runTest = async (s) => {
     if (testingId || configError(s)) return               // one Test at a time
     setMenuFor(null); setTestingId(s.id); setTestTab('all')
+    track('search_tested', { mode: s.search_mode })
     writeTestRec({ id: s.id, name: s.name })    // in flight, no run id yet (the inline modes never get one)
     try {
       const res = await api.post(`/searches/${s.id}/test`, null, { timeout: 30000 })
@@ -790,7 +798,7 @@ export default function Searches() {
           const testBlocked = !!testingId && testingId !== s.id
           const mutedWarn = mutedWarnOf(s)
           const cfgErr = configError(s)
-          const summary = spin ? 'running now. Results appear in the Job Feed as they are found.' : (cfgErr || warn || mutedWarn || summaryOf(s, apifyBoards))
+          const summary = spin ? 'running now. Results appear in the Job Feed as they are found.' : (cfgErr || warn || mutedWarn || summaryOf(s, apifyBoards) + directRate(s))
           const summaryFg = spin ? 'var(--accent)' : (cfgErr || warn) ? 'var(--warn)' : 'var(--muted)'
           return (
             /* Same card hover as Résumés/Cover Letters, suppressed while open; a warned
@@ -1066,7 +1074,7 @@ function TestModal({ test, tab, setTab, onClose }) {
                       {j.reason && <Helper title={j.reason} style={{ minWidth: 0, color: ok ? 'var(--muted)' : 'var(--bad)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.reason}</Helper>}
                       {/* A kept row the body scan couldn't run on isn't a promise — say which
                           check is missing rather than let the run silently mark it `ignored`. */}
-                      {ok && needsDesc(j) && <Helper title="The run scans the description for body_exclusion_phrases; this preview didn’t have one" style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>body check needs the description</Helper>}
+                      {ok && needsDesc(j) && <Helper title="The preview had no posting text, so the body exclusion phrases were not checked; a run checks them" style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>posting body text check was skipped</Helper>}
                     </span>
                     <Helper title={j.location} style={{ flex: '0 0 116px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>{j.location}</Helper>
                     <span title={j.salary || ''} style={{ flex: '0 0 120px', textAlign: 'right', fontFamily: 'var(--numeral-face)', fontSize: 9.5, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{j.salary || '—'}</span>
@@ -1100,7 +1108,7 @@ function TestModal({ test, tab, setTab, onClose }) {
                 )}
                 {nBodyExcluded > 0 && <> · <b style={{ color: 'var(--warn)' }}>{nBodyExcluded} would be ignored (body phrases)</b></>}
                 {' · '}{nRaw} found{d.duration != null && <span style={{ color: 'var(--muted)' }}> · {d.duration}s</span>}
-                {nBodyUnchecked > 0 && <span style={{ color: 'var(--muted)' }}> · {nBodyUnchecked} not body-checked (needs the description)</span>}
+                {nBodyUnchecked > 0 && <span style={{ color: 'var(--muted)' }}> · {nBodyUnchecked} with the posting body text check skipped</span>}
               </span>
               <Pill onClick={onClose} style={{ marginLeft: 'auto' }}>Close</Pill>
             </FooterRow>

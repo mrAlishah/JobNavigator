@@ -9,7 +9,8 @@ the data:
   were 94% alike and were for different products; two Cisco ones differed only in "4+" against
   "6+ years". So the texts must be the same word for word, apart from what a per-city or
   re-posted copy changes: codes with three digits or more (job ids, reference numbers, pay,
-  dates), dollar amounts, US state names, and the place words of either posting's own location.
+  dates), dollar amounts, US state names, known city names ("based in our Denver office" when
+  the location says "United States"), and the place words of either posting's own location.
   No other word may differ (`MAX_OTHER_WORDS`).
 - **A shared template proves nothing.** Different roles can carry one text (Sierra's Spanish- and
   Portuguese-speaking strategists, PayPal's company-wide description). When the company uses the
@@ -46,6 +47,36 @@ _STATES = re.compile(r"\b(?:" + "|".join(sorted((
 # (R-482211-8), a requisition (JR363445-1), a date (2026-10-21), pay (151,000.00).
 _CODES = re.compile(r"[a-z0-9]*\d{3,}[a-z0-9]*(?:[-_/.][a-z0-9]+)*")
 
+# City names a per-city copy writes in its text when its location field does not name the city
+# ("based in our Boston office" / "Denver", location "United States"): the cities and metros
+# analyzer/location.py knows, with a state or province code right after one ("Seattle, WA").
+# Names that are also ordinary words or people's names stay words: a difference in them counts.
+_NOT_CITIES = frozenset({
+    "orange", "corona", "venice", "concord", "davis", "carson", "campbell", "hamilton", "milton",
+    "lancaster", "victoria", "regina", "valencia", "burlington", "surrey", "langley", "windsor",
+    "richmond", "stanford", "phoenix", "hawthorne", "glendale", "riverside", "kingston", "waterloo",
+    "belmont", "saratoga", "sonoma", "napa", "industry", "union city", "danville", "east coast",
+    "west coast", "tri-state", "tri state", "dmv"})
+_CODE_WORDS = frozenset({"in", "or", "me", "ok", "hi", "de", "la", "pa", "ma", "al", "co", "oh", "id", "on"})
+
+
+def _city_pattern():
+    from backend.analyzer.location import ALL_REGION_CODES, BARE_CITIES, CALIFORNIA_CITIES, CANADA_CITIES, METROS
+    names = (set(BARE_CITIES) | set(CALIFORNIA_CITIES) | set(CANADA_CITIES) | set(METROS)) - _NOT_CITIES
+    codes = sorted(c.lower() for c in ALL_REGION_CODES | {"DC"})
+    # "in", "or", "me", "ok", "hi"... are words too: as a code they need the comma ("Boston, MA")
+    plain = [c for c in codes if c not in _CODE_WORDS]
+    return re.compile(r"\b(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+                      + r")\b(?:\s+(?:metropolitan|metro))?(?:\s+area)?(?:\s*,\s*(?:" + "|".join(codes) + r")\b|\s+(?:" + "|".join(plain) + r")\b)?")
+
+
+_CITIES = _city_pattern()
+
+
+def text_places(text) -> set:
+    """The known cities a posting's text names (lower-case)."""
+    return {m.group(1) for m in _CITIES.finditer(_TAG.sub(" ", html.unescape(str(text or ""))).lower())}
+
 
 def words(text) -> list:
     """The posting's words, lower-case, markup removed."""
@@ -71,12 +102,36 @@ def _place_words(*locations) -> set:
 
 def role_words(text, *locations) -> list:
     """`text` without what a per-city or re-posted copy of a role changes: dollar amounts,
-    numbers of three digits and more (ids, pay, years, dates), and the words of `locations`.
-    Short numbers stay: "4+ years" against "6+ years" is another role."""
+    numbers of three digits and more (ids, pay, years, dates), known city and state names, and the
+    words of `locations`. Short numbers stay: "4+ years" against "6+ years" is another role."""
     drop = _place_words(*locations)
-    text = _CODES.sub(" ", _STATES.sub(" ", _TAG.sub(" ", html.unescape(str(text or ""))).lower()))
+    text = _TAG.sub(" ", html.unescape(str(text or ""))).lower()
+    text = _CODES.sub(" ", _STATES.sub(" ", _CITIES.sub(" ", text)))
     return [w for w in words(text)
             if not (w.startswith("$") or (w.isdigit() and (len(w) >= 3 or w == "00")) or w in drop)]
+
+
+# Title spellings of one word, and levels written as digits ("Engineer 2" is "Engineer II").
+_TITLE_WORDS = {"sr": "senior", "snr": "senior", "jr": "junior", "mgr": "manager", "engr": "engineer",
+                "dir": "director", "assoc": "associate", "mgmt": "management",
+                "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v"}
+# A requisition number with its letter prefix: "R-482211", "JR363445-1".
+_TITLE_CODE = re.compile(r"\b(?:[a-z]+[-_/])?" + _CODES.pattern)
+
+
+def title_key(title) -> str:
+    """A title as the same-role check compares it: case, punctuation, word order, common short
+    forms ("Sr", "Mgr", "&") and requisition numbers do not count. Every word in brackets counts:
+    Sierra's "(Spanish speaking)" and "(Brazilian Portuguese speaking)" are two roles."""
+    t = _TITLE_CODE.sub(" ", html.unescape(str(title or "")).lower().replace("&", " and "))
+    return " ".join(sorted(_TITLE_WORDS.get(w, w) for w in re.findall(r"[a-z0-9]+", t)))
+
+
+def role_hash(company, title) -> str:
+    """The key jobs that may be one role share: the company and `title_key`."""
+    import hashlib
+    raw = f"{(company or '').strip().lower()}\n{title_key(title)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def other_words(a: list, b: list) -> int:

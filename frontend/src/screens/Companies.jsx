@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
+import { track } from '../telemetry'
 import { useToasts, ToastStack } from '../Toast'
 // shared dialog also serves résumé and cover-letter deletes, so it lives in its own file.
 import ConfirmDialog from '../ConfirmDialog'
@@ -40,6 +41,7 @@ const ATS_SLUGS = new Set(['greenhouse', 'workday', 'lever', 'ashby', 'phenom', 
 const atsShort = (detected) => (detected || 'Generic')
   .replace(' API', '').replace(' AJAX', '').replace(' (Playwright)', '').replace(' Careers', '')
 const atsSlug = (short) => { const s = (short || 'generic').toLowerCase().replace(/[^a-z0-9]/g, ''); return 'cc-' + (ATS_SLUGS.has(s) ? s : 'generic') }
+const atsId = (short) => (short || 'generic').toLowerCase().replace(/[^a-z0-9]/g, '')   // telemetry: 'Oracle HCM' -> 'oraclehcm'
 const tierSlug = (key) => 'cc-tier' + (key === 'none' ? 'none' : key)
 // Company.tier is stored as an integer 1/2/3 (nullable) — backend/models/db.py.
 // The UI shows priority tiers as letters; tierLabel(1) -> 'A', tierLabel(1, { long: true }) -> 'Tier A'.
@@ -77,6 +79,9 @@ const detectAts = (url) => {
   if (hostMatches(url, 'jobs.smartrecruiters.com', 'careers.smartrecruiters.com', 'api.smartrecruiters.com')) return 'SmartRecruiters'
   // amazon.is_amazon: an amazon.jobs host with /search in the path
   if (hostMatches(url, 'amazon.jobs') && pathHas(url, '/search')) return 'Amazon'
+  // uber.is_uber: jobs.uber.com's job search, or the old uber.com careers list (not one posting)
+  if (hostMatches(url, 'jobs.uber.com') && /^\/([a-z]{2}(-[a-z]{2})?\/)?jobs\/?$/i.test(new URL(url).pathname)) return 'Uber'
+  if (hostMatches(url, 'uber.com') && pathHas(url, '/careers/list') && !/\/careers\/list\/\d+/.test(new URL(url).pathname)) return 'Uber'
   if (hostMatches(url, 'metacareers.com')) return 'Meta'
   if (url.toLowerCase().includes('google.com/about/careers')) return 'Google'
   return 'Generic'
@@ -305,7 +310,11 @@ export default function Companies() {
   const runScrape = async (id) => {
     if (scraping[id]) return
     setScraping((m) => ({ ...m, [id]: true }))
-    try { await api.post(`/scrape/company/${id}`) }
+    try {
+      await api.post(`/scrape/company/${id}`)
+      const c = companies.find((x) => x.id === id)
+      track('company_scraped', { ats: atsId(detectAts((c?.scrape_urls || [])[0])) })
+    }
     catch (e) {
       // The scheduled scrape is running: nothing was started, so drop the spinner.
       if (e.response?.data?.detail === 'scheduled_scrape_running') {
@@ -822,6 +831,7 @@ function AddModal({ onClose, resumes, personaPopulated, onCreated, pushToast }) 
         tier, scrape_interval_minutes: interval === '' ? null : parseInt(interval) || null,
         selected_resume_ids: selected, auto_scoring_depth: depth,
       })
+      track('company_added', { ats: atsId(ats) })
       onCreated(); onClose()
     } catch (e) {
       pushToast({ kind: 'error', msg: 'Could not add company' + errSuffix(e) })
@@ -917,7 +927,7 @@ function TestModal({ test, onClose, showShots, setShowShots }) {
     + (bodyExcluded ? ` · ${bodyExcluded} would be ignored (body phrases)` : '')
     + ` · ${rejected} invalid`
     + (passCo != null && passCo !== kept ? ` · ${passCo} pass this company's filters · ${Math.max(0, passCo - kept - bodyExcluded)} removed by the global exclude list` : '')
-    + (bodyUnchecked ? ` · ${bodyUnchecked} not body-checked (needs the description)` : '')
+    + (bodyUnchecked ? ` · ${bodyUnchecked} with the posting body text check skipped` : '')
   const urls = test.urls_scraped || []
   const pag = test.pagination_debug || []
   const shots = test.screenshots || []
@@ -928,7 +938,7 @@ function TestModal({ test, onClose, showShots, setShowShots }) {
     if (j.kept) return {
       tag: 'Kept', tagBg: 'var(--accent-soft)', tagFg: 'var(--good)', reasonFg: 'var(--muted)',
       // a kept row the body scan couldn't run on is not a promise — say so
-      reason: j.reason || (bodyPhrases > 0 && j.body_checked === false ? 'body check needs the description' : ''),
+      reason: j.reason || (bodyPhrases > 0 && j.body_checked === false ? 'posting body text check was skipped' : ''),
     }
     if (j.reason?.startsWith('[Global]')) return { tag: 'Global', tagBg: 'var(--warn-soft)', tagFg: 'var(--warn)', reasonFg: 'var(--warn)', reason: j.reason.replace('[Global] ', '') }   // the global exclude list, not this company's filters
     return { tag: 'Out', tagBg: 'var(--bad-soft)', tagFg: 'var(--bad)', reasonFg: 'var(--bad)', reason: j.reason || '' }

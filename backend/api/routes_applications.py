@@ -8,6 +8,7 @@ from sqlalchemy import desc
 from backend.models.db import get_db, Application, Job, Company, utcnow, SessionLocal
 from backend.accounts.settings import get_setting, default_resume_ids
 from backend.scraper._shared.bot_wall import is_bot_wall
+from backend.scraper._shared.link_kinds import job_link
 
 logger = logging.getLogger("jobnavigator.applications")
 
@@ -873,8 +874,8 @@ def prep_bundle(app_id: str, db: Session = Depends(get_db)):
         sal = money(job.salary_min, job.salary_max)
         if sal:
             add("- Listed salary: " + sal)
-        if job.url:
-            add("- Posting: " + job.url)
+        if job_link(job):
+            add("- Posting: " + job_link(job))
     add("- Stage: " + (app.status or "applied").capitalize())
     if app.interviews:
         add("- Interviews booked:")
@@ -960,7 +961,7 @@ def _app_to_dict(a: Application, lookup=None, tailored=None, has_cover_letter=Fa
         "company": raw,
         "company_canonical": canonical_co.name if canonical_co else raw,
         "title": job.title if job else None,
-        "url": job.url if job else None,
+        "url": job_link(job) if job else None,
         "best_cv": display_best(job, names=names, db=_session_of(a)) if job else None,
         "short_id": job.short_id if job else None,
         # posting details the detail pane shows, so it never has to re-fetch the job

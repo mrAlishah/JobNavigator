@@ -23,10 +23,12 @@ from backend.api.routes_resumes import router as resumes_router
 from backend.api.routes_persona import router as persona_router
 from backend.api.routes_cover_letters import router as cover_letters_router
 from backend.api.routes_linkedin import router as linkedin_router
+from backend.api.routes_telemetry import router as telemetry_router
 from backend.api.routes_autofill import router as autofill_router
 from backend.api.routes_llm import router as llm_router
 from backend.api.routes_accounts import router as accounts_router
 from backend.api.routes_gmail import router as gmail_router
+from backend.scraper._shared.link_kinds import job_link
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("jobnavigator")
@@ -80,9 +82,18 @@ async def lifespan(app: FastAPI):
                        "(no scrapes, email checks, digests or backups run).")
     else:
         configure_scheduler()
+        # The LinkedIn employer-link lookup runs after every scrape, not on a clock.
+        from backend.job_monitor import on_scrape_finished
+        from backend.scheduler import lookup_after_scrape
+        on_scrape_finished(lookup_after_scrape)
         # QA F4 / R1-01: the scheduler's timers capture the context of whoever wakes it.
         from backend.accounts.context import run_in_clean_context
         run_in_clean_context(scheduler.start)
+        # Telemetry's start event (sends nothing unless the owner allowed it); kept on
+        # app.state so the task is not garbage-collected mid-send.
+        from backend.telemetry.umami import send_start
+        import asyncio as _asyncio
+        app.state.telemetry_start = run_in_clean_context(lambda: _asyncio.ensure_future(send_start()))
         logger.info("Database initialized, seeded, scheduler started.")
 
     # Warm the OpenRouter live-pricing cache used for LLM cost logging (non-fatal).
@@ -619,6 +630,7 @@ app.include_router(resumes_router, prefix="/api")
 app.include_router(persona_router, prefix="/api")
 app.include_router(cover_letters_router, prefix="/api")
 app.include_router(linkedin_router, prefix="/api")
+app.include_router(telemetry_router, prefix="/api")
 app.include_router(autofill_router, prefix="/api")
 app.include_router(llm_router, prefix="/api")
 app.include_router(accounts_router, prefix="/api")
@@ -1013,7 +1025,7 @@ async def trigger_backfill_descriptions():
             count = 0
             for job in jobs:
                 try:
-                    desc = await _fetch_job_description(job.url)
+                    desc = await _fetch_job_description(job_link(job))
                     if desc and len(desc) > 50:
                         job.description = desc
                         apply_salary_to_job(job)
@@ -1325,7 +1337,20 @@ async def telegram_test():
         )
 
 
-_OWNER_ONLY_SCHEDULES = frozenset({"h1b_refresh", "db_backup"})   # their triggers: require_owner
+_OWNER_ONLY_SCHEDULES = frozenset({"h1b_refresh", "db_backup", "telemetry_daily"})   # install-level / require_owner
+
+# The schedules list shows these names; every id scheduler.py registers needs one
+# (test_schedule_names.py).
+SCHEDULE_NAMES = {
+    "scrape_all": "Scrape all searches & companies",
+    "email_check": "Check Gmail for replies",
+    "daily_digest": "Send daily Telegram digest",
+    "h1b_refresh": "Refresh H-1B / LCA data",
+    "db_backup": "Back up database (pg_dump)",
+    "job_cleanup": "Clean up stale skipped jobs",
+    "auto_reject": "Auto-reject stale applications",
+    "telemetry_daily": "Send telemetry (what Settings › Telemetry allows)",
+}
 
 
 @app.get("/api/scheduler/jobs", tags=["scheduler"], summary="List scheduled jobs")
@@ -1343,17 +1368,6 @@ def get_scheduler_jobs():
         "db_backup": ("/db/backup", "db_backup"),
         "job_cleanup": ("/db/cleanup", "job_cleanup"),
         "auto_reject": ("/auto-reject/run", "auto_reject"),
-    }
-
-    # Human-friendly display names for the core scheduler jobs.
-    display_names = {
-        "scrape_all": "Scrape all searches & companies",
-        "email_check": "Check Gmail for replies",
-        "daily_digest": "Send daily Telegram digest",
-        "h1b_refresh": "Refresh H-1B / LCA data",
-        "db_backup": "Back up database (pg_dump)",
-        "job_cleanup": "Clean up stale skipped jobs",
-        "auto_reject": "Auto-reject stale applications",
     }
 
     jobs = scheduler.get_jobs()
@@ -1378,7 +1392,7 @@ def get_scheduler_jobs():
 
         result.append({
             "id": job.id,
-            "name": display_names.get(job.id, job.name or job.id),
+            "name": SCHEDULE_NAMES.get(job.id, job.name or job.id),
             "schedule": schedule,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
             "pending": job.pending,

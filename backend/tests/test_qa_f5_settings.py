@@ -431,16 +431,15 @@ def test_linkedin_inherit_uses_the_owner_paths(test_db, accounts, roots):
 def test_linkedin_inherit_refresh_state_and_creds_are_the_owners(test_db, owner_creds, roots):
     from backend import refresh_linkedin_session as rls
     a, b = owner_creds
-    set_setting(test_db, "linkedin_use_mock_account", "false")
-    rls.STATE.update(phase="idle", detail="")
+    rls.STATES["main"].update(phase="idle", detail="")
     rls._MEMBER_STATES.clear()
     with use_account(b):                          # own, nothing set: empty creds
-        email, password, missing, _ = rls._creds()
+        email, password, missing = rls._creds(rls.MAIN)
         assert (email, password) == ("", "")
     _policy(test_db, b, "linkedin", "inherit")
     with use_account(b):
-        assert rls.state() is rls.STATE
-        assert rls._creds()[:2] == ("owner@li.example", "li-pass")
+        assert rls.state(rls.MAIN) is rls.STATES["main"]
+        assert rls._creds(rls.MAIN)[:2] == ("owner@li.example", "li-pass")
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from backend.analyzer.work_arrangement import apply_arrangement_to_job
 from backend.analyzer.location import apply_location_to_job
 from backend.job_monitor import launch_background, JobAlreadyRunningError
 # LinkedIn extension enrichment — see sources/linkedin_extension.py
+from backend.scraper._shared.link_kinds import job_link
 from backend.scraper.sources.linkedin_extension import (
     enrich as _scrape_linkedin_ids,  # noqa: F401
     _linkedin_import_progress,
@@ -110,6 +111,8 @@ def list_jobs(
     remote: Optional[bool] = None,
     location: Optional[str] = None,
     arrangement: Optional[str] = None,
+    link_kind: Optional[str] = None,
+    open_state: Optional[str] = None,
     source: Optional[str] = None,
     saved: Optional[bool] = None,
     title_search: Optional[str] = None,
@@ -163,6 +166,12 @@ def list_jobs(
     clause = _arrangement_clause(arrangement)
     if clause is not None:
         q = q.filter(clause)
+    clause = _link_kind_clause(link_kind)
+    if clause is not None:
+        q = q.filter(clause)
+    clause = _open_state_clause(open_state)
+    if clause is not None:
+        q = q.filter(clause)
 
     total = q.count()
 
@@ -205,6 +214,7 @@ def list_jobs(
     names = resume_names(db)
     also_on = _also_on(db, job_ids)
     skipped = _skipped_roles(db, jobs)
+    origins = _copy_origins(db, jobs)
     rows = [
         _job_to_dict(
             j,
@@ -214,6 +224,7 @@ def list_jobs(
             names=names,
             also_on=also_on.get(j.id, []),
             same_role_skipped=skipped.get(j.id),
+            copy_of=origins.get(j.id),
         )
         for j in jobs
     ]
@@ -308,11 +319,33 @@ def _arrangement_clause(raw):
     return or_(*clauses) if clauses else None
 
 
+def _open_state_clause(open_state):
+    """Posting filter (still_open.py): closed = checked closed; open = everything else."""
+    vals = {v.strip() for v in (open_state or "").split(",") if v.strip()}
+    if vals == {"closed"}:
+        return Job.open_state == "closed"
+    if vals == {"open"}:
+        return Job.open_state.is_(None) | (Job.open_state != "closed")
+    return None
+
+
+def _link_kind_clause(link_kind):
+    """`direct`, `board`, `easy_apply` (comma list) as a filter, or None (scraper/_shared/link_kinds.py)."""
+    vals = [v.strip() for v in (link_kind or "").split(",") if v.strip()]
+    return Job.link_kind.in_(vals) if vals else None
+
+
 def _apply_common_filters(q, status=None, company=None, source=None, h1b_verdict=None,
                           min_score=None, saved=None, title_search=None, remote=None,
                           min_salary=None, max_salary=None, search_id=None,
-                          location=None, arrangement=None):
+                          location=None, arrangement=None, link_kind=None, open_state=None):
     """Apply shared filter logic for job list and filter-list endpoints."""
+    clause = _link_kind_clause(link_kind)
+    if clause is not None:
+        q = q.filter(clause)
+    clause = _open_state_clause(open_state)
+    if clause is not None:
+        q = q.filter(clause)
     if status:
         vals = [s.strip() for s in status.split(",") if s.strip()]
         q = q.filter(Job.status.in_(vals)) if len(vals) > 1 else q.filter(Job.status == vals[0])
@@ -385,6 +418,8 @@ def list_job_companies(
     remote: Optional[bool] = None,
     location: Optional[str] = None,
     arrangement: Optional[str] = None,
+    link_kind: Optional[str] = None,
+    open_state: Optional[str] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
     search_id: Optional[str] = None,
@@ -398,7 +433,7 @@ def list_job_companies(
         cq = db.query(Job.company, func.count(Job.id)).filter(Job.company.isnot(None), Job.company != "")
         cq = _apply_common_filters(cq, status=status, source=source, h1b_verdict=h1b_verdict,
                                    min_score=min_score, saved=saved, title_search=title_search,
-                                   remote=remote, location=location, arrangement=arrangement, min_salary=min_salary, max_salary=max_salary,
+                                   remote=remote, location=location, arrangement=arrangement, link_kind=link_kind, open_state=open_state, min_salary=min_salary, max_salary=max_salary,
                                    search_id=search_id).group_by(Job.company)
         lookup = build_company_lookup(db)
         agg = {}
@@ -410,7 +445,7 @@ def list_job_companies(
     q = db.query(Job.company).distinct().filter(Job.company.isnot(None), Job.company != "")
     q = _apply_common_filters(q, status=status, source=source, h1b_verdict=h1b_verdict,
                               min_score=min_score, saved=saved, title_search=title_search,
-                              remote=remote, location=location, arrangement=arrangement, min_salary=min_salary, max_salary=max_salary,
+                              remote=remote, location=location, arrangement=arrangement, link_kind=link_kind, open_state=open_state, min_salary=min_salary, max_salary=max_salary,
                               search_id=search_id)
     raw_names = [r[0] for r in q.all()]
     lookup = build_company_lookup(db)
@@ -433,6 +468,8 @@ def list_job_sources(
     remote: Optional[bool] = None,
     location: Optional[str] = None,
     arrangement: Optional[str] = None,
+    link_kind: Optional[str] = None,
+    open_state: Optional[str] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
     search_id: Optional[str] = None,
@@ -444,7 +481,7 @@ def list_job_sources(
     q = (db.query(Job.source, func.count(Job.id)) if counts else db.query(Job.source).distinct()).filter(Job.source.isnot(None), Job.source != "")
     q = _apply_common_filters(q, status=status, company=company, h1b_verdict=h1b_verdict,
                               min_score=min_score, saved=saved, title_search=title_search,
-                              remote=remote, location=location, arrangement=arrangement, min_salary=min_salary, max_salary=max_salary,
+                              remote=remote, location=location, arrangement=arrangement, link_kind=link_kind, open_state=open_state, min_salary=min_salary, max_salary=max_salary,
                               search_id=search_id)
     if counts:
         return [{"name": r[0], "count": r[1]} for r in q.group_by(Job.source).order_by(Job.source).all()]
@@ -464,6 +501,8 @@ def list_job_verdicts(
     remote: Optional[bool] = None,
     location: Optional[str] = None,
     arrangement: Optional[str] = None,
+    link_kind: Optional[str] = None,
+    open_state: Optional[str] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
     search_id: Optional[str] = None,
@@ -475,7 +514,7 @@ def list_job_verdicts(
     q = (db.query(Job.h1b_verdict, func.count(Job.id)) if counts else db.query(Job.h1b_verdict).distinct()).filter(Job.h1b_verdict.isnot(None), Job.h1b_verdict != "")
     q = _apply_common_filters(q, status=status, company=company, source=source,
                               min_score=min_score, saved=saved, title_search=title_search,
-                              remote=remote, location=location, arrangement=arrangement, min_salary=min_salary, max_salary=max_salary,
+                              remote=remote, location=location, arrangement=arrangement, link_kind=link_kind, open_state=open_state, min_salary=min_salary, max_salary=max_salary,
                               search_id=search_id)
     if counts:
         return [{"name": r[0], "count": r[1]} for r in q.group_by(Job.h1b_verdict).order_by(Job.h1b_verdict).all()]
@@ -502,6 +541,8 @@ def job_facets(
     remote: Optional[bool] = None,
     location: Optional[str] = None,
     arrangement: Optional[str] = None,
+    link_kind: Optional[str] = None,
+    open_state: Optional[str] = None,
     min_salary: Optional[int] = None,
     max_salary: Optional[int] = None,
     search_id: Optional[str] = None,
@@ -529,7 +570,7 @@ def job_facets(
     """
     expanded = _expand_company_filter(db, company)
     base = dict(status=status, company=expanded, source=source, h1b_verdict=h1b_verdict,
-                min_score=min_score, saved=saved, title_search=title_search, remote=remote, location=location, arrangement=arrangement,
+                min_score=min_score, saved=saved, title_search=title_search, remote=remote, location=location, arrangement=arrangement, link_kind=link_kind, open_state=open_state,
                 min_salary=min_salary, max_salary=max_salary, search_id=search_id)
 
     def _counts(col, drop):
@@ -538,6 +579,15 @@ def job_facets(
         kw[drop] = None
         q = db.query(col, func.count(Job.id)).filter(col.isnot(None), col != "")
         return _apply_common_filters(q, **kw).group_by(col).all()
+
+    def _open_state_counts():
+        """open / closed counts with the Posting filter itself lifted."""
+        kw = dict(base)
+        kw["open_state"] = None
+        q = _apply_common_filters(db.query(func.count(Job.id)), **kw)
+        closed = int(q.filter(Job.open_state == "closed").scalar() or 0)
+        total = int(_apply_common_filters(db.query(func.count(Job.id)), **kw).scalar() or 0)
+        return [{"name": "open", "count": total - closed}, {"name": "closed", "count": closed}]
 
     def _pad(rows, selected):
         """Keep a selected-but-now-empty value in the menu, at 0."""
@@ -688,6 +738,9 @@ def job_facets(
         "locations": locations,
         "arrangements": arrangements,
         "score_bands": score_bands,
+        "open_states": _open_state_counts(),
+        "link_kinds": [{"name": n, "count": c}
+                       for n, c in _pad(_counts(Job.link_kind, "link_kind"), _picked(link_kind))],
     }
 
 
@@ -711,7 +764,7 @@ def _known_posting(db, external_id: str, content_hash: str, url: str | None = No
     if row is None and key:
         row = (db.query(Job).filter(Job.posting_key == key, not_ignored)
                .order_by(Job.discovered_at.asc()).first())
-    if row is not None and row.status == "duplicate" and row.duplicate_of:
+    if row is not None and row.duplicate_of:
         row = db.query(Job).filter(Job.id == row.duplicate_of).first() or row
     return row
 
@@ -1068,6 +1121,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
         in_flight_detail=[{"job_type": r.job_type, "meta": r.meta} for r in running],
         also_on=_also_on(db, [job.id]).get(job.id, []),
         same_role_skipped=_skipped_roles(db, [job]).get(job.id),
+        copy_of=_copy_origins(db, [job]).get(job.id),
     )
 
 
@@ -1114,9 +1168,9 @@ async def update_job(job_id: str, updates: dict, background_tasks: BackgroundTas
     created_company_id = None
 
     if updates.get("status") == "applied":
-        if job.url and not job.has_cached_page:
+        if job_link(job) and not job.has_cached_page:
             from backend.api.routes_applications import _cache_job_page
-            background_tasks.add_task(_cache_job_page, str(job.id), job.url)
+            background_tasks.add_task(_cache_job_page, str(job.id), job_link(job))
 
         from backend.models.db import Application
         from datetime import datetime, timezone
@@ -1161,7 +1215,7 @@ def cache_applied_jobs(background_tasks: BackgroundTasks, db: Session = Depends(
 
     for job in jobs:
         from backend.api.routes_applications import _cache_job_page
-        background_tasks.add_task(_cache_job_page, str(job.id), job.url)
+        background_tasks.add_task(_cache_job_page, str(job.id), job_link(job))
 
     return {"queued": len(jobs)}
 
@@ -1210,17 +1264,28 @@ def get_cached_page(job_id: str, db: Session = Depends(get_db)):
     return HTMLResponse(content=_reader_html(job.cached_page_html, f"Cached on {cached_at}"), headers=_READER_CSP)
 
 
+@router.post("/{job_id}/open-check")
+async def open_check(job_id: str, force: bool = False, db: Session = Depends(get_db)):
+    """Is the posting still open (scraper/_shared/still_open.py)? Answered from the last check
+    when it is under a day old, unless `force`. Never changes the job or an application."""
+    from backend.scraper._shared.still_open import ensure_checked
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return await ensure_checked(db, job, force=force)
+
+
 @router.get("/{job_id}/frame-check")
 async def frame_check(job_id: str, db: Session = Depends(get_db)):
     """Report whether the posting can be embedded in an iframe without the extension; blocks only on a confident framing signal (X-Frame-Options or a CSP frame-ancestors directive) on a successful fetch, and treats a fetch error as embeddable so the feed still tries the live preview."""
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if not job.url:
+    if not job_link(job):
         return {"embeddable": False}
     from backend.scraper._shared.url_safety import safe_get, UnsafeURLError
     try:
-        resp = await safe_get(job.url, timeout=12, headers={
+        resp = await safe_get(job_link(job), timeout=12, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         })
         xfo = (resp.headers.get("x-frame-options") or "").strip()
@@ -1253,13 +1318,13 @@ async def get_live_page(job_id: str, db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if not job.url:
+    if not job_link(job):
         raise HTTPException(status_code=404, detail="No posting URL captured for this job")
 
     from backend.scraper._shared.url_safety import safe_get, UnsafeURLError
     from backend.api.routes_applications import _extract_clean_content
     try:
-        resp = await safe_get(job.url, timeout=20, headers={
+        resp = await safe_get(job_link(job), timeout=20, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
@@ -1320,6 +1385,17 @@ def _also_on(db, job_ids) -> dict:
     return out
 
 
+def _copy_origins(db, jobs) -> dict:
+    """{job id: {"id", "location", "source"}}: the original a copy belongs to (posting_links.py)."""
+    want = {j.duplicate_of for j in jobs if getattr(j, "duplicate_of", None)}
+    if not want:
+        return {}
+    found = {i: (loc, src) for i, loc, src in
+             db.query(Job.id, Job.location, Job.source).filter(Job.id.in_(list(want))).all()}
+    return {j.id: {"id": str(j.duplicate_of), "location": found[j.duplicate_of][0], "source": found[j.duplicate_of][1]}
+            for j in jobs if getattr(j, "duplicate_of", None) in found}
+
+
 def _skipped_roles(db, jobs) -> dict:
     """{job id: {"id", "location"}}: the job the user skipped that is the same role as this one
     in another place (posting_links.py `same_role_as`)."""
@@ -1333,7 +1409,8 @@ def _skipped_roles(db, jobs) -> dict:
 
 def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = None,
                  in_flight_detail: list[dict] | None = None, names: dict | None = None,
-                 also_on: list | None = None, same_role_skipped: dict | None = None) -> dict:
+                 also_on: list | None = None, same_role_skipped: dict | None = None,
+                 copy_of: dict | None = None) -> dict:
     """`names` is {résumé id: name} for the account (score_keys.resume_names), loaded once by a
     list caller; a single job loads it itself."""
     from backend.analyzer.score_keys import display, resume_names
@@ -1358,7 +1435,14 @@ def _job_to_dict(j: Job, tailored_resume_id=None, in_flight: list[str] | None = 
         "duplicate_of": str(j.duplicate_of) if j.duplicate_of else None,
         # Other sources that found this posting; empty for a duplicate itself.
         "also_on": also_on or [],
+        "link_kind": j.link_kind,
+        "open_state": j.open_state,
+        "open_reason": j.open_reason,
+        "open_checked_at": j.open_checked_at.isoformat() if j.open_checked_at else None,
+        "link": job_link(j),   # the employer's link when there is one: what Open opens
         "same_role_skipped": same_role_skipped,
+        "copy_kind": j.copy_kind,
+        "copy_of": copy_of,
         "source": j.source,
         "search_id": str(j.search_id) if j.search_id else None,
         "description": j.description,

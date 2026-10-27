@@ -71,10 +71,30 @@ _linkedin_import_progress = _PerAccountProgress()
 # Persisted (mounted) Playwright session cookies — written by
 # backend/refresh_linkedin_session.py. Survives container restarts.
 def _session_path() -> str:
-    """The current account's cookie jar (MT-16): the owner's is today's
-    /root/.linkedin_api/li_cookies.json, a member's lives under accounts/<id>/."""
-    from backend.accounts.credentials import linkedin_extension_cookies
-    return linkedin_extension_cookies()
+    """The jar the LinkedIn import reads: the mock account's session when a mock account is set
+    (Settings › LinkedIn), else the main account's. MT-16: the current account's jars (the
+    owner's mock jar is /root/.linkedin_api/li_cookies.json, a member's lives under accounts/<id>/)."""
+    from backend.accounts.credentials import linkedin_extension_cookies, linkedin_personal_cookies
+    from backend.accounts.settings import get_setting
+    from backend.models.db import SessionLocal
+    db = SessionLocal()
+    try:
+        mock = (get_setting(db, "linkedin_mock_email") or "").strip()
+    finally:
+        db.close()
+    if mock:
+        return linkedin_extension_cookies()
+    main, old = linkedin_personal_cookies(), linkedin_extension_cookies()
+    # Before the sessions split, an install without a mock account kept its personal session in
+    # the extension jar: it carries over as the main session once.
+    if not os.path.exists(main) and os.path.exists(old) and not os.path.exists(old + ".account"):
+        try:
+            import shutil
+            os.makedirs(os.path.dirname(main) or ".", exist_ok=True)
+            shutil.copyfile(old, main)
+        except OSError:
+            return old
+    return main
 
 # The exact Voyager endpoint + decoration the linkedin-api library used; returns plain JSON
 # with top-level title/companyDetails/description/formattedLocation/applyMethod.
@@ -97,6 +117,9 @@ _VOYAGER_JOB_JS = """async (jid) => {
     for (const v of Object.values(d.applyMethod || {})) {
         if (v && v.companyApplyUrl) { apply = v.companyApplyUrl; break; }
     }
+    // "OffsiteApply" (the employer's site) or "...OnsiteApply" (Easy Apply), from the key's tail
+    const applyKey = Object.keys(d.applyMethod || {})[0] || '';
+    const applyType = applyKey.split('.').pop();
     // workplaceTypes is a URN list ("urn:li:fs_workplaceType:2"); workRemoteAllowed
     // is a plain bool. Both are read defensively: this decoration is not
     // documented, so a build that omits them just yields nulls.
@@ -108,6 +131,8 @@ _VOYAGER_JOB_JS = """async (jid) => {
             location: d.formattedLocation || '',
             description: (d.description && d.description.text) || '',
             apply_url: apply || '',
+            apply_type: applyType,
+            job_state: d.jobState || '',
             workplace_type: wpt,
             work_remote_allowed: (typeof d.workRemoteAllowed === 'boolean')
                 ? d.workRemoteAllowed : null};
@@ -186,7 +211,7 @@ async def enrich(linkedin_ids: list[str], db=None):
         session_cookies = _load_session_cookies()
         if not session_cookies:
             logger.error("LinkedIn import: no session cookies at %s — run "
-                         "`python -m backend.refresh_linkedin_session [--account <name>]` first", _session_path())
+                         "Settings › LinkedIn › Sign in (or `python -m backend.refresh_linkedin_session --session main|mock`) first", _session_path())
             _linkedin_import_progress["status"] = "error"
             _linkedin_import_progress["error_details"] = [{"stage": "session",
                 "error": "no LinkedIn session — refresh it in Settings › LinkedIn"}]
@@ -225,7 +250,7 @@ async def enrich(linkedin_ids: list[str], db=None):
                     "}")
                 if me_status != 200:
                     logger.error("LinkedIn import: session invalid (me=%s) — run "
-                                 "`python -m backend.refresh_linkedin_session [--account <name>]`", me_status)
+                                 "Settings › LinkedIn › Sign in (or `python -m backend.refresh_linkedin_session --session main|mock`)", me_status)
                     _linkedin_import_progress["status"] = "error"
                     _linkedin_import_progress["error_details"] = [{"stage": "session",
                         "error": f"session invalid (me={me_status}) — refresh it in Settings › LinkedIn"}]

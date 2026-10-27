@@ -43,8 +43,19 @@ def roots(tmp_path, monkeypatch):
 
 async def test_owner_paths_are_todays_exact_paths():
     assert C.LI_EXTENSION_OWNER == "/root/.linkedin_api/li_cookies.json"
-    assert C.LI_PERSONAL_OWNER == "/tmp/linkedin_cookies.json"
+    # 3.2: the main session persists next to the mock one (/tmp was wiped on every rebuild)
+    assert C.LI_PERSONAL_OWNER == "/root/.linkedin_api/linkedin_cookies.json"
     assert C.LI_PIN_OWNER == "/tmp/li_pin.txt"
+
+
+async def test_the_owners_main_jar_moves_out_of_tmp(tmp_path, monkeypatch):
+    old, new = tmp_path / "tmp" / "linkedin_cookies.json", tmp_path / "li" / "linkedin_cookies.json"
+    old.parent.mkdir()
+    old.write_text('[{"name": "li_at"}]')
+    monkeypatch.setattr(C, "LI_PERSONAL_LEGACY", str(old))
+    monkeypatch.setattr(C, "LI_PERSONAL_OWNER", str(new))
+    assert C.linkedin_personal_cookies() == str(new)
+    assert new.read_text() == '[{"name": "li_at"}]' and not old.exists()
 
 
 async def test_owner_no_context_and_unscoped_resolve_to_the_owner_paths(test_db, accounts):
@@ -156,6 +167,12 @@ async def test_personal_scraper_saves_and_loads_the_accounts_own_jar(test_db, ac
 async def test_extension_import_reads_the_accounts_own_session(test_db, accounts, roots):
     from backend.scraper.sources import linkedin_extension as ext
     a, b = accounts
+    # the import reads the mock session of an account that has a mock account set (Task 8)
+    from backend.accounts.context import unscoped
+    with unscoped():   # the owner reads the install row, the member (LinkedIn 'own') its own
+        test_db.add_all([Setting(key="linkedin_mock_email", value="mock@x.io", account_id=None),
+                         Setting(key="linkedin_mock_email", value="mock@x.io", account_id=b)])
+        test_db.commit()
     (roots / "li").mkdir(parents=True)
     (roots / "li" / "li_cookies.json").write_text(json.dumps([{"name": "li_at", "value": "owner"}]))
     with use_account(a):
@@ -229,16 +246,38 @@ async def test_refresh_writes_the_current_accounts_jar_only(test_db, accounts, r
 async def test_refresh_state_and_pin_drop_are_per_account(test_db, accounts, roots):
     from backend import refresh_linkedin_session as rls
     a, b = accounts
-    rls.STATE.update(phase="idle", detail="")
+    rls.STATES["mock"].update(phase="idle", detail="")
     rls._MEMBER_STATES.clear()
     with use_account(b):
         rls._phase("awaiting_pin", "mail")
         assert rls.state()["phase"] == "awaiting_pin"
         assert rls.pin_file() == str(roots / "tmp" / f"li_pin_{b}.txt")
-    assert rls.STATE["phase"] == "idle"
+    assert rls.STATES["mock"]["phase"] == "idle"
     with use_account(a):
-        assert rls.state() is rls.STATE
+        assert rls.state() is rls.STATES["mock"]
         assert rls.pin_file() == str(roots / "tmp" / "li_pin.txt")
+
+
+async def test_a_mock_jar_saved_before_the_split_asks_for_a_new_sign_in(test_db, accounts, roots):
+    """A mock jar without the sign-in record (saved before 3.2) cannot be used by the employer-link
+    lookup; the Mock session row says so instead of looking signed in."""
+    from backend.api import routes_linkedin as rl
+    from backend import refresh_linkedin_session as rls
+    a, _ = accounts
+    (roots / "li").mkdir(parents=True)
+    (roots / "li" / "li_cookies.json").write_text("[]")
+    with use_account(a):
+        from backend.models.db import Setting
+        test_db.add(Setting(key="linkedin_mock_email", value="mock@example.com"))
+        test_db.commit()
+        st = rl.session_status("mock")
+        assert st["status"] == "stale" and "sign in again" in st["summary"].lower()
+        rls.record_sign_in(rls.MOCK, "mock@example.com")
+        assert rl.session_status("mock")["status"] == "ok"
+        # the mock email changed after the sign-in: the lookup will not use it
+        rls.record_sign_in(rls.MOCK, "old@example.com")
+        st = rl.session_status("mock")
+        assert st["status"] == "stale" and "another email" in st["summary"]
 
 
 async def test_session_routes_follow_the_callers_account(test_db, accounts, roots):

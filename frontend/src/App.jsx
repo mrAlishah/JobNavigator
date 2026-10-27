@@ -5,6 +5,7 @@ import AccountPicker from './AccountPicker'
 import AccountChanged from './AccountChanged'
 import { listenForSwitches } from './accounts'
 import WelcomeModal from './WelcomeModal'
+import { TelemetryAsk } from './TelemetryChoice'
 import NewUiModal from './NewUiModal'
 import Shell from './Shell'
 import JobFeed from './screens/JobFeed'
@@ -182,6 +183,8 @@ function App() {
           setShowNewUi(false)
         }} />
       )}
+      {/* telemetry: asked of the owner once, after the other overlays are gone */}
+      {!showNewUi && !showWelcome && !showLogin && !showPicker && !changed && <TelemetryAsk />}
     </BrowserRouter>
   )
 }

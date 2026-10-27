@@ -226,6 +226,33 @@ def _employer_link(row, url: str, loop):
     return direct if host and host != board and not host.endswith("." + board) else None
 
 
+def _fill_linkedin_descriptions(jobs_df, existing_ids, loop) -> int:
+    """JobSpy's LinkedIn rows carry no description (its per-job fetch is off): new ones get it
+    from LinkedIn's public job page (no account), paced, before they are stored. Writes into
+    jobs_df; returns how many were filled."""
+    from backend.scraper._shared.employer_text import missing_descriptions
+    if jobs_df is None or jobs_df.empty or "site" not in jobs_df.columns:
+        return 0
+    todo = []
+    for idx, row in jobs_df.iterrows():
+        url = _clean(row.get("job_url")) or ""
+        if str(row.get("site", "")).lower() != "linkedin" or _clean(row.get("description")) or not url:
+            continue
+        if make_external_id(_clean(row.get("company")) or "", _clean(row.get("title")) or "", url) in existing_ids:
+            continue
+        todo.append({"idx": idx, "url": url, "description": None})
+    if not todo:
+        return 0
+    filled = loop.run_until_complete(missing_descriptions(todo))
+    if "description" not in jobs_df.columns:
+        jobs_df["description"] = None
+    jobs_df["description"] = jobs_df["description"].astype(object)
+    for t in todo:
+        if t["description"]:
+            jobs_df.at[t["idx"], "description"] = t["description"]
+    return filled
+
+
 def get_setting_value(db: Session, key: str, default: str = "") -> str:
     """Read a single Setting row's value by key, returning ``default`` if not set."""
     return get_setting(db, key, default)
@@ -416,6 +443,13 @@ def _run_sync(search, proxy_url: str = None, shared=None) -> dict:
             except Exception as e:
                 _prefetch.close()
                 logger.warning(f"JobSpy H-1B prefetch skipped for '{search.name}': {e}")
+
+            try:
+                _filled = _fill_linkedin_descriptions(jobs_df, existing_ids, h1b_loop)
+                if _filled:
+                    logger.info(f"JobSpy: LinkedIn description for {_filled} new jobs in '{search.name}'")
+            except Exception as e:  # the jobs are stored without one, as before
+                logger.warning(f"JobSpy LinkedIn descriptions skipped for '{search.name}': {e}")
 
             for _, row in jobs_df.iterrows():
                 company = _clean(row.get("company")) or ""

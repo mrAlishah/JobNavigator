@@ -202,6 +202,20 @@ describe('TrulyRemoteWork · v2 Searches', () => {
     fireEvent.click(await screen.findByTitle(/^Preview run/))
     await waitFor(() => expect(api.post.mock.calls[0]?.[0]).toBe('/searches/s4/test'))
     expect(await screen.findByText('worldwide remote · 25 new per run')).toBeTruthy()
-    expect(screen.getAllByText('body check needs the description')).toHaveLength(1)
+    expect(screen.getAllByText('posting body text check was skipped')).toHaveLength(1)
+  })
+})
+
+describe('Direct-link rate · Searches', () => {
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear() })
+
+  it('names the share of a search’s jobs with a direct link, from five jobs on', async () => {
+    mockApi([
+      { ...SEARCH, id: 'a', name: 'Many', direct_rate: { direct: 6, total: 9 } },
+      { ...SEARCH, id: 'b', name: 'Few', search_term: 'few', direct_rate: { direct: 1, total: 3 } },
+    ])
+    renderScreen()
+    expect(await screen.findByText(/67% direct links/)).toBeTruthy()
+    expect(screen.queryByText(/33% direct links/)).toBeNull()
   })
 })

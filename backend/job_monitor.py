@@ -505,6 +505,24 @@ def _restart_job_run(run_id: uuid.UUID, started_at: datetime) -> None:
         db.close()
 
 
+# Called (each as its own task) when a scrape-gated run ends: the LinkedIn employer-link
+# lookup (scheduler.lookup_after_scrape) is registered at start when the scheduler runs.
+_after_scrape_hooks: list = []
+
+
+def on_scrape_finished(hook) -> None:
+    if hook not in _after_scrape_hooks:
+        _after_scrape_hooks.append(hook)
+
+
+def _scrape_finished() -> None:
+    for hook in list(_after_scrape_hooks):
+        try:
+            asyncio.get_running_loop().create_task(hook())
+        except Exception as e:  # never fails the scrape that just ended
+            logger.warning(f"after-scrape hook {getattr(hook, '__name__', hook)}: {e}")
+
+
 @asynccontextmanager
 async def _gated(limiter: Optional["TaskLimiter"], running_job: "RunningJob"):
     """Hold `limiter` around the run; while it waits the run shows as waiting, and its
@@ -513,14 +531,18 @@ async def _gated(limiter: Optional["TaskLimiter"], running_job: "RunningJob"):
         yield
         return
     running_job.waiting = True
+    ran = False
     try:
         async with limiter:
             running_job.waiting = False
             running_job.started_at = datetime.now(timezone.utc)
             _restart_job_run(running_job.run_id, running_job.started_at)
+            ran = True
             yield
     finally:
         running_job.waiting = False
+        if ran and limiter.name == "scraping":
+            _scrape_finished()
 
 
 def _finish_job_run(run_id: uuid.UUID, status: str, result_summary: Optional[str], error: Optional[str]) -> None:

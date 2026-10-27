@@ -553,6 +553,19 @@ async def _fetch_description_ats(url: str, job: dict = None) -> str | None:
             if jid_vals and jid_vals[0].isdigit() and path_parts:
                 job_id = jid_vals[0]
                 company_slug = path_parts[0]
+        if not job_id and path_parts[-1:] == ["job_app"]:
+            # The embed link Jobright hands over: /embed/job_app?for=<board>&token=<id>. Without
+            # `for` it redirects to the same link with it. Its page starts with Greenhouse's
+            # header ("Job Application for … at …", "Back to jobs"), so the API is read instead.
+            query = parse_qs(parsed.query)
+            token = (query.get("token") or [""])[0]
+            if token.isdigit():
+                job_id = token
+                company_slug = (query.get("for") or [""])[0]
+                if not company_slug:
+                    from backend.scraper._shared.url_safety import safe_get
+                    landed = urlparse(str((await safe_get(url, timeout=15)).url))
+                    company_slug = (parse_qs(landed.query).get("for") or [""])[0]
         if company_slug and job_id:
             api_url = f"https://boards-api.greenhouse.io/v1/boards/{company_slug}/jobs/{job_id}"
             async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -576,6 +589,8 @@ async def _fetch_descriptions_parallel(jobs_to_fetch, max_concurrent=5):
     sem = asyncio.Semaphore(max_concurrent)
 
     async def fetch_one(job_dict):
+        if job_dict.get("description"):   # the board's own API sent it (Uber): no page request
+            return job_dict, job_dict["description"]
         async with sem:
             desc = await _fetch_job_description(job_dict["url"], job=job_dict)
             return job_dict, desc

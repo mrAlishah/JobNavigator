@@ -426,6 +426,14 @@ async def run(search: Search) -> dict:
                                 if make_external_id(j["company"], j["title"], j["url"]) not in existing_ids])
 
             landed = await resolve_short_links([j["url"] for j in kept_jobs])
+            # Jobright's description is its own AI summary: new jobs get the employer's text
+            # from their own link, so copies of one role can be proven (employer_text.py).
+            from backend.scraper._shared.employer_text import employer_descriptions
+            fresh = [j for j in kept_jobs
+                     if make_external_id(j["company"], j["title"], j["url"]) not in existing_ids]
+            swapped = await employer_descriptions(fresh, landed)
+            if swapped:
+                logger.info(f"Jobright: employer description for {swapped}/{len(fresh)} new jobs")
             for j in kept_jobs:
                 job_url = j["url"]
                 ext_id = make_external_id(j["company"], j["title"], job_url)

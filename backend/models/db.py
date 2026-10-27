@@ -244,6 +244,10 @@ class Company(AccountScoped, Base):
     # H-1B metrics moved to the VisaCache table (single source of truth, keyed by
     # company name + country) so search-sourced companies not in this table are covered.
     last_scraped_at = Column(DateTime(timezone=True), nullable=True)
+    # 3.2: the last full scrape (missing_postings.py): which links it read and how many
+    # postings it saw; a change of links starts the missing count again.
+    board_signature = Column(String(64), nullable=True)
+    board_count = Column(Integer, nullable=True)
     # See Search.warning_acknowledged_at — same contract, per company.
     warning_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
@@ -266,6 +270,19 @@ class VisaCache(Base):
     last_error = Column(String, nullable=True)
 
     __table_args__ = (UniqueConstraint("name_key", "country", name="uq_visa_cache_name_country"),)
+
+
+class LinkedinLookup(Base):
+    """One answer per LinkedIn job, install-wide (the same for every account): the employer's
+    apply link LinkedIn shows a logged-in user, or that the job is Easy Apply or gone.
+    Written by scraper/_shared/linkedin_lookup.py; a job is never asked about twice."""
+    __tablename__ = "linkedin_lookups"
+
+    linkedin_id = Column(String, primary_key=True)
+    apply_url = Column(String, nullable=True)
+    result = Column(String(12), nullable=False)        # employer | easy_apply | gone
+    job_state = Column(String(20), nullable=True)      # LinkedIn's jobState (LISTED, CLOSED, ...)
+    checked_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -336,8 +353,22 @@ class Job(AccountScoped, Base):
     posting_key = Column(String, nullable=True, index=True)
     duplicate_of = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"),
                           nullable=True, index=True)
+    # direct | board | easy_apply (scraper/_shared/link_kinds.py)
+    link_kind = Column(String(12), nullable=True)   # indexed with account_id (seed.run_migrations)
+    # 3.2: a copy's kind (posting_links.py): link | city | repost; NULL for an original
+    copy_kind = Column(String(10), nullable=True)
+    # 3.2: is the posting still open (scraper/_shared/still_open.py): open | closed | unknown,
+    # why, and when; checked where it matters, kept a day.
+    open_state = Column(String(10), nullable=True)
+    open_reason = Column(String, nullable=True)
+    open_checked_at = Column(DateTime(timezone=True), nullable=True)
+    # 3.2: full company scrapes in a row this posting was missing from (missing_postings.py)
+    missed_scrapes = Column(Integer, nullable=True)
     # 3.2: the same role, which the user skipped in another place; this copy stays in the feed.
     same_role_as = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    # 3.2: company + title as the same-role check reads it (same_role.role_hash: "Sr" is "Senior");
+    # set by posting_links for every row with a content_hash. content_hash stays the exact title.
+    role_hash = Column(String, nullable=True)   # indexed with account_id (seed.run_migrations)
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
     # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))
