@@ -9,6 +9,7 @@ import { isShortcut, track } from '../telemetry'
 import { Button, Card, Check as UICheck, CheckGlyph, CopyGlyph, CrossGlyph, Dot, FooterRow, GlyphBadge, HeaderRow, Heading, Helper, IconButton, Input, kb, Label, Link, Menu, MenuItem, Meter, ModalPanel, NavLink, PageTitle, Pill, Row, Rule, ScoreRing, SearchInput, SectionHead, Segmented, Spinner, TableHead, TableRow, Tag, ZOOM_MAX, ZOOM_MIN, ZoomFloater } from '../ui'
 import { ANALYZE, NO_BASES_HINT, SCORE_RESUME, TAILOR, activityText, noScoreSource,feedActivity, flightDetail, flightTypes, ghostTabs, tabBusy, tabBusyHint, tailorMarkTitle } from './feedActivity'
 import { PICK_KEY, clickMods, clickSelection } from './rowSelect'
+import { companyGroups, searchLabel, searchOptions, withSearchParam } from './feedScopes'
 import { useApifyBoards, apifySourceLabel } from '../apifyBoards'
 
 const FILTERS_KEY = 'v2_feed_filters'
@@ -295,11 +296,15 @@ export default function V2JobFeed() {
   const [searchParams, setSearchParams] = useSearchParams()
   // ?search=<id> scopes the feed to one saved search (from Searches → View results in feed)
   const [searchId, setSearchId] = useState(() => { try { return new URLSearchParams(window.location.search).get('search') || '' } catch { return '' } })
-  const [searchName, setSearchName] = useState('')
+  // Saved searches and tracked companies feed the two scope menus; null = not loaded (or failed), so a
+  // stale ?search= can't be told from a slow list and the menus fall back to their plain labels.
+  const [searchList, setSearchList] = useState(null)
+  const [trackedList, setTrackedList] = useState(null)
   useEffect(() => {
-    if (!searchId) { setSearchName(''); return }
-    api.get('/searches').then(({ data }) => setSearchName((data || []).find((s) => String(s.id) === String(searchId))?.name || 'search')).catch(() => setSearchName('search'))
-  }, [searchId])
+    api.get('/searches').then(({ data }) => setSearchList(data || [])).catch(() => {})
+    api.get('/companies').then(({ data }) => setTrackedList(data || [])).catch(() => {})
+  }, [])
+  const setSearchScope = (id) => { setSearchId(id); setSearchParams((p) => withSearchParam(p, id), { replace: true }); setSel(0) }
   const PAGE = 40
 
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts()
@@ -1114,12 +1119,18 @@ export default function V2JobFeed() {
           <SearchInput width="226px" value={search} onChange={setSearch} placeholder="Search titles…" ariaLabel="Search job titles" />
           {search && <span onClick={() => setSearch('')} title="Clear search" className="v2-x" style={{ position: 'absolute', right: 8, width: 18, height: 18, borderRadius: 'var(--radius-control)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--muted)', cursor: 'pointer' }}>✕</span>}
         </div>
-        {searchId && (
-          <Pill on onClick={() => { setSearchId(''); setSearchParams({}, { replace: true }) }}
-            title="Showing only jobs from this saved search — click to clear">
-            from “{searchName}”<span style={{ fontSize: 11, opacity: 0.7 }}>✕</span>
-          </Pill>
-        )}
+        {/* one saved search at a time; the id (also in ?search=) is what filters, the name is only the label */}
+        <Drop label={searchId && searchList ? searchLabel(searchList, searchId) : 'Saved search'} active={!!searchId} onClear={() => setSearchScope('')} open={menu === 'search'} onToggle={() => setMenu(menu === 'search' ? null : 'search')} width={248}>
+          <MenuItem selected={!searchId} hint={!searchId ? '✓' : null} onClick={() => { setSearchScope(''); setMenu(null) }}>All searches</MenuItem>
+          {searchOptions(searchList).map((s) => (
+            <MenuItem key={s.id} ellipsis selected={searchId === s.id} hint={searchId === s.id ? '✓' : s.inactive ? 'paused' : null}
+              onClick={() => { setSearchScope(s.id); setMenu(null) }}>{s.label}</MenuItem>
+          ))}
+          {searchId && searchList && !searchList.some((s) => String(s.id) === searchId) && (
+            <MenuItem selected hint="✓" onClick={() => setMenu(null)}>Unavailable search</MenuItem>
+          )}
+          <Helper size="xs" style={{ padding: '6px 8px 2px' }}>Jobs keep the one search that first found them</Helper>
+        </Drop>
         <Drop label={`Source${filters.source.length ? ` · ${filters.source.length}` : ''}`} active={filters.source.length > 0} onClear={() => setF({ source: [] })} open={menu === 'source'} onToggle={() => setMenu(menu === 'source' ? null : 'source')}>
           {/* warm-started: the option list is the cached one until the facets settle,
               so an early click on Source is not an empty menu */}
@@ -1165,18 +1176,21 @@ export default function V2JobFeed() {
           <Input autoFocus value={companyQuery} onChange={setCompanyQuery} ariaLabel="Search companies"
             placeholder={`Type to search ${companyList.length} companies…`} style={{ margin: '0 6px 6px', width: 'calc(100% - 12px)', paddingLeft: 12 }} />
           {(() => {
-            const q = companyQuery.trim().toLowerCase()
-            const list = companyList.filter((c) => filters.company.includes(c.name) || c.name.toLowerCase().includes(q))
-            // picked companies pin to the top, keeping the backend's count-desc order within each group
-            const sorted = [...list].sort((a, b) => (filters.company.includes(b.name) ? 1 : 0) - (filters.company.includes(a.name) ? 1 : 0)).slice(0, 80)
-            return sorted.length ? (
+            // tracked companies (/companies) first, then the job-derived ones; picked pin to the top of the latter
+            const g = companyGroups(trackedList, companyList, filters.company, companyQuery)
+            const rest = g.rest.slice(0, 80)
+            const row = (c, tag) => (
+              <MenuItem key={`${tag}${c.name}`} ellipsis onClick={() => togF('company', c.name)} hint={c.count} hintMono
+                icon={<UICheck checked={filters.company.includes(c.name)} size="md" />}>
+                {c.name}{c.inactive ? ' · paused' : ''}
+              </MenuItem>
+            )
+            return g.tracked.length + rest.length ? (
               <>
-                {sorted.map((c) => (
-                  <MenuItem key={c.name} ellipsis onClick={() => togF('company', c.name)} hint={c.count} hintMono
-                    icon={<UICheck checked={filters.company.includes(c.name)} size="md" />}>
-                    {c.name}
-                  </MenuItem>
-                ))}
+                {g.tracked.length > 0 && <Label style={{ padding: '4px 11px 2px' }}>Tracked companies</Label>}
+                {g.tracked.map((c) => row(c, 't:'))}
+                {g.tracked.length > 0 && rest.length > 0 && <Label style={{ padding: '8px 11px 2px' }}>From your jobs</Label>}
+                {rest.map((c) => row(c, 'j:'))}
                 <Helper size="xs" style={{ padding: '6px 8px 2px' }}>Top by open roles · picked companies pin to the top</Helper>
               </>
             ) : <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--muted)' }}>No matches</div>
@@ -1330,7 +1344,7 @@ export default function V2JobFeed() {
                             : 'Scheduled scraping is off — run a search or a company by hand. '}
                           Jobs come from your <a href="/searches" onClick={(e) => { e.preventDefault(); navigate('/searches') }}>Searches</a> and <a href="/companies" onClick={(e) => { e.preventDefault(); navigate('/companies') }}>Companies</a>.
                         </div>
-                      : <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontSize: 13, lineHeight: '20px' }}>No jobs match.<br /><Link onClick={() => { setFilters(DEFAULTS); setSearch(''); setSearchId('') }}>Clear filters</Link></div>))
+                      : <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)', fontSize: 13, lineHeight: '20px' }}>No jobs match.<br /><Link onClick={() => { setFilters(DEFAULTS); setSearch(''); setSearchScope('') }}>Clear filters</Link></div>))
               : jobs.map((j, i) => {
                 const score = bestScore(j), nsc = scoredCount(j)
                 const badge = BADGE[j.status]
