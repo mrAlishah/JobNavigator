@@ -1122,7 +1122,7 @@ export default function V2JobFeed() {
         {/* one saved search at a time; the id (also in ?search=) is what filters, the name is only the label */}
         <Drop label={searchId && searchList ? searchLabel(searchList, searchId) : 'Saved search'} active={!!searchId} onClear={() => setSearchScope('')} open={menu === 'search'} onToggle={() => setMenu(menu === 'search' ? null : 'search')} width={248}>
           <MenuItem selected={!searchId} hint={!searchId ? '✓' : null} onClick={() => { setSearchScope(''); setMenu(null) }}>All searches</MenuItem>
-          {searchOptions(searchList).map((s) => (
+          {searchOptions(searchList).filter((s) => !s.inactive || s.id === searchId).map((s) => (
             <MenuItem key={s.id} ellipsis selected={searchId === s.id} hint={searchId === s.id ? '✓' : s.inactive ? 'paused' : null}
               onClick={() => { setSearchScope(s.id); setMenu(null) }}>{s.label}</MenuItem>
           ))}

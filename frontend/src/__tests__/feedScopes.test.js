@@ -39,12 +39,9 @@ describe('companyGroups', () => {
     { name: 'amazon', aliases: ['AWS', 'Audible'], active: true },
     { name: 'Idle Inc', aliases: [], active: false },
   ]
-  it('pins tracked companies, merging aliases into their count and de-duplicating by name', () => {
+  it('pins tracked companies with jobs, merging aliases into their count and de-duplicating by name', () => {
     const g = companyGroups(tracked, facet, [], '')
-    expect(g.tracked).toEqual([
-      { name: 'amazon', count: 5, inactive: false },
-      { name: 'Idle Inc', count: 0, inactive: true },
-    ])
+    expect(g.tracked).toEqual([{ name: 'amazon', count: 5, inactive: false }])
     expect(g.rest.map((c) => c.name)).toEqual(['AWS', 'Other Co'])
   })
   it('keeps picked companies visible whatever the query, and filters the rest', () => {
