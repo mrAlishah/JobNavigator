@@ -18,11 +18,11 @@ describe('TelemetryAsk', () => {
   it('asks the owner once, with Yes preselected', async () => {
     api.get.mockResolvedValue({ data: state() })
     render(<TelemetryAsk />)
-    expect(await screen.findByText('Allow telemetry?')).toBeTruthy()
+    expect(await screen.findByText('Allow anonymous telemetry?')).toBeTruthy()
     expect(screen.getByRole('radio', { name: /^Yes/ }).getAttribute('aria-checked')).toBe('true')
     fireEvent.click(screen.getByText('Save'))
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/settings', { telemetry_level: 'full' }))
-    await waitFor(() => expect(screen.queryByText('Allow telemetry?')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('Allow anonymous telemetry?')).toBeNull())
   })
 
   it('saves Essentials when picked', async () => {
@@ -41,15 +41,39 @@ describe('TelemetryAsk', () => {
     api.get.mockResolvedValue({ data })
     render(<TelemetryAsk />)
     await waitFor(() => expect(api.get).toHaveBeenCalled())
-    expect(screen.queryByText('Allow telemetry?')).toBeNull()
+    expect(screen.queryByText('Allow anonymous telemetry?')).toBeNull()
   })
 
-  it('shows what is sent, including how to turn it off', async () => {
+  it('shows, once opened, what the picked level sends, what is never sent and how to turn it off', async () => {
     api.get.mockResolvedValue({ data: state() })
     render(<TelemetryAsk />)
-    fireEvent.click(await screen.findByText('What is sent?'))
+    const toggle = await screen.findByLabelText('What is sent?')
+    expect(screen.queryByText(/How often scrapes and AI calls succeed/)).toBeNull()   // collapsed by default
+    fireEvent.click(toggle)
+    expect(screen.getByText(/Which screens are opened/)).toBeTruthy()
+    expect(screen.getByText(/How often scrapes and AI calls succeed/)).toBeTruthy()
+    expect(screen.getByText(/^Job titles, search terms/)).toBeTruthy()
     expect(screen.getByText(/JN_TELEMETRY=off/)).toBeTruthy()
-    expect(screen.getByText(/Never: job titles, search terms/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: /^Essentials/ }))
+    expect(screen.queryByText(/Which screens are opened/)).toBeNull()
+    expect(screen.getByText(/How often scrapes and AI calls succeed/)).toBeTruthy()
+  })
+
+  it('closes only through Save: Escape and a click outside keep it open', async () => {
+    api.get.mockResolvedValue({ data: state() })
+    render(<TelemetryAsk />)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.click(dialog.parentElement)
+    expect(screen.getByText('Allow anonymous telemetry?')).toBeTruthy()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('says why in the passive voice', async () => {
+    api.get.mockResolvedValue({ data: state() })
+    render(<TelemetryAsk />)
+    expect(await screen.findByText(/^This data is collected to improve JobNavigator/)).toBeTruthy()
   })
 })
 

@@ -6,7 +6,7 @@ import { useTheme, MODE_OPTIONS, themeOptions } from '../theme'
 import { describeCron, whenShort, CRON_PRESETS } from '../time'
 import api, { authFailure } from '../api'
 import { MAX_ACCOUNTS, useFlushBeforeSwitch } from '../accounts'
-import { PURPOSE, SENT, TelemetrySettingRow } from '../TelemetryChoice'
+import { PURPOSE, SENT_SUMMARY, TelemetrySettingRow } from '../TelemetryChoice'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import {
@@ -757,8 +757,8 @@ export default function Settings() {
         BT('DB backup', 'DB snapshot now, outside the cron.', 'Run backup', () => api.post('/db/backup'), { ownerOnly: true }),
       ]],
       ['telemetry', 'System', 'Telemetry', '', [
-        { kind: 'telemetry', label: 'Allow telemetry', help: PURPOSE,
-          info: `${SENT.essentials} ${SENT.full} ${SENT.never} ${SENT.off}` },
+        { kind: 'telemetry', label: 'Allow anonymous telemetry', help: PURPOSE,
+          info: SENT_SUMMARY },
       ]],
     ]
     // eslint-disable-next-line react-hooks/exhaustive-deps

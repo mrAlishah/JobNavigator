@@ -70,6 +70,7 @@
   --cc-talentbrew-bg:#f3e8f0; --cc-talentbrew-fg:#7a4066;
   --cc-meta-bg:#e8eef6; --cc-meta-fg:#3a5a86;
   --cc-google-bg:#f7ebe7; --cc-google-fg:#96402f;
+  --cc-uber-bg:#e3efee; --cc-uber-fg:#2f6a62;
   --cc-generic-bg:#f1efe8; --cc-generic-fg:#57534a;
   --cc-tier1-bg:#eaf1eb; --cc-tier1-fg:#2f6b4a;
   --cc-tier2-bg:#e9f0f7; --cc-tier2-fg:#2f5580;
@@ -472,6 +473,7 @@
   --cc-talentbrew-bg:#392a34; --cc-talentbrew-fg:#d3aac4;
   --cc-meta-bg:#232f3f; --cc-meta-fg:#a3bedd;
   --cc-google-bg:#3d2823; --cc-google-fg:#dba393;
+  --cc-uber-bg:#1f3432; --cc-uber-fg:#96c8c0;
   --cc-generic-bg:#34322c; --cc-generic-fg:#b5b0a3;
   --cc-tier1-bg:#22302a; --cc-tier1-fg:#8dbb9f;
   --cc-tier2-bg:#212b37; --cc-tier2-fg:#93b5da;
@@ -1974,6 +1976,7 @@
 .jn-v2 .cc-talentbrew{background:var(--cc-talentbrew-bg);color:var(--cc-talentbrew-fg)}
 .jn-v2 .cc-meta{background:var(--cc-meta-bg);color:var(--cc-meta-fg)}
 .jn-v2 .cc-google{background:var(--cc-google-bg);color:var(--cc-google-fg)}
+.jn-v2 .cc-uber{background:var(--cc-uber-bg);color:var(--cc-uber-fg)}
 .jn-v2 .cc-generic{background:var(--cc-generic-bg);color:var(--cc-generic-fg)}
 .jn-v2 .cc-tier1{background:var(--cc-tier1-bg);color:var(--cc-tier1-fg)}
 .jn-v2 .cc-tier2{background:var(--cc-tier2-bg);color:var(--cc-tier2-fg)}

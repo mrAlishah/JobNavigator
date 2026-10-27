@@ -28,7 +28,7 @@ import h
 NEWUI_TITLE = 'Welcome to the new JobNavigator'
 TOUR_TITLE = 'Welcome to JobNavigator'
 SEEN_KEY = 'jobnavigator_newui_seen'
-TELEMETRY_TITLE = 'Allow telemetry?'   # TelemetryChoice.jsx, asked of the owner once
+TELEMETRY_TITLE = 'Allow anonymous telemetry?'   # TelemetryChoice.jsx, asked of the owner once
 VERSION = '3.1'
 
 # The tour's own title is a PREFIX of the upgrade modal's, so "is the tour up?"
@@ -127,8 +127,8 @@ def _newui(c):
             pg.context.close()
 
         # ── 2b. the owner's telemetry question comes right after either overlay ──
-        # GET /api/telemetry is answered "not asked yet" (the install's real choice is never read
-        # or written: the dialog is closed with Escape, which saves nothing).
+        # GET /api/telemetry is answered "not asked yet" and the Save's PATCH /api/settings is
+        # answered in the browser, so the install's real choice is never read or written.
         ask = {'level': 'unset', 'asked': False, 'owner': True, 'locked': False}
         for label, seed, close in (
                 ('after the upgrade notice', {'jobnavigator_welcomed': '1'}, NEWUI_TITLE),
@@ -142,9 +142,29 @@ def _newui(c):
                 c.check(f'telemetry is asked {label}', C.body_has(pg, TELEMETRY_TITLE))
                 c.check('Yes is preselected', pg.get_by_role('radio', name=re.compile('^Yes')).first
                         .get_attribute('aria-checked') == 'true')
+                c.check('what is sent starts collapsed', not C.body_has(pg, 'Which screens are opened'))
+                pg.get_by_label('What is sent?').first.click()
+                c.check('Yes lists screens and actions', C.body_has(pg, 'Which screens are opened'))
                 pg.keyboard.press('Escape')
+                pg.mouse.click(5, 5)
                 pg.wait_for_timeout(450)
-                c.check('Escape closes it without a choice', not C.body_has(pg, TELEMETRY_TITLE))
+                c.check('Escape and a click outside keep it open', C.body_has(pg, TELEMETRY_TITLE))
+                pg.get_by_role('radio', name=re.compile('^Essentials')).first.click()
+                c.check('Essentials lists health only', not C.body_has(pg, 'Which screens are opened')
+                        and C.body_has(pg, 'How often scrapes and AI calls succeed'))
+                saved = []
+
+                def _patch(route, _request=None, saved=saved):
+                    if route.request.method == 'PATCH':
+                        saved.append(route.request.post_data_json)
+                        route.fulfill(json={'updated': ['telemetry_level']})
+                    else:
+                        route.continue_()
+                pg.route('**/api/settings', _patch)
+                pg.get_by_role('button', name='Save').first.click()
+                pg.wait_for_timeout(600)
+                c.eq('Save sends the pick (answered in the browser)', saved, [{'telemetry_level': 'essentials'}])
+                c.check('Save closes it', not C.body_has(pg, TELEMETRY_TITLE))
             finally:
                 pg.context.close()
 
