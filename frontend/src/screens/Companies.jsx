@@ -37,7 +37,7 @@ const errSuffix = (e) => {
 }
 
 // ATS + tier chip colors live in theme.css (.cc-*) so they flip with dark mode.
-const ATS_SLUGS = new Set(['greenhouse', 'workday', 'lever', 'ashby', 'phenom', 'oraclehcm', 'smartrecruiters', 'rippling', 'amazon', 'eightfold', 'talentbrew', 'meta', 'google'])
+const ATS_SLUGS = new Set(['greenhouse', 'workday', 'lever', 'ashby', 'phenom', 'oraclehcm', 'smartrecruiters', 'rippling', 'amazon', 'eightfold', 'talentbrew', 'meta', 'google', 'uber'])
 const atsShort = (detected) => (detected || 'Generic')
   .replace(' API', '').replace(' AJAX', '').replace(' (Playwright)', '').replace(' Careers', '')
 const atsSlug = (short) => { const s = (short || 'generic').toLowerCase().replace(/[^a-z0-9]/g, ''); return 'cc-' + (ATS_SLUGS.has(s) ? s : 'generic') }

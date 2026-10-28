@@ -78,7 +78,20 @@ def _render_html(json_data: dict, template_name: str, page_format: str) -> str:
 
     fonts = _load_template_fonts(str(template_dir / "fonts"))
 
-    return template.render(**_render_safe_links(json_data or {}), page_format=page_format, fonts=fonts)
+    # A letter made through the API may lack sections the templates read: render them empty
+    # (the editor's new letter has them all) instead of failing with a 500.
+    content = {**_EMPTY_LETTER, **(json_data or {})}
+    for part in ("header", "recipient"):
+        if not isinstance(content.get(part), dict):
+            content[part] = dict(_EMPTY_LETTER[part])
+        content[part] = {**_EMPTY_LETTER[part], **content[part]}
+    return template.render(**_render_safe_links(content), page_format=page_format, fonts=fonts)
+
+
+# The sections a new letter has (frontend CoverLetterEditor.jsx EMPTY): what a template may read.
+_EMPTY_LETTER = {"header": {"name": "", "contact_items": []},
+                 "recipient": {"company": "", "manager": "", "address": ""},
+                 "date": "", "greeting": "", "body_paragraphs": [], "closing": "", "signature": ""}
 
 
 @router.get("/templates")

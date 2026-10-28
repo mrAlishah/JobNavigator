@@ -1,4 +1,6 @@
 """linkedin_lookup.py: LinkedIn listings get the employer's link through the mock account (direct-links plan)."""
+from urllib.parse import urlparse
+
 import pytest
 
 from backend.models.db import Account, Job, LinkedinLookup, Setting
@@ -130,7 +132,7 @@ async def test_lookup_follows_an_ad_redirector(test_db):
     wf = "https://www.wellsfargojobs.com/en/jobs/r-581137/senior-lead-pm/"
 
     async def resolve(url):
-        return wf if "jometer.com" in url else url
+        return wf if urlparse(url).hostname == "tnl2.jometer.com" else url
     await _run(FakeLinkedIn({"4461186967": {"apply_url": "https://tnl2.jometer.com/v2/job?jz=1",
                                             "apply_type": "OffsiteApply", "job_state": "LISTED"}}),
                resolve=resolve)

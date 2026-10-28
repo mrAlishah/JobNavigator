@@ -15,7 +15,7 @@ vi.mock('../api', () => ({
 
 import CopyFrom from '../CopyFrom'
 
-const ME = { id: 'a1', name: 'Viktor', role: 'owner', color: '#1f6feb' }
+const ME = { id: 'a1', name: 'Jordan', role: 'owner', color: '#1f6feb' }
 const SOURCES = { accounts: [{ id: 'b2', name: 'Partner', color: '#2e9e6b', role: 'member', items: [
   { id: 'c1', name: 'Acme', tier: 1, active: true, scrape_urls: ['https://boards.greenhouse.io/acme'], exists: false },
   { id: 'c2', name: 'Globex', tier: 2, active: true, scrape_urls: [], exists: true },

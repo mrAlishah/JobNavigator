@@ -15,15 +15,15 @@ def _seed(test_db):
 
 RESUME_JSON = {
     "header": {
-        "name": "Viktor Esadze",
+        "name": "Jordan Blake",
         "title": "Senior Project Manager",
         "contact_items": [
             {"text": "Boston, MA"},
-            {"text": "viktor@example.com", "url": "mailto:viktor@example.com"},
+            {"text": "jordan@example.com", "url": "mailto:jordan@example.com"},
             {"text": "+1 (617) 555-0142"},
-            {"text": "LinkedIn", "url": "https://linkedin.com/in/vesadze"},
-            {"text": "GitHub", "url": "https://github.com/vesadze"},
-            {"text": "Portfolio", "url": "https://vesadze.dev"},
+            {"text": "LinkedIn", "url": "https://linkedin.com/in/jblake"},
+            {"text": "GitHub", "url": "https://github.com/jblake"},
+            {"text": "Portfolio", "url": "https://jblake.dev"},
         ],
     },
     "summary": "PM with 9 years shipping platform work.",
@@ -61,15 +61,15 @@ def test_import_from_base_resume_maps_contact_and_content(api_client, test_db):
     data = resp.json()
 
     contact = data["persona"]["contact"]
-    assert contact["first_name"] == "Viktor"
-    assert contact["last_name"] == "Esadze"
-    assert contact["email"] == "viktor@example.com"
+    assert contact["first_name"] == "Jordan"
+    assert contact["last_name"] == "Blake"
+    assert contact["email"] == "jordan@example.com"
     assert contact["phone"] == "+1 (617) 555-0142"
     assert contact["city"] == "Boston"
     assert contact["state"] == "MA"
-    assert contact["linkedin"] == "https://linkedin.com/in/vesadze"
-    assert contact["github"] == "https://github.com/vesadze"
-    assert contact["portfolio"] == "https://vesadze.dev"
+    assert contact["linkedin"] == "https://linkedin.com/in/jblake"
+    assert contact["github"] == "https://github.com/jblake"
+    assert contact["portfolio"] == "https://jblake.dev"
     # seeded from the latest role in `experience`, not the header
     assert contact["current_company"] == "Acme Inc."
 
@@ -109,7 +109,7 @@ def test_import_overwrites_and_leaves_other_nodes_alone(api_client, test_db):
     got = resp.json()["persona"]
 
     # replaced, not merged
-    assert got["contact"]["first_name"] == "Viktor"
+    assert got["contact"]["first_name"] == "Jordan"
     # replaced too — the old value is gone, the imported résumé's latest role stands
     assert got["contact"]["current_company"] == "Acme Inc."
     assert got["resume_content"]["summary"] == RESUME_JSON["summary"]
@@ -131,7 +131,7 @@ def test_import_persists_and_logs_activity(api_client, test_db):
 
     test_db.expire_all()
     p = test_db.query(Persona).filter(Persona.id == 1).first()
-    assert p.contact["email"] == "viktor@example.com"
+    assert p.contact["email"] == "jordan@example.com"
     assert len(p.resume_content["experience"]) == 2
 
     # a second GET sees the same thing (flag_modified actually wrote)
@@ -236,14 +236,14 @@ def test_import_pdf_uses_the_resume_parser(api_client, test_db, monkeypatch):
 
     resp = api_client.post(
         "/api/persona/import",
-        files={"file": ("Viktor_PM_Resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        files={"file": ("Jordan_PM_Resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert seen["bytes"] == b"%PDF-1.4 fake"
-    assert body["summary"]["source"] == "pdf:Viktor_PM_Resume.pdf"
+    assert body["summary"]["source"] == "pdf:Jordan_PM_Resume.pdf"
     assert body["summary"]["roles"] == 2
-    assert body["persona"]["contact"]["email"] == "viktor@example.com"
+    assert body["persona"]["contact"]["email"] == "jordan@example.com"
     # import never persists a Resume
     assert test_db.query(Resume).count() == 0
 

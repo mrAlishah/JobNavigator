@@ -13,7 +13,7 @@ globalThis.__APP_VERSION__ = 'test'
 const api = (await import('../api')).default
 const { default: Settings } = await import('../screens/Settings')
 
-const OWNER = { id: 'o1', name: 'Viktor', color: '#2f6fed', role: 'owner', has_pin: false }
+const OWNER = { id: 'o1', name: 'Jordan', color: '#2f6fed', role: 'owner', has_pin: false }
 const BASE = {
   cover_letter_voice_presets: [], autofill_field_patterns: {}, autofill_option_synonyms: {},
   llm_provider: 'lmstudio', llm_model: 'qwen', lmstudio_base_url: '', ollama_base_url: '',

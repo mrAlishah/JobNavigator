@@ -210,6 +210,9 @@ def test_contact_items_are_normalised_for_the_templates():
 
 
 ODD = [
+    {},                                    # an API-made résumé with no sections (was a 500)
+    {"summary": "Only a summary"},
+    {"header": "not an object", "experience": []},
     {"header": None},
     {"header": "Dana"},
     {"header": {"name": "D", "contact_items": None}},

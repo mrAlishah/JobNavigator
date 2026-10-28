@@ -1149,7 +1149,7 @@ export function GlyphBadge({
 export const ACCOUNT_SWATCHES = ['#2f6fed', '#d9534f', '#2e9e6b', '#e0912b', '#8a5cd6']
 const AVATAR_TYPE = { 20: 'var(--t-9)', 22: 'var(--t-10)', 26: 'var(--t-11)', 44: 'var(--t-15)' }
 const HEX6 = /^#[0-9a-f]{6}$/
-// "Viktor Esadze" → VE, "alex" → AL, "Mary Ann Lee" → ML, "" → ?
+// "Jordan Blake" → JB, "alex" → AL, "Mary Ann Lee" → ML, "" → ?
 export function initialsOf(name) {
   const words = String(name || '').trim().split(/\s+/).filter(Boolean)
   if (!words.length) return '?'
@@ -1371,6 +1371,9 @@ const BOX_SIZE = { sm: 14, md: 15 }
 function Indicator({ round, checked, indeterminate, size }) {
   const px = BOX_SIZE[size] || BOX_SIZE.sm
   const on = checked || indeterminate
+  // The radio's dot is drawn, not a \u25cf glyph: the glyph's font metrics put it a pixel or two low
+  // and left. Its size keeps the same parity as the box, so it sits on whole pixels in the centre.
+  const dot = px % 2 ? 5 : 6
   return (
     <span aria-hidden="true" style={{
       flex: `0 0 ${px}px`, width: px, height: px,
@@ -1379,7 +1382,9 @@ function Indicator({ round, checked, indeterminate, size }) {
       background: on ? 'var(--check-on-bg)' : 'var(--check-bg)',
       color: 'var(--check-on-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: 'var(--t-9)', lineHeight: 1,
-    }}>{indeterminate ? '\u2013' : checked ? (round ? '\u25cf' : '\u2713') : ''}</span>
+    }}>{indeterminate ? '\u2013' : checked
+      ? (round ? <span style={{ width: dot, height: dot, borderRadius: '50%', background: 'currentColor' }} /> : '\u2713')
+      : ''}</span>
   )
 }
 // \u2500\u2500 the bevelled indicator (--check-style: win98) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

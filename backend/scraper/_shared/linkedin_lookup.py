@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 
 from backend.scraper._shared.link_kinds import BOARD, DIRECT, EASY_APPLY, classify, link_kind
 from backend.scraper._shared.postings import is_short_link, unwrap
+from backend.scraper._shared.urls import host_matches
 
 logger = logging.getLogger("jobnavigator.linkedin_lookup")
 
@@ -246,7 +247,7 @@ def short_link_verdict(url: str, got):
     where = f"{(p.hostname or '').removeprefix('www.')}{p.path}"
     if status in (404, 410):
         return "closed", f"the short link lands on a missing page ({where})"
-    if "greenhouse.io" in (p.hostname or "") and "error=true" in (p.query or ""):
+    if host_matches(final, "greenhouse.io") and "error=true" in (p.query or ""):
         return "closed", "Greenhouse: the posting is gone"
     if status >= 400 or is_bot_wall(text):
         return "retry", f"the short link lands on {where} ({status})"

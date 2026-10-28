@@ -563,6 +563,11 @@ def _with_select_script(html: str) -> str:
     return head + script + sep + tail if sep else html + script
 
 
+# The sections a new résumé has (frontend ResumeSections.jsx EMPTY): what a template may read.
+_EMPTY_RESUME = {"header": {"name": "", "contact_items": []}, "summary": "", "experience": [],
+                 "skills": {}, "education": [], "projects": [], "publications": []}
+
+
 def _render_html(json_data: dict, template_name: str, page_format: str, footer_reserved_in: float = 0, profile_image_path: Optional[str] = None, profile_image_enabled: bool = True, select_mode: bool = False) -> str:
     """Render a resume to HTML using its Jinja2 template.
 
@@ -601,6 +606,12 @@ def _render_html(json_data: dict, template_name: str, page_format: str, footer_r
     # json_data may carry internal metadata under "_"-prefixed keys (_tailor_context,
     # _score) that are never résumé content — keep them out of the template namespace so they can't render or collide with a template global.
     content = {k: v for k, v in (json_data or {}).items() if not str(k).startswith("_")}
+    # A résumé made through the API or an import may lack sections the templates read: render
+    # them empty, as the editor's new résumé has them, instead of failing with a 500.
+    content = {**_EMPTY_RESUME, **content}
+    if not isinstance(content.get("header"), dict):
+        content["header"] = dict(_EMPTY_RESUME["header"])
+    content["header"] = {**_EMPTY_RESUME["header"], **content["header"]}
     content = _render_safe_links(content)
     # A template's default headings live in its meta.json (docx.titles, shared with the Word export);
     # the resume's own section_titles win. Templates without them keep their built-in headings.

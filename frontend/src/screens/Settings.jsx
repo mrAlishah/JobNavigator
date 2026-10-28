@@ -6,7 +6,7 @@ import { useTheme, MODE_OPTIONS, themeOptions } from '../theme'
 import { describeCron, whenShort, CRON_PRESETS } from '../time'
 import api, { authFailure } from '../api'
 import { MAX_ACCOUNTS, useFlushBeforeSwitch } from '../accounts'
-import { PURPOSE, SENT, TelemetrySettingRow } from '../TelemetryChoice'
+import { PURPOSE, SENT_SUMMARY, TelemetrySettingRow } from '../TelemetryChoice'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import {
@@ -761,8 +761,8 @@ export default function Settings() {
         BT('DB backup', 'DB snapshot now, outside the cron.', 'Run backup', () => api.post('/db/backup'), { ownerOnly: true }),
       ]],
       ['telemetry', 'System', 'Telemetry', '', [
-        { kind: 'telemetry', label: 'Allow telemetry', help: PURPOSE,
-          info: `${SENT.essentials} ${SENT.full} ${SENT.never} ${SENT.off}` },
+        { kind: 'telemetry', label: 'Allow anonymous telemetry', help: PURPOSE,
+          info: SENT_SUMMARY },
       ]],
     ]
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -947,7 +947,7 @@ export default function Settings() {
                   // `_meta.set_by_owner` (the value is blanked); the row says so, read-only.
                   const r = member && r0.key && meta?.[r0.key]?.set_by_owner ? { ...r0, kind: 'ownerset', ownerName } : r0
                   const row = <Row key={r.label} r={r} ctx={{ S, val, isOn, save, info, setInfo, ovr, setOvr, trig, runAction, setEditFor, setModelsOpen, modelsFor, effortsFor, li, setLi, flash, defaults, narrow }} />
-                  const demo = !!S._demo && (id !== 'appearance' || !!r.key)   // the demo build's read-only settings (Display's browser-only rows stay live)
+                  const demo = !!S._demo && id !== 'appearance'   // the demo build's read-only settings; Display stays live (the demo answers the zoom switch's write itself)
                   if (!member && !meErr && !demo) return row
                   // MT-14: a row the member cannot edit shows its (owner's) value, dimmed and
                   // read-only. R6-06: not `inert` — that hid the value from screen readers; the

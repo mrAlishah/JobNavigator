@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 from backend.scraper._shared.postings import posting_key
+from backend.scraper._shared.urls import host_matches
 
 OPEN, CLOSED, UNKNOWN = "open", "closed", "unknown"
 FRESH_FOR = timedelta(hours=24)
@@ -57,19 +58,18 @@ def _greenhouse_api(url):
     key = posting_key(url) or ""
     job_id = key.split(":", 1)[1] if key.startswith("greenhouse:") else None
     board = None
-    if (p.hostname or "").endswith("greenhouse.io"):
+    if host_matches(url, "greenhouse.io"):
         board = (parse_qs(p.query).get("for") or [None])[0]
         if not board and "jobs" in seg and seg.index("jobs") > 0:
             board = seg[seg.index("jobs") - 1]
-    api = "boards-api.eu.greenhouse.io" if ".eu.greenhouse.io" in (p.hostname or "") else "boards-api.greenhouse.io"
+    api = "boards-api.eu.greenhouse.io" if host_matches(url, "eu.greenhouse.io") else "boards-api.greenhouse.io"
     return f"https://{api}/v1/boards/{board}/jobs/{job_id}" if board and job_id else None
 
 
 def _lever_api(url):
-    host = urlparse(url).hostname or ""
-    if not host.endswith("lever.co"):
+    if not host_matches(url, "lever.co"):
         return None
-    api = "api.eu.lever.co" if host.endswith(".eu.lever.co") else "api.lever.co"
+    api = "api.eu.lever.co" if host_matches(url, "eu.lever.co") else "api.lever.co"
     seg = [s for s in urlparse(url).path.split("/") if s]
     return f"https://{api}/v0/postings/{seg[0]}/{seg[1]}" if len(seg) >= 2 else None
 
@@ -77,10 +77,9 @@ def _lever_api(url):
 def _workday_api(url):
     # only a Workday link: a company site that shows Workday numbers (Bank of America, Visa) is
     # keyed workday:<tenant>:<n> but is checked by its own page
-    host = urlparse(url).hostname or ""
     # (wdN.myworkdaysite.com/recruiting/<tenant>/<site>/... is checked by its page: the job API
     # address would be built from the wrong parts)
-    if not host.endswith("myworkdayjobs.com"):
+    if not host_matches(url, "myworkdayjobs.com"):
         return None
     from backend.scraper.ats.workday import _LOCALE_PATH_RE, _parse_workday_url
     try:
