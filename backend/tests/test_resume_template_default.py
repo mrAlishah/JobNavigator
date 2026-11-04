@@ -62,6 +62,17 @@ def test_a_copy_for_a_job_keeps_its_resume_template(api_client, test_db):
     assert copy.json()["template"] == "raleway"
 
 
+def test_switching_a_legacy_resume_remembers_the_pick_and_keeps_its_photo_side(api_client, test_db):
+    # PATCH runs three steps together: validate, remember as Last selected, keep the legacy photo side.
+    _seed(test_db, "last_selected")
+    legacy = api_client.post("/api/resumes", json={"name": "Old", "template": "professional-top-left-image",
+                                                   "json_data": {}}).json()
+    r = api_client.patch(f"/api/resumes/{legacy['id']}", json={"template": "palatino"})
+    assert r.status_code == 200
+    assert r.json()["json_data"]["profile_image_position"] == "left"
+    assert _new(api_client, "Next")["template"] == "palatino"
+
+
 def test_last_selected_stays_with_the_account_that_picked_it(test_db):
     from backend.accounts.context import use_account
     from backend.api.routes_resumes import _default_template_id, remember_template
