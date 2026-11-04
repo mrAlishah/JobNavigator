@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.accounts.owned import get_owned_or_404, get_persona, owned_id_or_404
-from backend.models.db import get_db, CoverLetter, Resume, Job, Persona, TracerLink, TracerClickEvent, SessionLocal
+from backend.models.db import DEFAULT_COVER_LETTER_TEMPLATE, get_db, CoverLetter, Resume, Job, Persona, TracerLink, TracerClickEvent, SessionLocal
 from backend.accounts.settings import get_setting
 from backend.api._input import str_field, uuid_filter
 from backend.job_monitor import launch_background, JobAlreadyRunningError
@@ -46,9 +46,26 @@ def _discover_templates() -> list[dict]:
     return templates
 
 
-def _default_template_id() -> str:
-    templates = _discover_templates()
-    return templates[0]["id"] if templates else "garamond_alt"
+# `cover_letter_template`: this, routes_resumes.LAST_SELECTED, or a template every new letter gets
+SAME_AS_RESUME = "same_as_resume"
+
+
+def _default_template_id(db=None, resume_template=None) -> str:
+    """The template for a new letter. Without `db`: Garamond Modern when this install has
+    it, else the first letter template. With `db`, the account's `cover_letter_template`:
+    - a template id: that template;
+    - Last selected: the template this account last picked in the editor;
+    - Same as résumé (the default, also "" or a name this install lacks): `resume_template`
+      when it has a letter version.
+    Anything that does not resolve falls back to Garamond Modern."""
+    from backend.api.routes_resumes import chosen_template, template_paths
+
+    names = list(template_paths(TEMPLATES_DIR))
+    chosen = chosen_template(db, "cover_letter_template", "cover_letter_last_template") if db is not None else None
+    for name in (chosen, resume_template, DEFAULT_COVER_LETTER_TEMPLATE):
+        if name and name in names:
+            return name
+    return names[0] if names else DEFAULT_COVER_LETTER_TEMPLATE
 
 
 def _validate_template(name) -> str:
@@ -63,8 +80,15 @@ def _render_html(json_data: dict, template_name: str, page_format: str) -> str:
     from jinja2 import Environment, FileSystemLoader
     from markupsafe import Markup
 
-    from backend.api.routes_resumes import _load_template_fonts, _render_safe_links, resolve_template_dir
+    from backend.api.routes_resumes import (
+        _TEMPLATE_NAME_RE, _load_template_fonts, _render_safe_links, resolve_template_dir, template_paths,
+    )
 
+    # A stored name that is not a letter template on this install (a résumé-only one such
+    # as `modern`, a personal one) renders with the default instead of failing with a 422.
+    if (isinstance(template_name, str) and template_name not in template_paths(TEMPLATES_DIR)
+            and _TEMPLATE_NAME_RE.match(template_name)):
+        template_name = _default_template_id()
     # Same on-disk allowlist the résumé renderer uses — the folder comes from the
     # directory listing, the request name is only a key (R4-T5-01).
     template_dir = resolve_template_dir(template_name, TEMPLATES_DIR)
@@ -188,7 +212,7 @@ def create_cover_letter(body: dict, db: Session = Depends(get_db)):
         name=name,
         job_id=owned_id_or_404(db, Job, body.get("job_id")),
         resume_id=owned_id_or_404(db, Resume, body.get("resume_id")),
-        template=body.get("template", _default_template_id()),
+        template=body.get("template", _default_template_id(db)),
         page_format=body.get("page_format", "letter"),
         json_data=body.get("json_data", {}),
     )
@@ -215,6 +239,8 @@ def update_cover_letter(cl_id: str, body: dict, db: Session = Depends(get_db)):
                "voice", "length"}
     if "template" in body:
         _validate_template(body["template"])
+        from backend.api.routes_resumes import remember_template
+        remember_template(db, "cover_letter_last_template", body["template"])
     # Re-pairing a letter: the new job / résumé must be the account's own (MT-5).
     body = dict(body)
     if "job_id" in body:
@@ -447,6 +473,9 @@ async def _generate_inner(resume_id, job_id, voice, length, template, page_forma
             stored_resume_id = resume_id
 
         prompt_template = get_setting(db, "cover_letter_prompt")
+        # Settings › Default template decides; a résumé template with no letter version
+        # (`modern`) is skipped there.
+        default_template = _default_template_id(db, base_template)
         voice_id, voice_instruction = resolve_voice_instruction(db, voice)
         preferences = (persona.preferences if persona else {}) or {}
 
@@ -514,7 +543,7 @@ async def _generate_inner(resume_id, job_id, voice, length, template, page_forma
                 job_id=job_id,
                 resume_id=stored_resume_id,
                 from_persona=persona_as_base,
-                template=template or base_template or _default_template_id(),
+                template=template or default_template,
                 page_format=page_format or base_page_format or "letter",
                 json_data=json_data,
                 voice=voice_id,
