@@ -577,7 +577,9 @@ def job_facets(
         """(value, count) rows for one column with that column's own filter lifted."""
         kw = dict(base)
         kw[drop] = None
-        q = db.query(col, func.count(Job.id)).filter(col.isnot(None), col != "")
+        q = db.query(col, func.count(Job.id)).filter(col.isnot(None))
+        if col.type.python_type is str:   # `!= ""` is invalid on a UUID column
+            q = q.filter(col != "")
         return _apply_common_filters(q, **kw).group_by(col).all()
 
     def _open_state_counts():
@@ -741,6 +743,9 @@ def job_facets(
         "open_states": _open_state_counts(),
         "link_kinds": [{"name": n, "count": c}
                        for n, c in _pad(_counts(Job.link_kind, "link_kind"), _picked(link_kind))],
+        "searches": [{"name": n, "count": c}
+                     for n, c in _pad([(str(i), c) for i, c in _counts(Job.search_id, "search_id")],
+                                      _picked(search_id))],
     }
 
 

@@ -74,6 +74,11 @@ def test_facets_follow_the_search_and_a_tracked_company_without_jobs_stays_at_ze
     assert _ext(client.get(f"/api/jobs?search_id={world['pm']}&company=Idle Inc")) == []
 
 
+def test_facets_count_jobs_per_search_with_the_search_filter_lifted(client, world):
+    body = client.get(f"/api/jobs/facets?status=new,saved&search_id={world['pm']}").json()
+    assert {s["name"]: s["count"] for s in body["searches"]} == {world["pm"]: 3, world["dev"]: 1}
+
+
 def test_a_deleted_or_unknown_search_matches_nothing_and_keeps_its_jobs(client, test_db, owner, world):
     assert client.delete(f"/api/searches/{world['dev']}").status_code in (200, 204)
     assert _ext(client.get(f"/api/jobs?status=new,saved&search_id={world['dev']}")) == []

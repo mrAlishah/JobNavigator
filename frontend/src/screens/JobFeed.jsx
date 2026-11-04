@@ -257,6 +257,7 @@ export default function V2JobFeed() {
   const [verdictList, setVerdictList] = useState([])
   const [openCounts, setOpenCounts] = useState({})        // {open, closed}: the Posting menu (still_open.py)
   const [linkKindCounts, setLinkKindCounts] = useState({})   // {direct|board|easy_apply: n}, own filter lifted
+  const [searchCounts, setSearchCounts] = useState({})   // {search id: n}, own filter lifted
   const [statusCounts, setStatusCounts] = useState({})   // {status: n} — counted with the Status filter itself lifted
   const [facetsOk, setFacetsOk] = useState(false)        // the facets answered at least once (T7-08)
   const [scrapeEvery, setScrapeEvery] = useState(null)   // scrape_interval_minutes, for the never-scraped empty state
@@ -360,6 +361,7 @@ export default function V2JobFeed() {
     setVerdictCounts(Object.fromEntries(named(data.h1b_verdicts).map((x) => [x.name, x.count])))
     setStatusCounts(Object.fromEntries(named(data.statuses).map((x) => [x.name, x.count])))
     setLinkKindCounts(Object.fromEntries(named(data.link_kinds).map((x) => [x.name, x.count])))
+    setSearchCounts(Object.fromEntries(named(data.searches).map((x) => [x.name, x.count])))
     setOpenCounts(Object.fromEntries(named(data.open_states).map((x) => [x.name, x.count])))
     setFacetsOk(true)
     setScoreBands(Object.fromEntries(named(data.score_bands).map((x) => [x.name, x.count])))
@@ -1123,7 +1125,7 @@ export default function V2JobFeed() {
         <Drop label={searchId && searchList ? searchLabel(searchList, searchId) : 'Saved search'} active={!!searchId} onClear={() => setSearchScope('')} open={menu === 'search'} onToggle={() => setMenu(menu === 'search' ? null : 'search')} width={248}>
           <MenuItem selected={!searchId} hint={!searchId ? '✓' : null} onClick={() => { setSearchScope(''); setMenu(null) }}>All searches</MenuItem>
           {searchOptions(searchList).filter((s) => !s.inactive || s.id === searchId).map((s) => (
-            <MenuItem key={s.id} ellipsis selected={searchId === s.id} hint={searchId === s.id ? '✓' : s.inactive ? 'paused' : null}
+            <MenuItem key={s.id} ellipsis selected={searchId === s.id} hint={searchCounts[s.id] ?? 0} hintMono
               onClick={() => { setSearchScope(s.id); setMenu(null) }}>{s.label}</MenuItem>
           ))}
           {searchId && searchList && !searchList.some((s) => String(s.id) === searchId) && (
