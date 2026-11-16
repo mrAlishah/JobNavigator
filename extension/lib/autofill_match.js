@@ -1,8 +1,12 @@
 // extension/lib/autofill_match.js — pure, no DOM. Loaded before content_autofill_fill.js.
 (function () {
   function normalizeLabel(s) {
-    return (s || '')
+    return String(s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
       .toLowerCase()
+      .replace(/ß/g, 'ss')
       .replace(/['']/g, "'")
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();

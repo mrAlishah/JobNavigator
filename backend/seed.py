@@ -251,12 +251,12 @@ DEFAULT_SETTINGS = {
         "requires_sponsorship_now": ["require sponsorship", "need sponsorship", "visa sponsorship", "require immigration", "immigration sponsorship"],
         "requires_sponsorship_future": ["future sponsorship", "sponsorship in the future"],
         "over_18": ["over 18", "at least 18", "18 years of age"],
-        "first_name": ["first name", "given name"],
-        "last_name": ["last name", "surname", "family name"],
+        "first_name": ["first name", "given name", "vorname"],
+        "last_name": ["last name", "surname", "family name", "nachname"],
         "full_name": ["full name", "your name", "legal name"],
-        "email": ["email"],
-        "phone": ["phone", "mobile", "telephone"],
-        "city": ["city", "current location", "location"],
+        "email": ["email", "e-mail", "e mail"],
+        "phone": ["phone", "mobile", "telephone", "telefon", "handy", "mobiltelefon"],
+        "city": ["city", "current location", "location", "ort", "stadt"],
         "state": ["state", "province"],
         "country": ["country"],
         "linkedin": ["linkedin"],
@@ -265,8 +265,8 @@ DEFAULT_SETTINGS = {
         "current_company": ["current company", "current employer"],
         "willing_to_relocate": ["relocate", "willing to relocate"],
         "willing_remote": ["work remotely", "remote work"],
-        "desired_salary": ["desired salary", "salary expectation", "expected salary", "compensation expectation"],
-        "notice_period": ["notice period"],
+        "desired_salary": ["desired salary", "salary expectation", "expected salary", "compensation expectation", "gehaltsvorstellung"],
+        "notice_period": ["notice period", "kündigungsfrist"],
         "earliest_start": ["start date", "available to start", "earliest start"],
         "referral_source": ["referral source", "referred by"],
         "how_did_you_hear": ["how did you hear"],
@@ -1789,8 +1789,19 @@ def migrate_h1b_to_visa_cache(db):
         db.commit()
 
 
+AUTOFILL_FIELD_PATTERN_ADDITIONS = {
+    "first_name": ["vorname"],
+    "last_name": ["nachname"],
+    "email": ["e-mail", "e mail"],
+    "phone": ["telefon", "handy", "mobiltelefon"],
+    "city": ["ort", "stadt"],
+    "desired_salary": ["gehaltsvorstellung"],
+    "notice_period": ["kündigungsfrist"],
+}
+
+
 def migrate_autofill_dicts(db):
-    """Merge newly-added canonical keys into autofill_field_patterns/autofill_option_synonyms without clobbering the user's edits (only missing top-level keys are added)."""
+    """Merge new defaults without changing a user's custom dictionary entries."""
     for setting_key in ("autofill_field_patterns", "autofill_option_synonyms"):
         default_json = DEFAULT_SETTINGS.get(setting_key, ("{}", ""))[0]
         try:
@@ -1810,6 +1821,16 @@ def migrate_autofill_dicts(db):
                 if k not in stored:
                     stored[k] = v
                     changed = True
+            if setting_key == "autofill_field_patterns":
+                for k, additions in AUTOFILL_FIELD_PATTERN_ADDITIONS.items():
+                    current = stored.get(k)
+                    default = defaults.get(k)
+                    old_default = [value for value in default if value not in additions]
+                    # Upgrade only a list that is still exactly the old shipped
+                    # default. Any customised list remains entirely user-owned.
+                    if current == old_default:
+                        stored[k] = default
+                        changed = True
             if changed:
                 row.value = json.dumps(stored)
     db.commit()

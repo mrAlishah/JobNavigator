@@ -11,13 +11,15 @@
   // Build a text signature for a control from every label source we can find.
   function labelText(el) {
     const parts = [];
+    const root = el.getRootNode && el.getRootNode();
+    const queryRoot = root && root.querySelector ? root : document;
     if (el.id) {
-      const forLbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const forLbl = queryRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (forLbl) parts.push(forLbl.textContent);
     }
     if (el.getAttribute && el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
     const alby = el.getAttribute && el.getAttribute('aria-labelledby');
-    if (alby) alby.split(/\s+/).forEach(id => { const n = document.getElementById(id); if (n) parts.push(n.textContent); });
+    if (alby) alby.split(/\s+/).forEach(id => { const n = queryRoot.querySelector(`#${CSS.escape(id)}`); if (n) parts.push(n.textContent); });
     const anc = el.closest && el.closest('label');
     if (anc) parts.push(anc.textContent);
     if (el.name) parts.push(el.name);
@@ -148,6 +150,19 @@
     return out;
   }
 
+  // Browser extension scripts can read open Shadow DOM, but querySelectorAll does
+  // not cross that boundary. ATS web components (such as SuccessFactors) keep
+  // their real fields there, so collect each reachable root before discovery.
+  function discoverAllFields() {
+    const roots = [document];
+    for (let index = 0; index < roots.length; index++) {
+      roots[index].querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot && !roots.includes(el.shadowRoot)) roots.push(el.shadowRoot);
+      });
+    }
+    return roots.flatMap(root => discoverFields(root));
+  }
+
   // Write a value through the native setter so React/Angular controlled inputs
   // notice it, then fire input+change.
   function setNativeValue(el, value) {
@@ -165,7 +180,7 @@
     return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
   }
 
-  // fields: from discoverFields(). config: /api/autofill/config payload.
+  // fields: from discoverAllFields(). config: /api/autofill/config payload.
   // Returns [{el, field, key, action:'fill'|'flag', value?|checked?|optionIndex?, reason?}].
   function buildPlan(fields, config) {
     const M = window.__autofillMatch;
@@ -349,7 +364,7 @@
 
   if (window.__AUTOFILL_DEBUG) {
     // Manual-debug aid: dump discovered fields when the user sets the flag.
-    console.table(discoverFields().map(f => ({ signature: f.signature, kind: f.kind })));
+    console.table(discoverAllFields().map(f => ({ signature: f.signature, kind: f.kind })));
   }
 
   // --- structured autofill runner + floating button ---
@@ -361,7 +376,7 @@
 
   function looksLikeApplication() {
     if (document.querySelector('input[type="file"]')) return true;
-    return discoverFields().length >= 3;
+    return discoverAllFields().length >= 3;
   }
 
   // Faint blue tint on a filled field so the user sees what was touched.
@@ -412,7 +427,7 @@
   }
 
   function fillablePlan(config) {
-    return buildPlan(discoverFields(), config).filter(p => p.action === 'fill' || p.action === 'combobox' || p.action === 'flag');
+    return buildPlan(discoverAllFields(), config).filter(p => p.action === 'fill' || p.action === 'combobox' || p.action === 'flag');
   }
   function _fieldCount() {
     if (!_cfgCache) return 0;
@@ -487,7 +502,7 @@
     )).filter(visibleBox);
     if (!candidates.length) return document.documentElement;
 
-    const fields = discoverFields();
+    const fields = discoverAllFields();
     const withFields = candidates.filter(root => fields.some(f => root.contains(f.el)));
     return (withFields.length ? withFields : candidates).at(-1) || document.documentElement;
   }
@@ -509,7 +524,7 @@
     }
     if (root === document.documentElement) {
       restoreMountRootPosition();
-      _host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647;';
+      _host.style.cssText = 'position:fixed;bottom:16px;left:16px;z-index:2147483647;';
       return;
     }
     const pos = getComputedStyle(root).position;
@@ -518,7 +533,7 @@
       _hostMountPrevPosition = root.style.position;
       root.style.position = 'relative';
     }
-    _host.style.cssText = 'position:absolute;bottom:16px;right:16px;z-index:2147483647;';
+    _host.style.cssText = 'position:absolute;bottom:16px;left:16px;z-index:2147483647;';
   }
 
   function unmountButton() {
@@ -589,7 +604,7 @@
     if (!looksLikeApplication()) return { ok: false, reason: 'no-application-form' };
     const config = await ensureConfig();
     if (!config) return { ok: false, reason: 'no-config' };
-    const hasFillable = buildPlan(discoverFields(), config).some(p => p.action === 'fill' || p.action === 'combobox');
+    const hasFillable = buildPlan(discoverAllFields(), config).some(p => p.action === 'fill' || p.action === 'combobox');
     if (!hasFillable) return { ok: false, reason: 'no-fillable-fields' };
     _started = true;
     mountButton();
@@ -615,7 +630,7 @@
     if (!config) return false;
     // Only act in a frame that has at least one fillable matched field — avoids
     // duplicate buttons across iframes / unrelated frames (all_frames:true).
-    const hasFillable = buildPlan(discoverFields(), config).some(p => p.action === 'fill' || p.action === 'combobox');
+    const hasFillable = buildPlan(discoverAllFields(), config).some(p => p.action === 'fill' || p.action === 'combobox');
     if (!hasFillable) return false;
     _started = true;
     // 'auto' fills on load then shows the button in its done/Undo state; 'click'
@@ -628,22 +643,30 @@
     chrome.storage.sync.get([STRUCTURED_TOGGLE_KEY, STRUCTURED_TRIGGER_KEY], (cfg) => {
       if (!cfg[STRUCTURED_TOGGLE_KEY]) return;     // feature off
       _trigger = cfg[STRUCTURED_TRIGGER_KEY] === 'auto' ? 'auto' : 'click';
-      tryMount();
-      if (_host) return;
       // SPA application forms (Oracle/Workday/Ashby) render after page load, so a
-      // one-shot check finds nothing. Re-check on DOM changes until the button
-      // mounts, then stop. Bounded (60s cap) so it can't observe forever.
-      let done = false;
-      const obs = new MutationObserver(() => {
+      // one-shot check finds nothing. Re-check on DOM changes and on a bounded
+      // timer: mutations inside an open Shadow Root do not reach this observer.
+      let done = false, checking = false, poll;
+      let obs;
+      const stop = () => {
+        done = true;
+        try { obs.disconnect(); } catch (e) { /* ignore */ }
+        clearInterval(poll);
+      };
+      const check = async () => {
+        if (done || checking) return;
+        checking = true;
+        try { if (await tryMount()) stop(); } finally { checking = false; }
+      };
+      obs = new MutationObserver(() => {
         if (done) return;
         clearTimeout(obs._t);
-        obs._t = setTimeout(async () => {
-          if (done) return;
-          if (await tryMount()) { done = true; obs.disconnect(); }
-        }, 600);
+        obs._t = setTimeout(check, 600);
       });
       try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) { /* ignore */ }
-      setTimeout(() => { done = true; try { obs.disconnect(); } catch (e) { /* ignore */ } }, 60000);
+      poll = setInterval(check, 600);
+      check();
+      setTimeout(stop, 60000);
     });
   }
 

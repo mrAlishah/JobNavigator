@@ -2,7 +2,7 @@
 // In-field AI draft (design section C, overlay revision).
 //
 // Per the handoff's C2 "overlay, never inject" rule: the draft is NEVER written
-// into the host page's textarea while generating. Each field gets a shadow-DOM
+// into the host page's answer field while generating. Each field gets a shadow-DOM
 // overlay (appended to document.body, positioned over the field box) that draws
 // the blue border and renders the streaming draft itself. The real field is left
 // untouched until the user clicks Insert. Every field is independent — its own
@@ -25,27 +25,25 @@
 
   // ── page context extraction ─────────────────────────────────────────────────
   const isAnswerField = (el) => {
-    if (!el || el.readOnly || el.disabled) return false;
+    if (!el || el.readOnly || el.disabled || el.getAttribute('aria-readonly') === 'true') return false;
     if (el.getAttribute && (el.getAttribute('role') === 'combobox' ||
         el.getAttribute('aria-autocomplete') ||
         el.getAttribute('aria-haspopup') === 'listbox')) return false;
     if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
-    // A long free-text input whose label reads as a question (design C heuristic).
-    if (el.tagName === 'INPUT' && (el.type || 'text').toLowerCase() === 'text') {
-      const noLimit = !(el.maxLength > 0) || el.maxLength > 200;
-      const q = questionFor(el).trim();
-      return noLimit && q.endsWith('?');
-    }
-    return false;
+    // Single-line text boxes are also user-selected draft targets. The draft stays
+    // in the overlay until Insert, so this does not write into an ATS form by itself.
+    return el.tagName === 'INPUT' && (el.type || 'text').toLowerCase() === 'text';
   };
 
   function questionFor(el) {
+    const root = el.getRootNode && el.getRootNode();
+    const queryRoot = root && root.querySelector ? root : document;
     if (el.id) {
-      const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const lab = queryRoot.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (lab) return lab.innerText.trim();
     }
     const ariaId = el.getAttribute && el.getAttribute('aria-labelledby');
-    if (ariaId) { const n = document.getElementById(ariaId); if (n) return n.innerText.trim(); }
+    if (ariaId) { const n = queryRoot.querySelector(`#${CSS.escape(ariaId)}`); if (n) return n.innerText.trim(); }
     if (el.getAttribute && el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
     if (el.placeholder) return el.placeholder.trim();
     let p = el.closest('label') || el.parentElement;
@@ -81,7 +79,16 @@
   }
 
   const fieldMaxOf = (el) => (el.maxLength && el.maxLength > 0 ? el.maxLength : null);
-  const fieldKey = (el) => el.id || el.name || (questionFor(el) ? 'q:' + questionFor(el) : 'af-field');
+  const fieldKeys = new WeakMap();
+  let nextFieldKey = 0;
+  const fieldKey = (el) => {
+    let key = fieldKeys.get(el);
+    if (!key) {
+      key = `af-field-${++nextFieldKey}`;
+      fieldKeys.set(el, key);
+    }
+    return key;
+  };
 
   function writeToField(el, value) {
     if (el.isContentEditable) {
@@ -686,7 +693,7 @@
     try { if (s.prevOutline !== undefined) { s.el.style.outline = s.prevOutline; s.el.style.boxShadow = s.prevShadow; } } catch (e) { /* ignore */ }
     s.host.remove();
     if (opts && opts.reveal && enabled &&
-        (document.activeElement === s.el || s.el.matches(':hover'))) showAff(s.el);
+        (isActiveField(s.el) || s.el.matches(':hover'))) showAff(s.el);
     // Tearing down releases this field's reserved margin (and Insert may grow the
     // field), shifting every field below it — re-anchor the still-open overlays so
     // they follow instead of detaching from their fields. (The body observer also
@@ -696,23 +703,31 @@
   }
 
   // ── wiring ───────────────────────────────────────────────────────────────────
-  function eligibleTarget(t) { return t && t.matches && isAnswerField(t) ? t : null; }
+  function isActiveField(el) {
+    let active = document.activeElement;
+    while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
+    return active === el;
+  }
+  function eligibleTarget(event) {
+    const path = event.composedPath ? event.composedPath() : [event.target];
+    return path.find(el => el && el.matches && isAnswerField(el)) || null;
+  }
 
   document.addEventListener('focusin', (e) => {
     if (!enabled) return;
-    const el = eligibleTarget(e.target);
+    const el = eligibleTarget(e);
     if (el && !sessions.has(fieldKey(el))) showAff(el);
   }, true);
   document.addEventListener('mouseover', (e) => {
     if (!enabled) return;
-    const el = eligibleTarget(e.target);
+    const el = eligibleTarget(e);
     if (el && !sessions.has(fieldKey(el))) showAff(el);
   }, true);
   const scheduleAffCleanup = () => setTimeout(() => {
     const active = document.activeElement;
     for (const [key, w] of affs) {
       if (sessions.has(key)) continue;
-      const hot = active === w.el || (w.el.matches && w.el.matches(':hover')) ||
+      const hot = isActiveField(w.el) || (w.el.matches && w.el.matches(':hover')) ||
                   w.host.contains(active) || w.hovering;
       if (!hot) removeAff(key);
     }
