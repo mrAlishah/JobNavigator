@@ -14,6 +14,7 @@ import {
   LockCard, PolicyToggle, ScopeTag, UnlockPill, hhmm, indexSections, rowLocked, scopeTag,
 } from './SettingsAccounts'
 import '../theme.css'
+import RunnerStatus from './RunnerStatus'
 import { loadDemo } from '../demoHooks'
 
 // QA F7 / R6-06: a locked row stays in the accessibility tree (read-only, aria-disabled);
@@ -545,6 +546,9 @@ export default function Settings() {
         { kind: 'pair', label: 'Primary provider · model', help: 'Every AI feature uses this pair unless overridden below.',
           pKey: 'llm_provider', mKey: 'llm_model', eKey: 'llm_effort',
           info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), Antigravity CLI (Google subscription), OpenCode Go (subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and Ollama and LM Studio have no effort setting. Antigravity's -high models can think for 5 minutes on a tailoring or a PDF import; -medium answers in under a minute." },
+        { kind: 'runners', label: 'Provider containers', accountId: me?.id, isOwner,
+          help: 'Codex, Claude Code and Antigravity start automatically after settings are saved.',
+          info: 'Includes all profiles, feature overrides and scoring fallback. Ollama and LM Studio use their configured external addresses.' },
         B('API key', keyHelp(primaryProv, member), PROVIDER_KEY[primaryProv] || 'anthropic_api_key', { secret: true, mono: true, w: '340px', hide: () => !PROVIDER_KEY[primaryProv] }),
         // MT-15: the Claude Code login per account. Shown while some slot uses Claude Code, to the owner and to a member whose Models section is its own.
         B('Claude Code token', member ? 'Your own Claude subscription token.' : 'Empty uses CLAUDE_CODE_OAUTH_TOKEN from .env.',
@@ -675,6 +679,7 @@ export default function Settings() {
         E('Body phrases', 'Skip postings whose description contains any of these phrases.', 'body_exclusion_phrases', { list: true, sub: 'one phrase per line · case-insensitive' }),
         E('Title exclude', 'Skip jobs whose title matches any of these words.', 'title_exclude_global', { list: true, sub: 'one phrase per line · case-insensitive' }),
         E('Company exclude', 'Skip jobs from these companies (exact name).', 'company_exclude_global', { list: true, sub: 'one company per line · exact match' }),
+        E('Allowed countries', 'Skip jobs whose known locations are all outside these countries. Jobs with no known location are kept.', 'job_countries_allowed', { list: true, sub: 'one country code per line · e.g. US, GB, DE, CH · empty = all' }),
       ]],
       ['dedup', '', 'Dedup tracking params', '', [
         E('Stripped params', 'Query params removed from job URLs before duplicate detection. All utm_* are always stripped.', 'dedup_tracking_params', { list: true, sub: 'one param per line' }),
@@ -1140,6 +1145,8 @@ function Row({ r, ctx }) {
         )
       case 'note':
         return <Mono style={{ fontSize: 11.5, userSelect: 'all', overflowWrap: 'anywhere' }}>{r.text}</Mono>
+      case 'runners':
+        return <RunnerStatus accountId={r.accountId} isOwner={r.isOwner} />
       case 'apikey':
         return <ApiKeyRow value={val('dashboard_api_key')} save={save} flash={flash} />
       case 'telemetry':

@@ -109,7 +109,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # the next boot then backs up once more; not worth failing over
         logger.warning(f"Could not record the release marker: {e}")
 
-    yield
+    from backend.runner_management import coordinator, enabled as runner_management_enabled
+    if runner_management_enabled():
+        coordinator.start()
+    try:
+        yield
+    finally:
+        await coordinator.stop()
 
     if scheduler.running:
         scheduler.shutdown()
@@ -1337,7 +1343,9 @@ async def telegram_test():
         )
 
 
-_OWNER_ONLY_SCHEDULES = frozenset({"h1b_refresh", "db_backup", "telemetry_daily"})   # install-level / require_owner
+_OWNER_ONLY_SCHEDULES = frozenset({"h1b_refresh", "db_backup"})   # install-level / require_owner
+# Background jobs that run on their schedule but are not listed in the Stats schedule table.
+_HIDDEN_SCHEDULES = frozenset({"telemetry_daily"})
 
 # The schedules list shows these names; every id scheduler.py registers needs one
 # (test_schedule_names.py).
@@ -1349,7 +1357,7 @@ SCHEDULE_NAMES = {
     "db_backup": "Back up database (pg_dump)",
     "job_cleanup": "Clean up stale skipped jobs",
     "auto_reject": "Auto-reject stale applications",
-    "telemetry_daily": "Send telemetry (what Settings › Telemetry allows)",
+    "telemetry_daily": "Send telemetry (what Settings › Telemetry allows)",   # hidden from the list
 }
 
 
@@ -1373,6 +1381,8 @@ def get_scheduler_jobs():
     jobs = scheduler.get_jobs()
     result = []
     for job in jobs:
+        if job.id in _HIDDEN_SCHEDULES:
+            continue
         trigger = job.trigger
         if hasattr(trigger, 'interval'):
             schedule = f"Every {int(trigger.interval.total_seconds() / 60)} min"
