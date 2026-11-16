@@ -1,7 +1,7 @@
 // The name a résumé or cover-letter download is saved under comes from the server's
 // Content-Disposition: the RFC 5987 filename* first (it keeps José or Дана), then the plain one.
 import { describe, it, expect } from 'vitest'
-import { downloadName } from '../download'
+import { downloadErrorReason, downloadName } from '../download'
 
 describe('downloadName', () => {
   it('prefers filename* (RFC 5987) and decodes it', () => {
@@ -24,5 +24,19 @@ describe('downloadName', () => {
   it('uses the fallback when there is no name', () => {
     expect(downloadName(undefined, 'Resume.pdf')).toBe('Resume.pdf')
     expect(downloadName('attachment', 'Resume.docx')).toBe('Resume.docx')
+  })
+})
+
+describe('downloadErrorReason (R30 D-07)', () => {
+  it('reads detail out of a Blob error body, a JSON string, or a plain object', async () => {
+    const blob = new Blob([JSON.stringify({ detail: 'Résumé too large' })], { type: 'application/json' })
+    expect(await downloadErrorReason({ response: { data: blob } })).toBe('Résumé too large')
+    expect(await downloadErrorReason({ response: { data: '{"detail":"x"}' } })).toBe('x')
+    expect(await downloadErrorReason({ response: { data: { message: 'm' } } })).toBe('m')
+  })
+  it('is empty when there is no readable reason', async () => {
+    expect(await downloadErrorReason(new Error('network'))).toBe('')
+    expect(await downloadErrorReason({ response: { data: new Blob(['<html>']) } })).toBe('')
+    expect(await downloadErrorReason({ response: { data: { detail: [{ msg: 'x' }] } } })).toBe('')
   })
 })

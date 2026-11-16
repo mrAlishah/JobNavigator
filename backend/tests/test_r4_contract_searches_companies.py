@@ -71,16 +71,16 @@ def test_create_search_rejects_a_negative_interval(client):
 
 
 @pytest.mark.parametrize("mode", ["keyword", "levels_fyi", "linkedin_personal",
-                                  "jobright", "freehire", "banana", ""])
-def test_create_search_accepts_any_search_mode_string(client, mode):
-    """No enum guard on search_mode today; the orchestrator falls through on unknown ones."""
+                                  "jobright", "freehire", ""])
+def test_create_search_accepts_every_known_search_mode(client, mode):
+    """"" is the column default, keyword."""
     assert_clean(client.post("/api/searches", json={"name": f"m-{mode}", "search_mode": mode}), 200)
 
 
-@pytest.mark.xfail(strict=True, reason="R4-T1-18")
 def test_create_search_rejects_an_unknown_search_mode(client):
+    """R4-T1-18 / R30 P0-02: the mode list is backend/scraper/search_modes.py."""
     assert client.post("/api/searches",
-                       json={"name": "M", "search_mode": "banana"}).status_code == 422
+                       json={"name": "M", "search_mode": "banana"}).status_code == 400
 
 
 def test_patch_search_missing_id_is_404(client):

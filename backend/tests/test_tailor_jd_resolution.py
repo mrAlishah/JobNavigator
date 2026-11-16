@@ -7,6 +7,7 @@ def _job(description=None, url=None, cached=None):
     j = MagicMock()
     j.description = description
     j.url = url
+    j.apply_url = None   # a Job has it; an unset MagicMock attribute would read as a link
     j.cached_page_text = cached
     return j
 

@@ -34,15 +34,20 @@ Follow steps here manually or ask AI to: [Upgrading from 2.x](CHANGELOG.md#upgra
 │   Any site via          │  JobSpy: LinkedIn,      │  Passive LinkedIn       │
 │   Playwright            │  Indeed, ZipRecruiter,  │  capture while          │
 │                         │  Google Jobs            │  browsing               │
-│   12 ATS endpoints:     │                         │                         │
+│   13 ATS endpoints:     │                         │                         │
 │   Workday, Greenhouse   │  LinkedIn Personal      │  Auto-fill based on     │
 │   Lever, Ashby,         │  collections            │  your persona input     │
 │   Oracle, Phenom,       │  Apify (paid boards)    │  and question bank      │
 │   TalentBrew, Rippling  │  Jobright.ai            │                         │
 │   SmartRecruiters,      │  Levels.fyi             │  Save any job from      │
-│   Amazon, Meta, Google  │  freehire.me            │  any page               │
-│                         │  CaribbeanJobs.com      │                         │
+│   Amazon, Uber, Meta,   │  freehire.me            │  any page               │
+│   Google                │  CaribbeanJobs.com      │                         │
 │                         │  TrulyRemoteWork.com    │                         │
+│                         │  Creative boards:       │                         │
+│                         │  Behance, Dribbble,     │                         │
+│                         │  ArtStation, Hollylist, │                         │
+│                         │  Wana Create, WWI       │                         │
+│                         │  Himalayas, Eluta       │                         │
 │                         │                         │                         │
 └─────────────────────────┴───────────┬─────────────┴─────────────────────────┘
                                       │
@@ -50,8 +55,9 @@ Follow steps here manually or ask AI to: [Upgrading from 2.x](CHANGELOG.md#upgra
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                PROCESSING                                   │
 │                                                                             │
-│   Dedup ────── URL-hash dedup, tracking params stripped                     │
+│   Dedup ────── One job per posting: posting keys, copies proven from text   │
 │   Filters ──── Title / company include & exclude, body exclusion phrases    │
+│   Links ────── The employer's own posting; closed postings marked           │
 │   H-1B ─────── Company LCA data from MyVisaJobs (cached)                    │
 │   Salary ───── Extracted from posting, H-1B data, description               │
 │                                                                             │
@@ -105,12 +111,13 @@ Follow steps here manually or ask AI to: [Upgrading from 2.x](CHANGELOG.md#upgra
 
 | Feature | Description |
 |---------|-------------|
-| **Discovery** | Career pages (Playwright + 12 ATS handlers), JobSpy (LinkedIn, Indeed, ZipRecruiter, Google), Apify (Indeed, LinkedIn, Glassdoor, Greenhouse/Lever/Ashby/Workday search; not on the Apify Creator plan), LinkedIn collections, Levels.fyi, Jobright.ai, freehire.me, CaribbeanJobs.com, TrulyRemoteWork.com, the Chrome extension |
+| **Discovery** | Career pages (Playwright + 13 ATS handlers), JobSpy (LinkedIn, Indeed, ZipRecruiter, Google), Apify (Indeed, LinkedIn, Glassdoor, Greenhouse/Lever/Ashby/Workday search; not on the Apify Creator plan), LinkedIn collections, Levels.fyi, Jobright.ai, freehire.me, CaribbeanJobs.com, TrulyRemoteWork.com, creative boards (Behance, Dribbble, ArtStation, Wana Create, Hollylist, Work With Indies), Himalayas, Eluta, the Chrome extension |
 | **Scoring** | Claude, OpenAI, OpenRouter, Ollama, LM Studio, Claude Code, Codex CLI, Antigravity CLI or OpenCode Go; live model search, a model per feature; Light (score) or Full (report, keyword coverage, requirement mapping) against every base résumé; prompt caching on Anthropic |
 | **Résumés** | Structured base résumés, tailoring per job with a review step, 8 PDF templates (drop in your own) and a Word (.docx) export, an opt-in page footer (name, job title, company) on tailored copies, tracked links that record opens |
 | **Cover letters** | Generated from the paired résumé and persona; voice and length presets, 7 templates, PDF |
-| **Dedup** | URL identity hash (tracking params stripped) plus company + title hash across sources |
-| **Jobs** | Filters, sorting, keyboard shortcuts (`?`), full report, collapsible analysis pane, bulk actions with undo, posting preview |
+| **One job per posting** | A posting key read from the link (over 30 job systems and career sites); copies of a posting or of one role (another link, another city, a repost) proven from the text and listed under Also listed, Ignored or New per kind |
+| **Direct links** | The employer's own posting instead of a board listing whenever one is known (short links and ad redirectors followed, LinkedIn listings looked up through a mock account); a Still open? check marks closed postings |
+| **Jobs** | Filters (incl. Link: Direct / Board link, and Posting: Open / Closed), sorting, keyboard shortcuts (`?`), full report, collapsible analysis pane, bulk actions with undo, posting preview |
 | **Applications** | Stages, interviews, notes, status history (funnel and Sankey in Stats), a prep handover for any AI chat |
 | **Persona** | Contact, work authorization, compensation, preferences, résumé content, Q&A bank; import from a résumé or PDF |
 | **Extension** | Passive LinkedIn capture, save any job from any page, ATS form autofill and AI answers to free-text questions from your Persona |
@@ -134,18 +141,29 @@ cp .env.example .env
 docker compose pull && docker compose up -d      # prebuilt images from GHCR
 ```
 
-Open `http://localhost`. To build from source instead (or on ARM), use `docker compose up --build -d`; every release is also published as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=3.0` in `.env`. On first run sign in with a blank key, then set one in Settings › System › Advanced.
+Open `http://localhost`. To build from source instead, use `docker compose up --build -d`; every release is also published for `linux/amd64` and `linux/arm64` as `ghcr.io/vesaias/jobnavigator-backend` and `-frontend`, pinnable with `JN_IMAGE_TAG=3.1` in `.env`. On first run sign in with a blank key, then set one in Settings › System › Advanced.
 
 **2. Connect a model**
 
-Any API key goes straight into Settings › AI. A subscription needs one login inside the container first (OpenCode Go needs none):
+Any API key goes straight into Settings › AI, once per provider: every model slot on that provider uses it, and switching a slot to another provider and back keeps it. A subscription needs one login inside the container first (OpenCode Go needs none):
 
 | Subscription | Once after the containers start |
 |---|---|
-| Claude Pro / Max | `docker compose exec backend claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` |
-| ChatGPT | `docker compose exec backend codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) |
-| Google Antigravity | `docker compose exec -it backend agy` — the container has no browser, so the CLI prints a URL and asks for the code it shows (the login lives in the `antigravity_auth` volume) |
+| Claude Pro / Max | `docker compose run --rm -it claude-runner claude setup-token`, put the printed token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`, then `docker compose up -d backend` |
+| ChatGPT | `docker compose run --rm -it codex-runner codex login --device-auth` (check with `codex login status`; the login lives in the `codex_auth` volume) |
+| Google Antigravity | `docker compose run --rm -it antigravity-runner agy` — the container has no browser, so the CLI prints a URL and asks for the code it shows (the login lives in the `antigravity_auth` volume) |
 | OpenCode Go | nothing: paste the Go API key under Settings › AI |
+
+Subscription CLIs run in separate optional images. Save a provider in Settings and the
+private runner manager downloads a missing image and starts its container automatically.
+Settings › Models shows progress and errors. All accounts, feature overrides and scoring
+fallback count: a container is removed only after no account selects it and active calls
+finish. Images and logins are retained. Leave `COMPOSE_PROFILES` unset in automatic mode.
+Ollama and LM Studio continue to use external servers; API providers need no runner.
+For a source checkout, first build the needed runner images (e.g.
+`docker compose build codex-runner`) and start the core with `docker compose up --build -d`.
+Manual profiles remain available with `JN_RUNNER_MANAGEMENT=0`.
+See [CLI runners and migration](docs/CLI-RUNNERS.md) for source builds, existing logins and troubleshooting.
 
 No pay-per-token key needed for any of them. A plan limit fails over to the fallback provider without retrying. With several accounts, `docker compose exec backend python -m backend.scripts.cli_login <codex|agy|claude> "<account>"` prints a member's own login command.
 
@@ -174,6 +192,10 @@ Install: `chrome://extensions` › Developer mode › Load unpacked › `extensi
 |---|---|---|
 | **Telegram** | `TELEGRAM_BOT_TOKEN` (the household bot) | Notifications › Link Telegram, or its own bot |
 | **Gmail** | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`; add `<dashboard>/api/gmail/callback` as a redirect URI | Email classification › Gmail › Connect Gmail |
+
+## Telemetry
+
+If the owner allows it (asked once, changeable in Settings › Telemetry), JobNavigator sends anonymous scraper/AI health and usage data to a self-hosted Umami to improve the product and better understand what needs maintaining first. Never your private information, job titles, search terms, résumé text or keys. Set `JN_TELEMETRY=off` in `.env` to turn it off.
 
 ## Tech Stack
 

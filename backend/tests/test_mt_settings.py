@@ -46,11 +46,11 @@ def test_every_known_key_has_exactly_one_section():
 
 
 # The Settings screen's section ids (frontend/src/screens/Settings.jsx), minus 'appearance'
-# (per browser, not a DB setting). The backend container does not mount the frontend, so
-# the list is kept here and re-read from the source when it is available.
-SCREEN_SECTIONS = {"feed", "models", "scoring", "tailoring", "resumes", "letters", "autofill", "prep",
-                   "emailclass", "scheduler", "exclude", "dedup", "notifications", "tracer",
-                   "apify", "jobright", "linkedin", "advanced"}
+# (Display: per-browser rows plus the feed section's one setting). The backend container does
+# not mount the frontend, so the list is kept here and re-read from the source when it is available.
+SCREEN_SECTIONS = {"models", "scoring", "tailoring", "resumes", "letters", "autofill", "prep",
+                   "emailclass", "scheduler", "exclude", "dedup", "copies", "notifications", "tracer",
+                   "apify", "jobright", "linkedin", "advanced", "telemetry"}
 
 
 def test_ui_sections_match_the_settings_screen():
@@ -63,7 +63,8 @@ def test_ui_sections_match_the_settings_screen():
         screen.discard("appearance")
         assert screen == SCREEN_SECTIONS
     ui = {u for sec in S.SETTING_SECTIONS.values() for u in sec["ui"]}
-    assert ui == screen
+    assert ui - {"appearance"} == screen
+    assert S.SETTING_SECTIONS["feed"]["ui"] == ["appearance"]
     # every screen section that is itself a table section keeps the screen's id
     assert {sid for sid in S.SETTING_SECTIONS if sid in screen} == screen
 
@@ -71,7 +72,7 @@ def test_ui_sections_match_the_settings_screen():
 def test_spec_defaults():
     sec = S.SETTING_SECTIONS
     assert (sec["models"]["scope"], sec["models"]["default"]) == ("policy", "inherit")
-    assert "llm_api_key" in sec["models"]["keys"]
+    assert "anthropic_api_key" in sec["models"]["keys"]
     for sid in ("scoring", "tailoring", "letters", "scheduler"):
         assert (sec[sid]["scope"], sec[sid]["default"]) == ("policy", "inherit")
     assert (sec["exclude"]["scope"], sec["exclude"]["default"]) == ("policy", "own")
@@ -284,12 +285,12 @@ def test_policy_endpoint_over_http_as_owner(client, test_db, accounts):
 def test_owner_get_is_unchanged_and_never_shows_member_rows(client, test_db, accounts):
     a, b = accounts
     set_setting(test_db, "title_exclude_global", '["intern"]')
-    set_setting(test_db, "llm_api_key", "sk-owner")
+    set_setting(test_db, "anthropic_api_key", "sk-owner")
     _own(test_db, b, "title_exclude_global", '["senior"]')
     body = client.get("/api/settings").json()
     assert "_meta" not in body
     assert body["title_exclude_global"] == ["intern"]
-    assert body["llm_api_key"] == "•" * 6
+    assert body["anthropic_api_key"] == "•" * 6
     meta = client.get("/api/settings?meta=1").json()["_meta"]
     assert meta["title_exclude_global"] == {"section": "exclude", "editable": True, "source": "install"}
 
@@ -298,7 +299,7 @@ def test_member_get_returns_effective_values_redacted_with_meta(test_db, account
     a, b = accounts
     set_setting(test_db, "title_exclude_global", '["intern"]')
     set_setting(test_db, "telegram_chat_id", "owner-chat")
-    set_setting(test_db, "llm_api_key", "sk-owner")
+    set_setting(test_db, "anthropic_api_key", "sk-owner")
     set_setting(test_db, "linkedin_password", "")
     set_setting(test_db, "proxy_url", "socks5://owner")
     _own(test_db, b, "title_exclude_global", '["senior"]')
@@ -308,10 +309,10 @@ def test_member_get_returns_effective_values_redacted_with_meta(test_db, account
     meta = body.pop("_meta")
     assert body["title_exclude_global"] == ["senior"]
     assert body["telegram_chat_id"] == ""                       # own_always: not the owner's chat
-    assert body["llm_api_key"] == "•" * 6                  # inherited, still redacted
+    assert body["anthropic_api_key"] == "•" * 6                  # inherited, still redacted
     assert body["linkedin_password"] == "•" * 6            # own secret, redacted
     assert meta["title_exclude_global"] == {"section": "exclude", "editable": True, "source": "account"}
-    assert meta["llm_api_key"] == {"section": "models", "editable": False, "source": "install",
+    assert meta["anthropic_api_key"] == {"section": "models", "editable": False, "source": "install",
                                    "set_by_owner": True}
     assert meta["telegram_chat_id"]["source"] == "default" and meta["telegram_chat_id"]["editable"]
     assert meta["proxy_url"] == {"section": "advanced", "editable": False, "source": "install"}

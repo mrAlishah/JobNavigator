@@ -20,6 +20,7 @@ export const RELEASE_NOTES_URL = 'https://github.com/vesaias/JobNavigator/blob/m
 const TITLE_ID = 'jn-newui-title'
 
 const POINTS = [
+  'Accounts: up to five people share one install, each with their own jobs, résumés, applications and settings, behind an optional PIN. Scraping is shared, so a board both of you follow is fetched once. Add someone in Settings › Accounts.',
   'Everything you know, rebuilt: Jobs, Companies, Applications, Résumés, Cover Letters, Persona, Stats, Settings.',
   'The extension, redesigned: AI-assisted answers to application questions and structured autofill of ATS forms from your Persona.',
   'Pick a look in Settings › Display: Paper, Green Paper, Stone, V1 Style or Windows 98, light or dark.',

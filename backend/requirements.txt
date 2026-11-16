@@ -10,8 +10,8 @@ httpx==0.28.1
 anthropic==0.42.0
 openai==1.82.0
 python-telegram-bot==21.9
-python-jobspy==1.3.0
-# python-jobspy 1.3.0 no longer caps pandas or pins numpy; these are the
+python-jobspy==1.4.1
+# python-jobspy (since 1.3.0) does not cap pandas or pin numpy; these are the
 # versions it resolved to when bumped, pinned so a rebuild cannot drift.
 pandas==3.0.6
 numpy==2.5.4

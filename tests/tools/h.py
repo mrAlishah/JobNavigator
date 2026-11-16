@@ -148,13 +148,34 @@ def browser(headless=True):
             b.close()
 
 
-def context(b, appearance="light", width=1440, height=900, dsf=1, key=KEY, extra_ls=None):
+NEWUI_VERSION = "3.1"   # frontend/src/onboarding.js NEWUI_VERSION: the upgrade notice is seen
+
+
+def telemetry_answer(ctx, **over):
+    """Answer the app's GET /api/telemetry in this context with the real state, changed by `over`.
+    Without `over`, `asked=True`: the owner's one-time telemetry dialog (TelemetryChoice.jsx)
+    never covers the screens under test, and the install's real choice is left alone."""
+    over = over or {"asked": True}
+
+    def _handle(route):
+        try:
+            resp = route.fetch()
+            data = {**resp.json(), **over}
+            route.fulfill(response=resp, json=data)
+        except Exception:
+            route.continue_()
+    ctx.route("**/api/telemetry", _handle)
+
+
+def context(b, appearance="light", width=1440, height=900, dsf=1, key=KEY, extra_ls=None, ask_telemetry=False):
     ctx = b.new_context(viewport={"width": width, "height": height}, device_scale_factor=dsf)
     ls = {"jobnavigator_api_key": key, "jobnavigator_dark_mode": "true" if appearance == "dark" else "false",
           "jobnavigator_welcome_seen": "true", "jobnavigator_v2_welcome_seen": "true",
-          "jobnavigator_welcomed": "1"}
+          "jobnavigator_welcomed": "1", "jobnavigator_newui_seen": NEWUI_VERSION}
     ls.update(extra_ls or {})
     ctx.add_init_script("try{" + "".join(f"localStorage.setItem({json.dumps(k)},{json.dumps(v)});" for k, v in ls.items()) + "}catch(e){}")
+    if not ask_telemetry:
+        telemetry_answer(ctx)
     owner_cookie(ctx, key=key)   # 2+ accounts: open as the owner, no picker
     # warm-up: lets App.jsx sync the cookie session so /api hrefs work
     w = ctx.new_page(); w.goto(BASE + "/feed", wait_until="networkidle"); w.wait_for_timeout(500); w.close()

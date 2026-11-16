@@ -401,9 +401,10 @@ async def autofill_answer_stream(body: dict):
     """SSE variant of /answer that streams the drafted answer as plain-text chunks (no JSON wrapper) so the extension can render it into the field live, sharing the persona/qa_bank cache prefix with /answer."""
     # Same editable `autofill_prompt` template as /answer, so what the user edits
     # in Settings governs the variant the extension actually streams (R4-T1-22).
-    built = _build_autofill_prompt(body)
+    built = _build_autofill_prompt(body, want_provider=True)
     cached_prefix = built["cached_prefix"]
     max_chars = built["max_chars"]
+    provider, model = built["provider"], built["model"]
 
     # Refinements: ordered change requests already applied ("shorter", "mention
     # fintech work"), appended to the suffix so the cache prefix stays untouched.
@@ -431,11 +432,14 @@ async def autofill_answer_stream(body: dict):
 
     async def _events():
         try:
-            raw_chunks = call_autofill_llm_stream(suffix, system, max_tokens=max_tokens,
-                                                  cached_prefix=cached_prefix)
-            async for chunk in _clean_stream(raw_chunks):
-                if chunk:
-                    yield f"data: {_json.dumps({'delta': chunk})}\n\n"
+            # R30 L-09: logged like /answer (duration, success, the pair). A stream carries no
+            # usage, so its tokens are logged as 0.
+            async with track_llm_call("autofill", provider, model):
+                raw_chunks = call_autofill_llm_stream(suffix, system, max_tokens=max_tokens,
+                                                      cached_prefix=cached_prefix)
+                async for chunk in _clean_stream(raw_chunks):
+                    if chunk:
+                        yield f"data: {_json.dumps({'delta': chunk})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error(f"autofill stream failed: {e}")

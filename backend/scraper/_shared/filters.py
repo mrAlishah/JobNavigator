@@ -60,13 +60,20 @@ GARBAGE_TITLES = {
     "terms of use", "terms and conditions", "sitemap",
     "careers blog", "my profile", "my account", "my applications",
     "locations", "teams", "departments", "categories",
+    # job-site navigation (Uber's "Saved jobs" was its only "job" for four months)
+    "saved jobs", "my saved jobs", "saved positions", "job cart", "my jobs", "my job cart",
+    "recently viewed jobs", "all jobs", "view all jobs", "see all jobs", "browse jobs",
+    "browse all jobs", "back to jobs", "back to search", "back to search results",
+    "candidate home", "candidate login", "candidate profile", "job seeker login",
 }
 
 # Substrings that indicate garbage even in longer text
 GARBAGE_SUBSTRINGS = [
     "join talent network", "join our talent", "talent community",
     "sign up for job alert", "create job alert", "email me jobs",
-    "cookie settings", "cookie preferences", "privacy policy",
+    "cookie settings", "cookie preferences", "cookie policy", "cookie notice",
+    "use cookies",  # "How we use cookies" (the ECB careers page)
+    "privacy policy",
     "equal opportunity employer", "© 20", "open roles",
     "life at ",  # "Life at Stripe", "Life at Google", etc.
 ]
@@ -79,6 +86,18 @@ _LOCALE_NAMES = {
     "english", "english (us)", "english (uk)",
     "日本語", "한국어", "中文", "简体中文", "繁體中文", "ภาษาไทย", "العربية", "עברית",
 }
+# A locale switcher names the language in English and in itself: "German, Deutsch", "English, English".
+_LANGUAGE_NAMES = _LOCALE_NAMES | {
+    "german", "french", "spanish", "portuguese", "italian", "dutch", "polish", "swedish", "norwegian",
+    "danish", "finnish", "czech", "romanian", "hungarian", "turkish", "indonesian", "malay",
+    "vietnamese", "japanese", "korean", "chinese", "thai", "arabic", "hebrew", "english",
+}
+_LOCALE_PAIR = re.compile(r"^\s*([^,()\-–]+?)\s*(?:,|\s[-–]\s)\s*([^,()\-–]+?)\s*$")
+
+
+def _is_locale_pair(title_lower: str) -> bool:
+    m = _LOCALE_PAIR.match(title_lower)
+    return bool(m) and m.group(1) in _LANGUAGE_NAMES and m.group(2) in _LANGUAGE_NAMES
 
 
 # ── Boolean expression parser for title_include_expr ──────────────────────────
@@ -142,9 +161,24 @@ def _parse_atom(tokens, pos):
     return ('WORD', tokens[pos]), pos + 1
 
 
+def include_pattern(kw: str) -> str:
+    """Regex for one title-include keyword: a short alphanumeric word (up to 3 letters, e.g. PM, TPM, PMO) must
+    stand as a whole word, a plural "s" allowed, so "pm" never hits "development" or "shipment"; any longer
+    keyword stays a plain substring ("product manag" still matches "management")."""
+    k = (kw or "").lower()
+    if k.strip().isalnum() and len(k.strip()) <= 3:
+        return r"\b" + re.escape(k.strip()) + r"s?\b"
+    return re.escape(k)
+
+
+def include_hit(kw: str, title_lower: str) -> bool:
+    """True when one title-include keyword matches a lower-cased title (see include_pattern)."""
+    return re.search(include_pattern(kw), title_lower) is not None
+
+
 def _eval_expr(node, title_lower):
     if node[0] == 'WORD':
-        return node[1].lower() in title_lower
+        return include_hit(node[1], title_lower)
     elif node[0] == 'AND':
         return _eval_expr(node[1], title_lower) and _eval_expr(node[2], title_lower)
     elif node[0] == 'OR':
@@ -173,7 +207,7 @@ def search_title_filters(search, db) -> tuple[list, list]:
 def title_kept(title: str, include_kw: list, exclude_kw: list) -> tuple[bool, str | None]:
     """(kept, reason): include is a substring match on any keyword, exclude a whole-word match."""
     tl = title.lower()
-    if include_kw and not any(kw.lower() in tl for kw in include_kw):
+    if include_kw and not any(include_hit(kw, tl) for kw in include_kw):
         return False, f"No match for: {', '.join(include_kw)}"
     if exclude_kw:
         matched = [kw for kw in exclude_kw if re.search(r'\b' + re.escape(kw) + r'\b', tl)]
@@ -205,7 +239,7 @@ def _validate_job(title: str, url: str) -> str | None:
     for sub in GARBAGE_SUBSTRINGS:
         if sub in title_lower:
             return f"Garbage substring: '{sub}'"
-    if title_lower in _LOCALE_NAMES:
+    if title_lower in _LOCALE_NAMES or _is_locale_pair(title_lower):
         return "Locale/language name"
     if re.match(r'^[\d\s\-\.]+$', title_clean):
         return "Title is just numbers/symbols"

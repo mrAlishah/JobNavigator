@@ -17,7 +17,7 @@ so they get per-account homes by the same rule:
   volume) for the same members, so its state dir is `<that>/.gemini/antigravity-cli`;
   owner and 'inherit' keep HOME (state ~/.gemini/antigravity-cli).
 
-Removing an account deletes its two dirs (`admin.account_dirs`); export leaves them out.
+Removing an account deletes its CLI dirs (`admin.account_dirs`); export leaves them out.
 `backend/scripts/cli_login.py` prints the login command for one account.
 """
 import os
@@ -37,7 +37,8 @@ AGY_ACCOUNTS_ROOT = "~/.gemini/accounts"
 # QA F8 / R5-08: `claude -p` keeps a transcript of every prompt under its config dir; a
 # member on its own models section runs with HOME and CLAUDE_CONFIG_DIR of its own here,
 # so its résumé/JD prompts never land in the owner's ~/.claude. The token stays a setting,
-# so this needs no volume (a rebuild only drops old transcripts).
+# Claude tokens stay in settings; the shared claude_accounts volume lets the
+# backend remove member transcripts even when the Claude runner is stopped.
 CLAUDE_ACCOUNTS_ROOT = "~/.claude-accounts"
 CLAUDE_CONFIG_SUBDIR = ".claude"
 AGY_STATE_SUBDIR = os.path.join(".gemini", "antigravity-cli")
@@ -47,10 +48,14 @@ def _expand(path: str) -> str:
     return os.path.expanduser(path)
 
 
+def cli_account_roots() -> list:
+    """Auth/transcript roots shared with the independent runners."""
+    return [_expand(CODEX_ACCOUNTS_ROOT), _expand(AGY_ACCOUNTS_ROOT), _expand(CLAUDE_ACCOUNTS_ROOT)]
+
+
 def account_roots() -> list:
     """Every per-account root; removal deletes `<root>/<account id>` in each."""
-    return [_expand(CODEX_ACCOUNTS_ROOT), _expand(AGY_ACCOUNTS_ROOT), _expand(CLAUDE_ACCOUNTS_ROOT),
-            LI_ACCOUNTS_ROOT]
+    return cli_account_roots() + [LI_ACCOUNTS_ROOT]
 
 
 def codex_home(account_id) -> str:
@@ -130,7 +135,10 @@ def claude_code_token(db) -> str:
 # Tests point the constants at tmp dirs.
 LI_ACCOUNTS_ROOT = "/root/.linkedin_api/accounts"
 LI_EXTENSION_OWNER = "/root/.linkedin_api/li_cookies.json"
-LI_PERSONAL_OWNER = "/tmp/linkedin_cookies.json"
+LI_PERSONAL_OWNER = "/root/.linkedin_api/linkedin_cookies.json"
+# Where the owner's main jar lived until 3.2: /tmp is wiped on every rebuild, so each one signed the
+# main account out; a jar still there moves to LI_PERSONAL_OWNER on first use.
+LI_PERSONAL_LEGACY = "/tmp/linkedin_cookies.json"
 LI_PIN_OWNER = "/tmp/li_pin.txt"
 LI_EXTENSION_FILE = "li_cookies.json"
 LI_PERSONAL_FILE = "linkedin_cookies.json"
@@ -195,6 +203,13 @@ def linkedin_personal_cookies(db=None) -> str:
     """Cookie jar of the LinkedIn Personal scraper (also loaded by the session refresh)."""
     member = session_member(db)
     if member is None:
+        if not os.path.exists(LI_PERSONAL_OWNER) and os.path.exists(LI_PERSONAL_LEGACY):
+            try:
+                import shutil
+                os.makedirs(os.path.dirname(LI_PERSONAL_OWNER), exist_ok=True)
+                shutil.move(LI_PERSONAL_LEGACY, LI_PERSONAL_OWNER)
+            except OSError:
+                return LI_PERSONAL_LEGACY
         return LI_PERSONAL_OWNER
     return os.path.join(linkedin_session_dir(member), LI_PERSONAL_FILE)
 

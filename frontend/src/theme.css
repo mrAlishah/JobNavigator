@@ -70,6 +70,7 @@
   --cc-talentbrew-bg:#f3e8f0; --cc-talentbrew-fg:#7a4066;
   --cc-meta-bg:#e8eef6; --cc-meta-fg:#3a5a86;
   --cc-google-bg:#f7ebe7; --cc-google-fg:#96402f;
+  --cc-uber-bg:#e3efee; --cc-uber-fg:#2f6a62;
   --cc-generic-bg:#f1efe8; --cc-generic-fg:#57534a;
   --cc-tier1-bg:#eaf1eb; --cc-tier1-fg:#2f6b4a;
   --cc-tier2-bg:#e9f0f7; --cc-tier2-fg:#2f5580;
@@ -83,6 +84,9 @@
   --sm-apify-bg:#ecebf6; --sm-apify-fg:#4f4a86;
   --sm-caribbeanjobs-bg:#e0f0f4; --sm-caribbeanjobs-fg:#22627a;
   --sm-trulyremote-bg:#eef0e0; --sm-trulyremote-fg:#5a6326;
+  --sm-creative-bg:#f6e6e6; --sm-creative-fg:#8a3b3b;
+  --sm-himalayas-bg:#e3ecf7; --sm-himalayas-fg:#2f5688;
+  --sm-eluta-bg:#f5ecdc; --sm-eluta-fg:#7a5a1e;
   --sm-extension-bg:#f1efe8; --sm-extension-fg:#57534a;
   --rail:#22211c; --rail-text:#a8a396; --rail-dim:#948d7a; --rail-accent:#8dbb9f; --rail-line:#2e2c24; --rail-ink:#f6f3ea;
 
@@ -472,6 +476,7 @@
   --cc-talentbrew-bg:#392a34; --cc-talentbrew-fg:#d3aac4;
   --cc-meta-bg:#232f3f; --cc-meta-fg:#a3bedd;
   --cc-google-bg:#3d2823; --cc-google-fg:#dba393;
+  --cc-uber-bg:#1f3432; --cc-uber-fg:#96c8c0;
   --cc-generic-bg:#34322c; --cc-generic-fg:#b5b0a3;
   --cc-tier1-bg:#22302a; --cc-tier1-fg:#8dbb9f;
   --cc-tier2-bg:#212b37; --cc-tier2-fg:#93b5da;
@@ -485,6 +490,9 @@
   --sm-apify-bg:#2a283c; --sm-apify-fg:#b7b2dd;
   --sm-caribbeanjobs-bg:#1c3239; --sm-caribbeanjobs-fg:#92c6d6;
   --sm-trulyremote-bg:#2d3121; --sm-trulyremote-fg:#c5cf96;
+  --sm-creative-bg:#3a2424; --sm-creative-fg:#dca3a3;
+  --sm-himalayas-bg:#1f2b3a; --sm-himalayas-fg:#a3c0e0;
+  --sm-eluta-bg:#352c1c; --sm-eluta-fg:#d6bd8b;
   --sm-extension-bg:#34322c; --sm-extension-fg:#b5b0a3;
   --rail:#100f0b; --rail-text:#948f82; --rail-dim:#8a8371; --rail-accent:#8dbb9f;
   /* light alphas vanish against #1e1c17 — dark surfaces need a higher alpha
@@ -1974,6 +1982,7 @@
 .jn-v2 .cc-talentbrew{background:var(--cc-talentbrew-bg);color:var(--cc-talentbrew-fg)}
 .jn-v2 .cc-meta{background:var(--cc-meta-bg);color:var(--cc-meta-fg)}
 .jn-v2 .cc-google{background:var(--cc-google-bg);color:var(--cc-google-fg)}
+.jn-v2 .cc-uber{background:var(--cc-uber-bg);color:var(--cc-uber-fg)}
 .jn-v2 .cc-generic{background:var(--cc-generic-bg);color:var(--cc-generic-fg)}
 .jn-v2 .cc-tier1{background:var(--cc-tier1-bg);color:var(--cc-tier1-fg)}
 .jn-v2 .cc-tier2{background:var(--cc-tier2-bg);color:var(--cc-tier2-fg)}
@@ -1987,6 +1996,9 @@
 .jn-v2 .sm-apify{background:var(--sm-apify-bg);color:var(--sm-apify-fg)}
 .jn-v2 .sm-caribbeanjobs{background:var(--sm-caribbeanjobs-bg);color:var(--sm-caribbeanjobs-fg)}
 .jn-v2 .sm-trulyremote{background:var(--sm-trulyremote-bg);color:var(--sm-trulyremote-fg)}
+.jn-v2 .sm-creative{background:var(--sm-creative-bg);color:var(--sm-creative-fg)}
+.jn-v2 .sm-himalayas{background:var(--sm-himalayas-bg);color:var(--sm-himalayas-fg)}
+.jn-v2 .sm-eluta{background:var(--sm-eluta-bg);color:var(--sm-eluta-fg)}
 .jn-v2 .sm-extension{background:var(--sm-extension-bg);color:var(--sm-extension-fg)}
 
 

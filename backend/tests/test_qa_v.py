@@ -53,6 +53,13 @@ class _Clock:
                 return clock.t if tz is not None else clock.t.replace(tzinfo=None)
         for m in modules:
             monkeypatch.setattr(m, "datetime", FakeDT)
+        # Cross-run fetch reuse measures its window on targets' own clock: ticks an hour
+        # apart must not reuse each other's fetch.
+        import time as _time
+        from types import SimpleNamespace
+        import backend.scraper.targets as targets
+        monkeypatch.setattr(targets, "time", SimpleNamespace(
+            time=_time.time, monotonic=lambda: clock.t.timestamp()))
         return cls
 
     @classmethod

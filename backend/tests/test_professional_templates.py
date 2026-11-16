@@ -1,4 +1,4 @@
-"""The two Professional templates follow the ATS reference résumé: Arial (Arimo), #232323 text,
+"""The Professional Photo template (and the two legacy ids that resolve to it) follow the ATS reference résumé: Arial (Arimo), #232323 text,
 #5A5A5A secondary, #1F4E79 ruled section titles, "Title - Company" entries, • bullets."""
 import re
 
@@ -7,7 +7,8 @@ import pytest
 from backend.api.routes_resumes import _render_html
 PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
-TEMPLATES = ["professional-top-left-image", "professional-top-right-image"]
+LEFT, RIGHT, CANON = "professional-top-left-image", "professional-top-right-image", "professional-photo"
+TEMPLATES = [CANON, LEFT, RIGHT]
 DATA = {
     "header": {"name": "DANA OKONKWO", "title": "Senior Product Manager",
                "contact_items": [{"text": "dana@example.com", "url": "mailto:dana@example.com"}, {"text": "Berlin"}]},
@@ -57,7 +58,7 @@ def test_contact_items_are_pipe_separated_and_bullets_use_a_dot(tpl):
     assert "content: '•" in html
 
 
-@pytest.mark.parametrize("tpl,reversed_", [(TEMPLATES[0], False), (TEMPLATES[1], True)])
+@pytest.mark.parametrize("tpl,reversed_", [(CANON, True), (LEFT, False), (RIGHT, True)])      # the canonical default is right
 def test_profile_image_stays_on_its_side(tpl, reversed_):
     html = _html(tpl)
     assert '<img src="data:image/png' in html

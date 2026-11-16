@@ -6,7 +6,6 @@ import re
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Optional
 from backend.models.db import SessionLocal
 from backend.accounts.settings import get_setting
 
@@ -15,6 +14,7 @@ logger = logging.getLogger("jobnavigator.llm")
 
 DEFAULT_PROVIDER = "claude_api"
 DEFAULT_MODEL = "claude-sonnet-5"
+_QUOTA_RE = re.compile(r"usage limit|rate limit|quota|too many requests|\b429\b", re.I)
 
 # Reasoning-effort values each provider accepts; "" sends none, so the model uses its own default.
 # The values a model takes vary inside one provider, so an unsupported pick fails with the provider's
@@ -37,6 +37,15 @@ def _get_setting(db, key, default=""):
     return get_setting(db, key) or default
 
 
+def provider_api_key(db, provider: str) -> str:
+    """The API key setting of `provider` (one per provider, 3.1), or "" for a keyless provider or
+    an empty box. The env fallback is applied at dispatch (`_anthropic_key` & co.), where a member
+    on its own Models section is kept off the owner's env key."""
+    from backend.accounts.settings import PROVIDER_KEY_SETTINGS
+    setting = PROVIDER_KEY_SETTINGS.get(provider)
+    return (_get_setting(db, setting, "") or "").strip() if setting else ""
+
+
 def resolve_llm_config(feature: str = "", db=None) -> dict:
     """Resolve the provider/model/api_key/effort a feature dispatches with: `<feature>_llm_*` setting -> primary `llm_*` setting -> shipped default. Single source of truth for both dispatch and logging."""
     own_db = db is None
@@ -46,26 +55,25 @@ def resolve_llm_config(feature: str = "", db=None) -> dict:
         prefix = f"{feature}_" if feature else ""
         provider = _get_setting(db, f"{prefix}llm_provider", "")
         model = _get_setting(db, f"{prefix}llm_model", "")
-        # L-01: a slot's own key belongs to the slot's own provider. With no provider of its own
-        # the slot follows the Primary, so a key left in it (an override switched off) is stale
-        # and must not reach the Primary's provider.
-        api_key = _get_setting(db, f"{prefix}llm_api_key", "") if (provider or not feature) else ""
         effort = _get_setting(db, f"{prefix}llm_effort", "")
         provider = provider or _get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER
         if feature:
-            model = model or _get_setting(db, "llm_model", "")
-            # Keys and effort values are per provider, so the Primary's carry over only to a slot
-            # on the same provider: a slot on another provider with no key of its own gets "" and
-            # dispatch then applies that provider's env fallback (B1: never another provider's key).
+            # Models and effort values are per provider, so the Primary's carry over only to a slot
+            # on the same provider (R30 L-05: an OpenAI override with no model sent the Primary's
+            # Claude model name to OpenAI). Elsewhere an empty model stays empty and dispatch
+            # names it.
             same_provider = provider == (_get_setting(db, "llm_provider", "") or DEFAULT_PROVIDER)
-            if not api_key and same_provider:
-                api_key = _get_setting(db, "llm_api_key", "")
+            if not model and same_provider:
+                model = _get_setting(db, "llm_model", "")
             if not effort and same_provider:
                 effort = _get_setting(db, "llm_effort", "")
+            if not model and not same_provider:
+                return {"provider": provider, "model": "", "api_key": provider_api_key(db, provider),
+                        "effort": effort}
         return {
             "provider": provider,
             "model": model or DEFAULT_MODEL,
-            "api_key": api_key,
+            "api_key": provider_api_key(db, provider),
             "effort": effort,
         }
     finally:
@@ -94,10 +102,7 @@ async def call_llm(prompt: str, system: str, max_tokens: int = 1200,
             effort = primary["effort"] if provider == primary["provider"] else ""
         fallback_provider = _get_setting(db, "llm_fallback_provider", "")
         fallback_model = _get_setting(db, "llm_fallback_model", "")
-        fb_api_key = _get_setting(db, "llm_fallback_api_key", "")
-        # B2: like a feature slot, the fallback reuses the Primary's key only on the same provider.
-        if not fb_api_key and fallback_provider == primary["provider"]:
-            fb_api_key = primary["api_key"]
+        fb_api_key = provider_api_key(db, fallback_provider)
         fb_effort = _get_setting(db, "llm_fallback_effort", "")
     finally:
         db.close()
@@ -219,6 +224,7 @@ async def call_autofill_llm_stream(prompt: str, system: str, max_tokens: int = 4
 
     if provider in _KEYED_PROVIDERS:
         _require_own_key(provider, api_key)
+    _require_model(provider, model)
     if provider == "opencode_go":
         api_key = _opencode_go_key(api_key)
     elif provider == "openai":
@@ -384,6 +390,7 @@ _KEYED_PROVIDERS = {"claude_api": "Claude API", "openai": "OpenAI", "openrouter"
 OPENCODE_GO_KEY_ENV = "OPENCODE_API_KEY"
 OPENAI_KEY_ENV = "OPENAI_API_KEY"
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+OPENROUTER_KEY_ENV = "OPENROUTER_API_KEY"
 
 
 def _env_key(env_name: str) -> str:
@@ -425,11 +432,14 @@ def _anthropic_key(api_key: str) -> str:
 
 
 def _openrouter_key(api_key: str) -> str:
-    """The OpenRouter key to send. OpenRouter has no env fallback, so an empty key used to send
-    an empty bearer and retry the 401 (L-02); it is a config error instead."""
-    if not api_key:
-        raise NonRetryableLLMError("No API key for OpenRouter — set it in Settings › Models")
-    return api_key
+    """The OpenRouter key to send: the resolved setting, else OPENROUTER_API_KEY for the owner and
+    members on 'inherit'. An empty key used to send an empty bearer and retry the 401 (L-02); no
+    key at all is a config error instead."""
+    key = api_key or _env_key(OPENROUTER_KEY_ENV)
+    if not key:
+        raise NonRetryableLLMError(
+            "No API key for OpenRouter — set it in Settings › Models (or OPENROUTER_API_KEY in .env)")
+    return key
 
 
 def _require_own_key(provider: str, api_key: str) -> None:
@@ -445,11 +455,25 @@ def _require_own_key(provider: str, api_key: str) -> None:
         f"No API key for {_KEYED_PROVIDERS[provider]} — set it in Settings › Models")
 
 
+# Providers that cannot run without a model name (the subscription CLIs fall back to their own default).
+_MODEL_REQUIRED = {**_KEYED_PROVIDERS, "ollama": "Ollama", "lmstudio": "LM Studio"}
+
+
+def _require_model(provider: str, model: str) -> None:
+    """R30 L-05: an override on another provider with no model of its own no longer borrows the
+    Primary's model; an API provider without one fails once, naming the fix, instead of four
+    retries of an unknown-model error."""
+    if not model and provider in _MODEL_REQUIRED:
+        raise NonRetryableLLMError(
+            f"No model picked for {_MODEL_REQUIRED[provider]} — pick one in Settings › Models")
+
+
 async def _dispatch(provider: str, model: str, api_key: str,
                     prompt: str, system: str, max_tokens: int,
                     cached_prefix: str | None = None, effort: str = "") -> dict:
     """Route to the correct provider; only `claude_api` supports prompt caching, others get cached_prefix concatenated into the prompt (no cache discount). `effort` reaches only the providers in REASONING_EFFORTS."""
     _require_own_key(provider, api_key)
+    _require_model(provider, model)
     effort = _supported_effort(provider, effort)
     max_tokens = _output_cap(provider, max_tokens, effort)
     if provider == "claude_api":
@@ -531,104 +555,25 @@ async def _call_claude_api(prompt: str, system: str, model: str, api_key: str,
     }
 
 
-async def _call_claude_code(prompt: str, system: str, model: str, max_tokens: int, effort: str = "") -> dict:
-    """Call Claude via claude CLI subprocess. Returns {text, usage}. Caching not supported."""
-    import os
-    import json as _json
-    full_prompt = f"{system}\n\n{prompt}"
-    cmd = ["claude", "-p", "--output-format", "json"]
-    if model:
-        cmd.extend(["--model", model])
-    if effort:
-        # A level the model lacks steps down to the highest one it has, so no error comes back.
-        cmd.extend(["--effort", effort])
-
-    # Build env: pass CLAUDE_CODE_OAUTH_TOKEN, explicitly EXCLUDE ANTHROPIC_API_KEY
-    # so it uses subscription billing, not API credits
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-    # MT-15: the account's token (a member's own, else the owner's install setting); none set
-    # keeps the process env, i.e. the owner's token from .env exactly as before.
-    token = _claude_code_token()
-    if token:
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-    # QA F8 / R5-08: a member on its own models section keeps its transcripts in a HOME and
-    # config dir of its own (like CODEX_HOME / agy HOME); owner and 'inherit' unchanged.
-    account = _own_login_account()
-    if account is not None:
-        from backend.accounts.credentials import claude_config_dir, claude_home
-        config_dir = claude_config_dir(account)
-        os.makedirs(config_dir, exist_ok=True)
-        env["HOME"] = claude_home(account)
-        env["CLAUDE_CONFIG_DIR"] = config_dir
-
-    rc, stdout, stderr = await _run_cli(cmd, full_prompt.encode(), env=env)
-
-    if rc != 0:
-        error = stderr.decode(errors="replace").strip()
-        raise RuntimeError(f"claude-code subprocess failed (rc={rc}): {error}")
-
-    raw = stdout.decode().strip()
-    try:
-        data = _json.loads(raw)
-        text = data.get("result", raw)
-    except _json.JSONDecodeError:
-        data, text = None, raw
-
-    # `claude -p --output-format json` reports a refusal, an overload or a hit
-    # quota as a rc=0 envelope with is_error set. Returning its text as if it
-    # were the answer buried the reason in whatever the caller did next.
-    if isinstance(data, dict) and (data.get("is_error") or data.get("subtype") not in (None, "success")):
-        reason = (str(text or "").strip() or str(data.get("error") or "").strip()
-                  or str(data.get("subtype") or "").strip() or "no reason given")
-        if _QUOTA_RE.search(reason):
-            raise NonRetryableLLMError(f"Claude Code usage limit reached: {reason[:300]}")
-        raise RuntimeError(f"Claude Code reported an error: {reason[:300]}")
-    if not str(text or "").strip():
-        # Retryable on purpose: an empty completion is a bad minute, not a bad setup.
-        raise RuntimeError("Claude Code returned an empty reply")
-
-    return {
-        "text": text.strip(),
-        "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
-    }
+# The backend resolves account policy; runners never read the application DB.
+from backend.cli_runner.protocol import CLITimeoutError, NonRetryableLLMError  # noqa: F401
+from backend.analyzer import runner_client
 
 
-class CLITimeoutError(RuntimeError):
-    """A CLI that outran its wall clock, carrying whatever it printed before the kill."""
-
-    def __init__(self, message: str, stdout: bytes = b"", stderr: bytes = b""):
-        super().__init__(message)
-        self.stdout = stdout
-        self.stderr = stderr
+async def _call_claude_code(prompt, system, model, max_tokens, effort=""):
+    token = _claude_code_token() or os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+    return await runner_client.complete("claude_code", prompt, system, model, max_tokens,
+                                        account_id=_own_login_account(), claude_token=token, effort=effort)
 
 
-class NonRetryableLLMError(RuntimeError):
-    """A failure a retry cannot fix (not logged in, usage limit); call_llm goes straight to the fallback."""
+async def _call_codex_cli(prompt, system, model, max_tokens, effort=""):
+    return await runner_client.complete("codex_cli", prompt, system, model, max_tokens,
+                                        account_id=_own_login_account(), effort=effort)
 
 
-CLI_TIMEOUT = 300   # seconds one subscription-CLI completion may take before it is killed
-# codex exec processes share one auth.json and rewrite it on token refresh; OpenAI's docs say not
-# to run many against the same file, so at most two at a time whatever the scoring limiter allows.
-# QA F8 / R5-12 (decision, no change): the gates stay process-wide although members on own
-# models have homes of their own. Within one account the login is shared, so the limit is
-# still needed there, and across accounts it doubles as a CPU cap for the CLI processes; one
-# account's backlog delaying another's CLI calls is accepted for a household install.
-_codex_gate = asyncio.Semaphore(2)
-_CODEX_LOGIN_HINT = "run `docker compose exec backend codex login --device-auth`"
-_QUOTA_RE = re.compile(r"usage limit|rate limit|quota|too many requests|\b429\b", re.I)
-# agy refreshes one shared OAuth token file (per account home), so hold the same limit codex
-# gets; process-wide on purpose, see R5-12 above.
-_agy_gate = asyncio.Semaphore(2)
-_AGY_LOGIN_HINT = "run `docker compose exec -it backend agy` and sign in"
-_AGY_AUTH_RE = re.compile(r"authentication (required|failed)|not logged in|sign in", re.I)
-_AGY_STATE = "~/.gemini/antigravity-cli"
-# The deny list the image ships. It lives outside the state directory because agy rewrites
-# settings.json on every start, and a read-only copy there only makes that write fail.
-_AGY_SETTINGS_SOURCE = "/opt/antigravity-settings.json"
-# MT-15: the state dir of the agy call in flight when it is not the default (a member with its
-# own logins runs agy with HOME=~/.gemini/accounts/<id>). The helpers below read it, so the
-# deny list goes into, and the transcript is cleared from, the directory that agy uses.
-_agy_state_override: ContextVar[Optional[str]] = ContextVar("jn_agy_state", default=None)
+async def _call_antigravity_cli(prompt, system, model, max_tokens):
+    return await runner_client.complete("antigravity_cli", prompt, system, model, max_tokens,
+                                        account_id=_own_login_account())
 
 
 def _own_login_account():
@@ -677,297 +622,6 @@ def _claude_code_token() -> str:
         return claude_code_token(db)
     finally:
         db.close()
-
-
-def _agy_state() -> str:
-    return _agy_state_override.get() or os.path.expanduser(_AGY_STATE)
-
-
-async def _run_cli(cmd: list[str], stdin: bytes, env: dict | None = None, timeout: float = CLI_TIMEOUT,
-                   cwd: str | None = None):
-    """Run a CLI to completion with a hard timeout; returns (rc, stdout, stderr)."""
-    process = await asyncio.create_subprocess_exec(
-        *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env=env, cwd=cwd,
-    )
-    reader = asyncio.ensure_future(process.communicate(input=stdin))
-    try:
-        # shield, so a timeout does not cancel the read: after the kill the same task
-        # hands back what the process managed to print, which is how a caller can still
-        # clean up after a call that hung.
-        stdout, stderr = await asyncio.wait_for(asyncio.shield(reader), timeout)
-    except asyncio.TimeoutError:
-        process.kill()
-        await process.wait()
-        partial = (b"", b"")
-        try:
-            partial = await asyncio.wait_for(reader, 5) or partial
-        except (asyncio.TimeoutError, OSError, ValueError, TypeError):
-            pass
-        raise CLITimeoutError(f"{cmd[0]} timed out after {int(timeout)}s", *partial)
-    return process.returncode, stdout, stderr
-
-
-async def _call_codex_cli(prompt: str, system: str, model: str, max_tokens: int, effort: str = "") -> dict:
-    """Call Codex CLI using its existing ChatGPT login; run in an empty read-only workspace."""
-    import json as _json
-    import os
-    import tempfile
-
-    # like ANTHROPIC_API_KEY for claude_code: the plan pays, never an API key that happens to be set
-    env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_API_KEY")}
-    login_hint = _CODEX_LOGIN_HINT
-    # MT-15: a member with its own models section logs in under its own CODEX_HOME; owner and
-    # 'inherit' keep the default home (~/.codex), exactly as before.
-    account = _own_login_account()
-    if account is not None:
-        from backend.accounts.credentials import codex_home
-        home = codex_home(account)
-        os.makedirs(home, exist_ok=True)
-        env["CODEX_HOME"] = home
-        login_hint = f"run `docker compose exec -it -e CODEX_HOME={home} backend codex login --device-auth`"
-    async with _codex_gate:
-        # `codex exec` without a login retries for ~15 s and then prints a 401 storm; the status
-        # check answers in milliseconds and names the fix
-        rc, _, _ = await _run_cli(["codex", "login", "status"], b"", env=env, timeout=30)
-        if rc != 0:
-            raise NonRetryableLLMError(f"Codex CLI is not logged in — {login_hint}")
-
-        full_prompt = f"{system}\n\n{prompt}"
-        with tempfile.TemporaryDirectory(prefix="jobnavigator-codex-") as workdir:
-            cmd = [
-                "codex", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-                "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never",
-                "-c", "web_search=disabled", "-c", "history.persistence=none",
-                "-c", "check_for_update_on_startup=false",
-                "--json", "-C", workdir,
-            ]
-            if model:
-                cmd.extend(["--model", model])
-            if effort:
-                # -c parses its value as TOML, so the string is quoted.
-                cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
-            cmd.append("-")
-            rc, stdout, stderr = await _run_cli(cmd, full_prompt.encode(), env=env)
-
-    raw = stdout.decode(errors="replace").strip()
-    text = ""
-    failed = ""      # turn.failed carries the one readable reason (401, usage limit, model unknown)
-    last_error = ""  # transport-level `error` events, the fallback reason when the turn never fails
-    usage = {"input_tokens": 0, "output_tokens": 0,
-             "cache_read_tokens": 0, "cache_write_tokens": 0}
-    for line in raw.splitlines():
-        try:
-            event = _json.loads(line)
-        except _json.JSONDecodeError:
-            continue
-        kind = event.get("type")
-        if kind == "item.completed":
-            item = event.get("item") or {}
-            if item.get("type") == "agent_message" and item.get("text"):
-                text = item["text"]
-        elif kind == "turn.completed":
-            token_usage = event.get("usage") or {}
-            usage.update({
-                "input_tokens": token_usage.get("input_tokens", 0) or 0,
-                "output_tokens": token_usage.get("output_tokens", 0) or 0,
-                "cache_read_tokens": token_usage.get("cached_input_tokens", 0) or 0,
-            })
-        elif kind == "turn.failed":
-            failed = str((event.get("error") or {}).get("message") or "")
-        elif kind == "error":
-            last_error = str(event.get("message") or "")
-
-    if failed or rc != 0:
-        err_lines = stderr.decode(errors="replace").strip().splitlines()
-        reason = failed or last_error or (err_lines[-1] if err_lines else "no output")
-        if "401" in reason or "Unauthorized" in reason:
-            raise NonRetryableLLMError(f"Codex CLI is not logged in — {login_hint} ({reason})")
-        if _QUOTA_RE.search(reason):
-            raise NonRetryableLLMError(f"Codex usage limit reached: {reason}")
-        raise RuntimeError(f"codex exec failed (rc={rc}): {reason}")
-    if not text:
-        raise RuntimeError("codex exec completed without an agent response")
-    return {"text": text.strip(), "usage": usage}
-
-
-def _agy_events(stdout: bytes):
-    """Every NDJSON event agy printed, skipping any line that is not one."""
-    import json as _json
-    for line in stdout.decode(errors="replace").splitlines():
-        try:
-            yield _json.loads(line)
-        except _json.JSONDecodeError:
-            continue
-
-
-def _agy_conversation_id(stdout: bytes) -> str:
-    """The id agy gave this call. The init event carries it before any answer, which is all
-    a timed-out call leaves behind."""
-    for event in _agy_events(stdout):
-        cid = event.get("conversation_id") or (event.get("result") or {}).get("conversation_id")
-        if cid:
-            return str(cid)
-    return ""
-
-
-def _agy_install_settings() -> list[str]:
-    """Put the shipped deny list where agy reads it, and answer with the rules it must honour.
-    agy rewrites settings.json as it starts, so the file has to be writable: pinning a
-    read-only copy there makes the write fail and drops the CLI onto its defaults."""
-    import json as _json
-    import shutil
-    import os
-    target = os.path.join(_agy_state(), "settings.json")
-    try:
-        with open(_AGY_SETTINGS_SOURCE, encoding="utf-8") as fh:
-            source = fh.read()
-    except OSError as e:
-        raise NonRetryableLLMError(
-            f"Antigravity deny list is missing at {_AGY_SETTINGS_SOURCE} ({e}); "
-            "the agent would run unconstrained, so the call is refused")
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    try:
-        current = open(target, encoding="utf-8").read()
-    except OSError:
-        current = ""
-    if current != source:
-        tmp = f"{target}.jobnavigator.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(source)
-        shutil.move(tmp, target)
-    return list(_json.loads(source).get("permissions", {}).get("deny", []))
-
-
-def _agy_assert_denied(log_path: str, rules: list[str]) -> None:
-    """Fail the call unless agy's own log says it loaded every deny rule.
-    Without this the CLI can silently fall back to defaults and hand the agent
-    `run_command` and `write_file` back, and nothing in the answer would show it."""
-    try:
-        with open(log_path, encoding="utf-8", errors="replace") as fh:
-            loaded = [ln for ln in fh if "CLI settings initialized" in ln]
-    except OSError:
-        loaded = []
-    if not loaded:
-        raise NonRetryableLLMError(
-            "Antigravity CLI never reported its permissions, so the deny list cannot be "
-            "confirmed; the call is refused rather than run unconstrained")
-    line = loaded[-1]
-    missing = [r for r in rules if r not in line]
-    if missing:
-        raise NonRetryableLLMError(
-            f"Antigravity CLI started without the deny rules {missing}; "
-            "it would be free to read files and run commands, so the call is refused")
-
-
-def _agy_discard(conversation_id: str) -> None:
-    """Delete the per-call transcript agy writes. It holds the whole prompt — the resume text —
-    and nothing reads it back, so it is disk growth and a copy of user data we do not want."""
-    import glob
-    import os
-    import shutil
-    home = _agy_state()
-    for path in (*glob.glob(f"{home}/conversations/{conversation_id}.db*"),
-                 f"{home}/presence/{conversation_id}.lock",
-                 f"{home}/annotations/{conversation_id}.pbtxt",
-                 f"{home}/brain/{conversation_id}"):
-        try:
-            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-        except OSError:
-            pass   # a leftover file is untidy, never a reason to fail a scored job
-
-
-async def _call_antigravity_cli(prompt: str, system: str, model: str, max_tokens: int) -> dict:
-    """Call Antigravity CLI on its Google subscription. The prompt rides on stdin as one NDJSON
-    line because `-p` reads argv and argv caps near 128 KB. `max_tokens` is ignored: the CLI
-    exposes no output cap. Tool use is blocked by a deny list installed before each call and
-    confirmed from agy's own log afterwards — `--sandbox` restricts the terminal only, never
-    the file tools."""
-    # like ANTHROPIC_API_KEY for claude_code: the plan pays, never a key that happens to be set
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("GEMINI_API_KEY", "GOOGLE_API_KEY",
-                        "GOOGLE_APPLICATION_CREDENTIALS", "AGY_ADC_AUTH")}
-    login_hint = _AGY_LOGIN_HINT
-    # MT-15: a member with its own models section runs agy with its own HOME, so the login and
-    # the state dir (deny list, transcripts) are its own; owner and 'inherit' keep HOME.
-    account = _own_login_account()
-    state_token = None
-    if account is not None:
-        from backend.accounts.credentials import agy_home, agy_state_dir
-        home = agy_home(account)
-        os.makedirs(home, exist_ok=True)
-        env["HOME"] = home
-        state_token = _agy_state_override.set(agy_state_dir(account))
-        login_hint = f"run `docker compose exec -it -e HOME={home} backend agy` and sign in"
-    try:
-        return await _agy_run(prompt, system, model, env, login_hint)
-    finally:
-        if state_token is not None:
-            _agy_state_override.reset(state_token)
-
-
-async def _agy_run(prompt: str, system: str, model: str, env: dict, login_hint: str) -> dict:
-    """One agy call with `env` (see _call_antigravity_cli); the state dir is `_agy_state()`."""
-    import json as _json
-    import tempfile
-
-    message = _json.dumps({"event": "user",
-                           "message": {"role": "user", "content": f"{system}\n\n{prompt}"}})
-
-    denied = _agy_install_settings()
-    stdout = b""
-    try:
-        async with _agy_gate:
-            with tempfile.TemporaryDirectory(prefix="jobnavigator-agy-") as workdir:
-                # The log goes in the temp directory: it holds the permissions line this
-                # call is checked against, and ~16 KB per call has no business surviving.
-                log_path = os.path.join(workdir, "cli.log")
-                # `-p` always swallows the next token, so it goes last with an attached empty value.
-                cmd = ["agy", "--input-format", "stream-json", "--output-format", "stream-json",
-                       "--print-timeout", f"{int(CLI_TIMEOUT)}s", "--log-file", log_path]
-                if model:
-                    cmd.extend(["--model", model])
-                cmd.append("-p=")
-                rc, stdout, stderr = await _run_cli(cmd, (message + "\n").encode(),
-                                                    env=env, cwd=workdir)
-                _agy_assert_denied(log_path, denied)
-    except CLITimeoutError as e:
-        stdout = e.stdout
-        raise
-    finally:
-        # A timeout kills agy before the result event, so the id comes from the init event.
-        # The transcript has to go exactly in that case too — it holds the whole prompt.
-        conversation_id = _agy_conversation_id(stdout)
-        if conversation_id:
-            _agy_discard(conversation_id)
-
-    result = {}
-    for event in _agy_events(stdout):
-        if event.get("event") == "result":
-            result = event.get("result") or {}
-
-    if result.get("status") != "SUCCESS" or rc != 0:
-        err_lines = stderr.decode(errors="replace").strip().splitlines()
-        reason = str(result.get("error") or "") or (err_lines[-1] if err_lines else "no output")
-        if _AGY_AUTH_RE.search(reason):
-            raise NonRetryableLLMError(f"Antigravity CLI is not logged in — {login_hint} ({reason})")
-        if _QUOTA_RE.search(reason):
-            raise NonRetryableLLMError(f"Antigravity usage limit reached: {reason}")
-        raise RuntimeError(f"agy failed (rc={rc}): {reason}")
-
-    text = str(result.get("response") or "").strip()
-    if not text:
-        raise RuntimeError("agy completed without a response")
-    usage = result.get("usage") or {}
-    return {
-        "text": text,
-        "usage": {
-            "input_tokens": usage.get("input_tokens", 0) or 0,
-            "output_tokens": usage.get("output_tokens", 0) or 0,
-            "cache_read_tokens": usage.get("cache_read_tokens", 0) or 0,
-            "cache_write_tokens": 0,
-        },
-    }
 
 
 async def _call_openai(prompt: str, system: str, model: str, api_key: str, max_tokens: int,
@@ -1046,6 +700,10 @@ def _opencode_go_error(e: Exception, model: str):
                 f"{model} is an OpenCode Go contributor model that trains on request data; Go refuses "
                 "it until paid endpoints that train are allowed in your OpenCode account — allow "
                 "that there or pick another model")
+    # R30 L-07: Go is a subscription with usage limits, like the CLIs: a 429 or a limit
+    # message does not clear within the 14 s of retries, so go to the fallback at once.
+    if getattr(e, "status_code", None) == 429 or _QUOTA_RE.search(message):
+        return NonRetryableLLMError(f"OpenCode Go usage limit reached: {message}")
     return None
 
 
@@ -1090,19 +748,32 @@ async def _call_openrouter(prompt: str, system: str, model: str, api_key: str, m
 async def _call_ollama(prompt: str, system: str, model: str, max_tokens: int) -> dict:
     """Call local Ollama instance. Returns {text, usage}."""
     import httpx
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(
-            f"{local_base_url('ollama')}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "system": system,
-                "stream": False,
-                "options": {"num_predict": max_tokens},
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{local_base_url('ollama')}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "system": system,
+                    "stream": False,
+                    "options": {"num_predict": max_tokens},
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPStatusError as e:
+        # R30 L-08: httpx names the URL, which is the owner's server address; a member on
+        # inherit sees this text in toasts and the LLM log, so it carries the status only.
+        detail = ""
+        try:
+            detail = str((e.response.json() or {}).get("error") or "")[:200]
+        except Exception:
+            pass
+        raise RuntimeError(f"Ollama answered HTTP {e.response.status_code}"
+                           + (f": {detail}" if detail else "")) from None
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Ollama is not reachable ({type(e).__name__})") from None
     return {
         "text": data["response"].strip(),
         "usage": {

@@ -15,7 +15,7 @@ const KINDS = {
   },
   searches: {
     noun: 'search', title: 'Copy a search from…',
-    hint: 'Copies the search settings. It runs at the next scheduled pass.',
+    hint: 'Copies the search settings. It runs at the next scheduled pass; an Apify search is copied paused, because each run bills the account.',
     sub: (i) => [i.search_term || i.direct_url, i.location].filter(Boolean).join(' · '),
   },
 }

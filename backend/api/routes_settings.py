@@ -20,7 +20,10 @@ _REDACT_KEYS = {"dashboard_api_key", "gmail_refresh_token", "claude_code_oauth_t
                 "telegram_bot_token"}
 # Server-side only, never listed (not even redacted) and not writable (not a known key).
 _HIDDEN_KEYS = {"account_cookie_secret", "telegram_own_webhook_secret", "gmail_token_status",
-                "llm_local_seed_cleared"}
+                "llm_local_seed_cleared", "llm_provider_keys_migrated", "cv_score_keys_migrated", "posting_keys_migrated",
+                "telemetry_install_id", "telemetry_last_sent_at",
+                # the per-slot API keys replaced by one key per provider (kept one release for a downgrade)
+                *acct_settings.LEGACY_LLM_KEY_SETTINGS}
 
 
 def _is_secret(key: str) -> bool:
@@ -74,6 +77,20 @@ def _check_default_resume(db, value) -> None:
         Resume.id == rid, Resume.is_base == True, Resume.active.is_not(False)).first() is not None  # noqa: E712 (scoped)
     if not found:
         raise HTTPException(status_code=422, detail="default_resume_id must be \"\", \"persona\" or the id of one of your base résumés")
+
+
+def _check_template_setting(key, value) -> None:
+    """`cover_letter_template` is "", same_as_resume, last_selected or a folder under
+    cover_letter_templates/; `resume_template` is "", last_selected or a folder under
+    resume_templates/ (on this install). Anything else is a 422."""
+    from backend.api import routes_cover_letters as CL, routes_resumes as R
+    if key == "cover_letter_template":
+        rules, folder, what = ("", CL.SAME_AS_RESUME, R.LAST_SELECTED), CL.TEMPLATES_DIR, "same_as_resume, last_selected"
+    else:
+        rules, folder, what = ("", R.LAST_SELECTED), R.TEMPLATES_DIR, "last_selected"
+    v = value.strip() if isinstance(value, str) else value
+    if v not in rules and v not in R.template_paths(folder):
+        raise HTTPException(status_code=422, detail=f"{key} must be {what} or the id of a template on this install")
 
 
 _CHAT_KEYS = ("telegram_chat_id", "telegram_bot_mode", "telegram_bot_token")
@@ -205,6 +222,9 @@ def update_settings(updates: dict, db: Session = Depends(get_db)):
 
     if "default_resume_id" in checkable:
         _check_default_resume(db, checkable["default_resume_id"])
+    for key in ("cover_letter_template", "resume_template"):
+        if key in checkable:
+            _check_template_setting(key, checkable[key])
     _check_telegram_chat(db, checkable, targets)
 
     warnings: list[str] = []
@@ -220,6 +240,9 @@ def update_settings(updates: dict, db: Session = Depends(get_db)):
         if target is None:
             install_updated.append(key)
     db.commit()
+
+    from backend.runner_management import notify as notify_runners
+    notify_runners()
 
     if not install_updated:
         # A member's own values touch no process-wide state (scheduler timing, semaphores
@@ -246,7 +269,7 @@ def update_settings(updates: dict, db: Session = Depends(get_db)):
             logger.exception("%s failed after settings update", name)
 
     timing_keys = {
-        "scrape_interval_minutes", "email_check_interval_minutes",
+        "scrape_interval_minutes", "email_check_interval_minutes", "telemetry_level",
         "backup_cron", "digest_cron", "h1b_cron", "cleanup_cron", "reject_cron",
     }
     if timing_keys & set(install_updated):
@@ -254,6 +277,12 @@ def update_settings(updates: dict, db: Session = Depends(get_db)):
 
     if "scoring_max_concurrent" in install_updated:
         _reconfigure("reset_scoring_semaphore", reset_scoring_semaphore)
+
+    if "scrape_max_concurrent" in install_updated:
+        def _reset_scraping():
+            from backend.job_monitor import reset_limiter
+            reset_limiter("scraping")
+        _reconfigure("reset_scrape_gate", _reset_scraping)
 
     if "tailoring_max_concurrent" in install_updated:
         def _reset_tailoring():
@@ -320,6 +349,8 @@ def update_policy(body: dict, db: Session = Depends(get_db)):
     else:
         row.mode = mode
     db.commit()
+    from backend.runner_management import notify as notify_runners
+    notify_runners()
     return {"account_id": str(acc_id), "section": section, "mode": mode}
 
 

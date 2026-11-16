@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import ClosedMark from '../ClosedMark'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import api from '../api'
-import { downloadName } from '../download'
+import { track, voiceId } from '../telemetry'
+import { downloadErrorReason, downloadName } from '../download'
 import { useFlushBeforeSwitch } from '../accounts'
 import { Picker, VoicePicker, LengthPicker, LENGTHS, STAGE_CLASS } from './CoverLetters'
 import ConfirmDialog from '../ConfirmDialog'
@@ -186,7 +188,10 @@ export default function CoverLetterEditor() {
   // whenever a dashboard key is set — go through axios and save the blob.
   const download = async () => {
     try {
+      // the edit the debounced save still owes goes first, so the PDF has it (R30 D-06)
+      clearTimeout(saveTimer.current); await sendPending()
       const r = await api.get(`/cover-letters/${id}/pdf`, { responseType: 'blob' })
+      track('letter_exported', { format: 'pdf' })
       if (__DEMO__) {   // the demo prints the rendered template through the browser
         const { printHtml, blobText } = await loadDemo('pdf.js')
         await printHtml(await blobText(r.data)); return
@@ -196,7 +201,11 @@ export default function CoverLetterEditor() {
       a.href = url; a.download = downloadName(r.headers?.['content-disposition'], 'CoverLetter.pdf')
       document.body.appendChild(a); a.click(); a.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch (e) { console.error(e); pushToast({ kind: 'error', msg: 'Could not download the PDF.' }) }   // a download failure is not a save failure
+    } catch (e) {   // a download failure is not a save failure
+      console.error(e)
+      const reason = await downloadErrorReason(e)
+      pushToast({ kind: 'error', msg: 'Could not download the PDF' + (reason ? ` — ${reason}` : '.') })
+    }
   }
 
   const remove = () => {
@@ -235,6 +244,7 @@ export default function CoverLetterEditor() {
         resume_id: rSource, job_id: doc.job_id, voice: rVoice, length: rLength,
         cover_letter_id: id,       // rewrite this draft in place
       })
+      track('letter_generated', { voice: voiceId(rVoice) })
       regenRun.current = started?.run_id || null   // read its status below
     } catch (e) {
       setRegening(false)
@@ -372,6 +382,7 @@ export default function CoverLetterEditor() {
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
           <span style={{ minWidth: 0, fontSize: 12.5, lineHeight: '18px', fontWeight: 500, color: 'var(--text-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             Written for <span style={{ color: 'var(--text)' }}>{doc.company ? `${doc.company} — ${doc.title}` : doc.name}</span>
+            {doc.job_id && <ClosedMark jobId={doc.job_id} />}
             {doc.source_name && <><BandRule />from <span onClick={() => doc.resume_id && navigate(`/resumes/${doc.resume_id}`)}
               title={doc.resume_id ? 'Open the source résumé' : 'Written from your Persona'}
               style={{ color: 'var(--accent)', cursor: doc.resume_id ? 'pointer' : 'default' }}>{doc.source_name}{doc.resume_id ? ' ↗' : ''}</span></>}

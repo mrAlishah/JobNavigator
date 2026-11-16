@@ -13,7 +13,8 @@ from PIL import Image
 from backend.api.routes_resumes import _build_docx, _render_html, _style_overrides
 
 ROOT = Path(__file__).resolve().parents[1] / "resume_templates"
-PRO = ["professional-top-left-image", "professional-top-right-image"]
+PRO = ["professional-photo"]
+LEGACY_DIRS = ["professional-top-left-image", "professional-top-right-image"]    # unused folders kept until they are deleted
 PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 DATA = {"header": {"name": "Dana", "title": "PM", "contact_items": [{"text": "Berlin"}]}, "summary": "sum",
         "experience": [{"title": "PM", "company": "Acme", "bullets": ["b1"]}],
@@ -32,11 +33,11 @@ def _html(tpl, style=None, **kw):
     return _render_html(data, tpl, "letter", profile_image_path=PNG, profile_image_enabled=True, **kw)
 
 
-def _docx_style(tpl="professional-top-left-image"):
+def _docx_style(tpl="professional-photo"):
     return json.loads((ROOT / tpl / "meta.json").read_text())["docx"]
 
 
-def _docx(style, tpl="professional-top-left-image", image=None, st=None):
+def _docx(style, tpl="professional-photo", image=None, st=None):
     st = _docx_style(tpl) if st is None else st
     return docx.Document(io.BytesIO(_build_docx({**DATA, "style": style}, "letter", st, image)))
 
@@ -87,7 +88,7 @@ def test_no_style_leaves_the_html_unchanged(tpl):
 
 
 def test_other_templates_ignore_style():
-    other = [p.name for p in ROOT.iterdir() if p.is_dir() and p.name not in PRO]
+    other = [p.name for p in ROOT.iterdir() if p.is_dir() and p.name not in PRO + LEGACY_DIRS]
     for tpl in other:
         assert _html(tpl, STYLE) == _html(tpl), tpl
 
@@ -387,7 +388,7 @@ def test_docx_section_and_card_xml_stay_in_schema_order(style):
 # ── Manrope: a font that ships with the templates (fonts/ folder), embedded only when chosen ─────────
 from backend.api.routes_resumes import _STYLE_FONTS
 
-FONT_FILES = sorted((ROOT / "professional-top-left-image" / "fonts").glob("Manrope-*.ttf"))
+FONT_FILES = sorted((ROOT / "professional-photo" / "fonts").glob("Manrope-*.ttf"))
 
 
 def test_manrope_is_a_choosable_font():

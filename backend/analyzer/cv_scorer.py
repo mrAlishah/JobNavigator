@@ -9,6 +9,8 @@ from backend.analyzer.llm_logger import log_llm_call
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, parse_model_json
 from backend.models.db import SessionLocal, Job
 from backend.accounts.settings import get_setting
+from backend.scraper._shared.link_kinds import job_link
+from backend.scraper._shared.levels_jobs import is_levels_job
 
 logger = logging.getLogger("jobnavigator.cv_scorer")
 
@@ -132,6 +134,10 @@ def _flatten_resume(json_data: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
+from backend.analyzer.score_keys import (  # noqa: E402
+    PERSONA, TAILORED, ScoringSet, display_best, key_for, keyed, names_for,
+)
+
 # Reserved id used in selected_resume_ids / default_resume_id to mean
 # "score against Persona.resume_content as a virtual Resume named 'Persona'".
 _PERSONA_KEY = "persona"
@@ -147,17 +153,19 @@ def _get_persona_text(db) -> dict:
     text = _flatten_resume(p.resume_content or {})
     if not text:
         return {}
-    return {_PERSONA_DISPLAY: text}
+    out = ScoringSet()
+    out.add(_PERSONA_DISPLAY, text, PERSONA)
+    return out
 
 
 def _get_resume_texts(db) -> dict:
     """Return {Resume.name: flattened_text} for every base Resume + Persona (if populated, always last), ordered by Resume.id for stable cache keys."""
     from backend.models.db import Resume
-    out = {}
+    out = ScoringSet()
     for r in db.query(Resume).filter(Resume.is_base == True, Resume.active.is_not(False)).order_by(Resume.id).all():
         text = _flatten_resume(r.json_data or {})
         if text:
-            out[r.name] = text
+            out.add(r.name, text, str(r.id))
     out.update(_get_persona_text(db))
     return out
 
@@ -185,7 +193,9 @@ def _get_default_resume(db) -> dict:
     text = _flatten_resume(r.json_data or {})
     if not text:
         return {}
-    return {r.name: text}
+    out = ScoringSet()
+    out.add(r.name, text, str(r.id))
+    return out
 
 
 def _get_resume_texts_for_company(db, company) -> dict:
@@ -193,13 +203,13 @@ def _get_resume_texts_for_company(db, company) -> dict:
     from backend.models.db import Resume
     selected = getattr(company, "selected_resume_ids", None) or []
     if selected:
-        out = {}
+        out = ScoringSet()
         resume_ids = [s for s in selected if s != _PERSONA_KEY]
         if resume_ids:
             for r in db.query(Resume).filter(Resume.is_base == True, Resume.active.is_not(False), Resume.id.in_(resume_ids)).order_by(Resume.id).all():
                 text = _flatten_resume(r.json_data or {})
                 if text:
-                    out[r.name] = text
+                    out.add(r.name, text, str(r.id))
         if _PERSONA_KEY in selected:
             out.update(_get_persona_text(db))
         if out:
@@ -217,7 +227,7 @@ def _cv_texts_for_ids(db, cv_ids: list) -> dict:
     'persona' id; no is_base filter — explicit IDs are the caller's responsibility.
     """
     from backend.models.db import Resume
-    cv_texts = {}
+    cv_texts = ScoringSet()
     resume_ids = [c for c in cv_ids if c != _PERSONA_KEY]
     if resume_ids:
         resumes = db.query(Resume).filter(Resume.id.in_(resume_ids)).order_by(Resume.id).all()
@@ -228,13 +238,11 @@ def _cv_texts_for_ids(db, cv_ids: list) -> dict:
             text = _flatten_resume(r.json_data or {})
             if not text:
                 continue
-            if r.is_base:
-                label = r.name
-            elif tailored_count == 1:
-                label = "Tailored"
+            if not r.is_base and tailored_count == 1:
+                cv_texts.add(TAILORED, text, TAILORED)
             else:
-                label = r.name  # disambiguate; loses the short-chip nicety, but no data loss
-            cv_texts[label] = text
+                # A base, or one of several tailored copies: stored by its id, shown by its name.
+                cv_texts.add(r.name, text, str(r.id))
     if _PERSONA_KEY in cv_ids:
         cv_texts.update(_get_persona_text(db))
     return cv_texts
@@ -262,11 +270,40 @@ def _job_text_from_row(job) -> str | None:
         return description.strip()
 
     cached = getattr(job, "cached_page_text", None)
-    if cached and len(cached.strip()) > 50:
+    # a levels.fyi job page caches as a cookie banner: its text is in the page data (_levels_text)
+    if cached and len(cached.strip()) > 50 and not is_levels_job(job_link(job) or ""):
         logger.info(f"Job {job.id}: using cached_page_text (no description)")
         return cached.strip()
 
     return None
+
+
+async def _levels_text(job_id, url: str) -> str | None:
+    """A levels.fyi job's description from its page data, saved on the job. A job whose data names
+    no employer link is applied to on levels.fyi, so it becomes Easy Apply (levels_jobs). Opens one
+    short session after the fetch, like _fetch_job_text."""
+    from backend.scraper._shared.levels_jobs import fetch_job
+    from backend.scraper._shared.link_kinds import BOARD, EASY_APPLY
+    data = await fetch_job(url)
+    if not data:
+        logger.info(f"Job {job_id}: no job data on its levels.fyi page")
+        return None
+    desc = data.get("description")
+    db = SessionLocal()
+    try:
+        row = db.query(Job).filter(Job.id == job_id).first()
+        if row is not None:
+            if desc and not (row.description or "").strip():
+                row.description = desc
+            if not data.get("application_url") and not row.apply_url and row.link_kind in (BOARD, None):
+                row.link_kind = EASY_APPLY
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Job {job_id}: could not save the levels.fyi description: {e}")
+    finally:
+        db.close()
+    return desc
 
 
 async def _fetch_job_text(job_id, url: str) -> str | None:
@@ -278,6 +315,8 @@ async def _fetch_job_text(job_id, url: str) -> str | None:
     """
     if not url:
         return None
+    if is_levels_job(url):
+        return await _levels_text(job_id, url)
     logger.info(f"Job {job_id}: no text available, fetching live page")
     try:
         from backend.api.routes_applications import _cache_job_page
@@ -311,7 +350,7 @@ async def _get_job_text(job: Job, db=None) -> str | None:
         return text
     if db is None:
         return None
-    text = await _fetch_job_text(job.id, getattr(job, "url", None))
+    text = await _fetch_job_text(job.id, job_link(job))
     if text and db is not None:
         try:
             db.refresh(job)
@@ -390,11 +429,15 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
     return_value = None
 
     try:
-        # Honor the prompt_caching_enabled setting — setting cached_prefix=None disables
-        # the cache_control block on the Anthropic request, so caching is fully off.
-        effective_prefix = cached_prefix if caching_enabled else None
+        # Honor the prompt_caching_enabled setting: with caching off the rubric, résumés and
+        # schema go in front of the job text in the prompt itself, so no cache_control block is
+        # sent. (They used to be dropped with the prefix, which left the model only the JD.)
+        if caching_enabled:
+            effective_prefix, effective_prompt = cached_prefix, user_prompt
+        else:
+            effective_prefix, effective_prompt = None, f"{cached_prefix}\n\n{user_prompt}"
         with llm_feature("scoring"):
-            resp = await call_llm(user_prompt, system_msg, max_tokens, cached_prefix=effective_prefix,
+            resp = await call_llm(effective_prompt, system_msg, max_tokens, cached_prefix=effective_prefix,
                                   provider=provider_for_log, model=model_for_log, api_key=scoring_api_key,
                                   effort=scoring_effort)
         text = resp["text"]
@@ -435,7 +478,7 @@ async def _score_job_inner(job: Job, cv_texts: dict, db=None, depth="light", pre
     except json.JSONDecodeError as e:
         call_success = False
         call_error = UNPARSEABLE_MESSAGE
-        logger.error(f"Failed to parse LLM response as JSON: {e}")
+        logger.error(f"Failed to parse LLM response as JSON: {e} — raw head: {(text or '')[:200]!r}")
     except Exception as e:
         call_success = False
         call_error = str(e)
@@ -476,15 +519,24 @@ def _alert_snapshot(job: Job):
     """
     from types import SimpleNamespace
     return SimpleNamespace(
-        id=job.id, company=job.company, title=job.title, url=job.url,
+        id=job.id, company=job.company, title=job.title, url=job_link(job),
         location=job.location, remote=job.remote,
         salary_min=job.salary_min, salary_max=job.salary_max,
         h1b_verdict=job.h1b_verdict,
         h1b_company_lca_count=job.h1b_company_lca_count,
         h1b_company_approval_rate=job.h1b_company_approval_rate,
         h1b_jd_flag=job.h1b_jd_flag, h1b_jd_snippet=job.h1b_jd_snippet,
-        cv_scores=dict(job.cv_scores or {}),
+        # By name, as the alert shows them (stored by résumé id, score_keys.py).
+        cv_scores=_display_scores(job),
     )
+
+
+def _display_scores(job) -> dict:
+    from sqlalchemy.orm import object_session
+    from backend.analyzer.score_keys import display, resume_names
+    sess = object_session(job)
+    names = resume_names(sess) if sess is not None else {}
+    return display(dict(job.cv_scores or {}), None, None, getattr(job, "cv_score_names", None), names)[0] or {}
 
 
 def _find_company_for_job(db, job: Job):
@@ -665,8 +717,8 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                 preloaded_text = _job_text_from_row(job)
                 if preloaded_text:
                     to_score.append((job_ref, cv_texts, depth, preloaded_text))
-                elif job.url:
-                    needs_fetch.append((job_ref, cv_texts, depth, job.url))
+                elif job_link(job):
+                    needs_fetch.append((job_ref, cv_texts, depth, job_link(job)))
                 else:
                     job.cv_scores = {"_skipped": "no_text_available"}
                     job.best_cv_score = None
@@ -737,7 +789,9 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                         )
                         total_scored += 1
                         continue
-                    job.cv_scores = scores
+                    # The model answers by label (the résumé's name); stored by résumé id.
+                    job.cv_scores = keyed(scores, cv_texts)
+                    job.cv_score_names = {**(job.cv_score_names or {}), **names_for(cv_texts, scores)}
                     # Precompute max score for fast DB filtering
                     try:
                         _scores = job.cv_scores or {}
@@ -745,9 +799,9 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                         job.best_cv_score = max(_numeric) if _numeric else None
                     except (ValueError, TypeError):
                         job.best_cv_score = None
-                    job.best_cv = result.get("best_cv", "")
+                    job.best_cv = key_for(result.get("best_cv", ""), cv_texts)
 
-                    # Store scoring report per CV (nested dict keyed by CV name)
+                    # Store scoring report per résumé (nested dict keyed like cv_scores)
                     if result.get("_scoring_report"):
                         report = result["_scoring_report"]
                         existing = dict(job.scoring_report or {})
@@ -755,9 +809,9 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                         if existing and "summary" in existing:
                             old_cv = existing.pop("scored_with", job.best_cv or "Unknown")
                             existing = {old_cv: existing}
-                        scored_cv_names = list(scores.keys())
-                        cv_name = scored_cv_names[0] if len(scored_cv_names) == 1 else job.best_cv or scored_cv_names[0]
-                        existing[cv_name] = report
+                        scored_keys = list(job.cv_scores.keys())
+                        cv_key = scored_keys[0] if len(scored_keys) == 1 else job.best_cv or scored_keys[0]
+                        existing[cv_key] = report
                         job.scoring_report = existing
 
                     numeric_scores = [v for v in scores.values() if isinstance(v, (int, float))]
@@ -765,7 +819,7 @@ async def _analyze_unscored_jobs(status: str, attempted: set):
                     score_summary = ", ".join(f"{k}={v}" for k, v in scores.items())
                     logger.info(
                         f"Scored {job.company} - {job.title}: "
-                        f"{score_summary}, Best={job.best_cv}"
+                        f"{score_summary}, Best={result.get('best_cv', '')}"
                     )
 
                     # Check if should trigger Telegram alert (threshold hoisted above loop)
@@ -823,7 +877,7 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
 
         job_title = job.title
         job_company = job.company
-        job_url = job.url
+        job_url = job_link(job)
 
         if cv_ids:
             cv_texts = _cv_texts_for_ids(db, cv_ids)
@@ -867,9 +921,12 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
         if not isinstance(new_scores, dict):
             logger.warning(f"Job {job_id}: rescore result has invalid scores — not persisting")
             return "Malformed LLM response - not persisted"
+        # The model answers by label (the résumé's name); stored by résumé id.
+        new_scores = keyed(new_scores, cv_texts)
         merged = dict(job.cv_scores or {})
         merged.update(new_scores)
         job.cv_scores = merged
+        job.cv_score_names = {**(job.cv_score_names or {}), **names_for(cv_texts, result.get("scores"))}
         # Precompute max score for fast DB filtering (Task 2)
         try:
             _scores = job.cv_scores or {}
@@ -882,7 +939,7 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
         if numeric_merged:
             job.best_cv = max(numeric_merged, key=numeric_merged.get)
         else:
-            job.best_cv = result.get("best_cv", "")
+            job.best_cv = key_for(result.get("best_cv", ""), cv_texts)
 
         if result.get("_scoring_report"):
             report = result["_scoring_report"]
@@ -890,9 +947,9 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
             if existing and "summary" in existing:
                 old_cv = existing.pop("scored_with", job.best_cv or "Unknown")
                 existing = {old_cv: existing}
-            scored_cv_names = list(new_scores.keys())
-            cv_name = scored_cv_names[0] if len(scored_cv_names) == 1 else job.best_cv or scored_cv_names[0]
-            existing[cv_name] = report
+            scored_keys = list(new_scores.keys())
+            cv_key = scored_keys[0] if len(scored_keys) == 1 else job.best_cv or scored_keys[0]
+            existing[cv_key] = report
             job.scoring_report = existing
 
         db.commit()
@@ -903,8 +960,9 @@ async def score_single_job(job_id: str, cv_ids: list = None, depth: str = "full"
         log_activity("cv_score", f"Scored job '{job_title}' at {job_company}: best={best}", company=job_company)
 
         # Returned string becomes JobRun.result_summary (Stats -> Run history).
+        best_name = display_best(job, db=db)
         return (f"{job_title} - best {best}"
-                + (f" ({job.best_cv})" if job.best_cv else "")
+                + (f" ({best_name})" if best_name else "")
                 + f", {depth}")
     finally:
         db.close()

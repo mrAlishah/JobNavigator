@@ -55,6 +55,33 @@ async def test_track_llm_call_logs_failure(test_db):
 
 
 @pytest.mark.asyncio
+async def test_track_llm_call_logs_cancellation_as_failure(test_db):
+    """CancelledError is a BaseException: a call cut off mid-flight (container stopped,
+    client gone) must not be logged as a success with 0 tokens."""
+    import asyncio
+    from backend.analyzer.llm_logger import track_llm_call
+    from backend.models.db import LlmCallLog
+
+    started = asyncio.Event()
+
+    async def call():
+        async with track_llm_call("tailor", "antigravity_cli", "gemini-3.8-flash-high"):
+            started.set()
+            await asyncio.sleep(60)
+
+    task = asyncio.create_task(call())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    row = test_db.query(LlmCallLog).first()
+    assert row is not None
+    assert row.success is False
+    assert row.error == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_track_llm_call_job_id(test_db):
     """job_id is forwarded to the log row when provided."""
     import uuid

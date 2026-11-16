@@ -11,6 +11,8 @@ list to both UIs, so a new board is one entry here and no frontend change.
 | apify_indeed     | misceres/indeed-scraper, fed one search URL | JobSpy's direct Indeed requests get blocked     |
 | apify_linkedin   | valig/linkedin-jobs-scraper                 | JobSpy gets rate-limited on LinkedIn            |
 | apify_glassdoor  | valig/glassdoor-jobs-scraper                | JobSpy's Glassdoor path is not offered at all   |
+| apify_behance    | piotrv1001/behance-jobs-scraper             | fallback for the creative mode's own clients    |
+| apify_hollylist  | datawatcher/hollylist-scraper               | (same)                                          |
 | apify_greenhouse | fantastic-jobs/career-site-job-listing-api  | keyword search across every company on that     |
 | apify_lever      | with ats=[<that ATS>]                       | ATS; the built-in ATS handlers need a known     |
 | apify_ashby      |                                             | company                                         |
@@ -46,8 +48,10 @@ from backend.countries import (
 from backend.accounts.settings import get_setting
 from backend.models.db import SessionLocal, Job, Search, get_existing_external_ids
 from backend.analyzer.salary_extractor import extract_salary
+from backend.analyzer.work_arrangement import HYBRID, ONSITE, REMOTE, extract_arrangement
 from backend.scraper._shared.analysis import analyze_inline, prefetch_h1b
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.posting_links import counts_as_new
 from backend.scraper._shared.filters import (build_search_exclude_sets, company_included,
                                              search_title_filters, title_kept)
 from backend.scraper._shared.html_text import html_to_text
@@ -147,7 +151,13 @@ def _indeed_input(search: Search, limit: int) -> dict:
 
 def _linkedin_input(search: Search, limit: int) -> dict:
     """LinkedIn search params pass through `urlParam`, the way JobSpy builds them: `f_TPR`
-    takes any age in seconds (the actor's own datePosted has three steps), `f_WT=2` is remote."""
+    takes any age in seconds (the actor's own datePosted has three steps).
+
+    `f_WT=2` is LinkedIn's remote filter, and LinkedIn ignores it without login: on
+    2026-10-22 the guest endpoint and the public /jobs/search page returned the same rows
+    with and without it. It stays in the input because it costs nothing and a logged-in
+    LinkedIn applies it. `_not_remote` is the filter that works: it drops the rows that
+    the posting itself calls hybrid or on-site."""
     params = []
     if search.hours_old:
         params.append({"key": "f_TPR", "value": f"r{int(search.hours_old) * 3600}"})
@@ -176,6 +186,35 @@ def _glassdoor_input(search: Search, limit: int) -> dict:
         body["daysOld"] = -(-int(search.hours_old) // 24)    # whole days, rounded up
     if search.is_remote:
         body["remoteWorkType"] = True
+    return body
+
+
+def _first_place(search: Search) -> str:
+    """"Los Angeles, CA" -> "Los Angeles": the creative-board actors match a bare city name."""
+    return _place(search).split(",")[0].strip()
+
+
+def _behance_input(search: Search, limit: int) -> dict:
+    """The actor takes no posting age and no remote filter: its `isWorldwide` switch is not
+    one (on 2026-10-24 a Remote run with it returned 15 on-site rows in Asia and Africa, and
+    0 remote ones). `_not_remote` drops the on-site rows instead."""
+    body = {"search": (search.search_term or "").strip(), "maxItems": limit,
+            "jobTypes": ["CONTRACT", "FULLTIME"]}
+    city = _first_place(search)
+    if city:
+        body["city"] = city
+    return body
+
+
+def _hollylist_input(search: Search, limit: int) -> dict:
+    """Members-only offers carry no company and no text, so the actor skips them."""
+    body = {"searchQueries": [(search.search_term or "").strip()], "maxResults": limit,
+            "extractFullDetails": True, "includePremiumOffers": False}
+    city = _first_place(search)
+    if city:
+        body["locations"] = [city]
+    if search.is_remote:
+        body["workType"] = ["remote"]
     return body
 
 
@@ -306,6 +345,59 @@ def _parse_career_site(raw: dict) -> dict:
     }
 
 
+_REMOTE_STATUS = {"REMOTE": REMOTE, "HYBRID": HYBRID, "ONSITE": ONSITE}
+
+
+def _iso_date(ts) -> str | None:
+    """Unix seconds -> "YYYY-MM-DD" (UTC); anything else -> None."""
+    if not isinstance(ts, (int, float)) or ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+
+
+def _parse_behance(raw: dict) -> dict:
+    """Behance lists no salary on this actor's rows."""
+    return {
+        "title": raw.get("title") or "",
+        "company": raw.get("companyName") or "",
+        "url": raw.get("url") or "",
+        "location": raw.get("locationDisplay") or "",
+        "description": html_to_text(raw.get("description") or ""),
+        "salary_min": None,
+        "salary_max": None,
+        "arrangement": _REMOTE_STATUS.get(str(raw.get("remoteStatus") or "").upper()),
+        "posted": _iso_date(raw.get("postedOn")),
+    }
+
+
+def _hollylist_salary(raw: dict) -> tuple:
+    """(min, max) of the first salary row that the posting gives per year in USD, else (None, None).
+    Another currency stays in the description text, as on caribbeanjobs."""
+    for s in raw.get("salaries") or []:
+        if (isinstance(s, dict) and s.get("isOriginal") and str(s.get("period") or "").lower() == "year"
+                and str(s.get("currency") or "").upper() == "USD"):
+            lo, hi = s.get("min"), s.get("max")
+            return (int(lo) if lo else None), (int(hi or lo) if (hi or lo) else None)
+    return None, None
+
+
+def _parse_hollylist(raw: dict) -> dict:
+    loc = next((l for l in raw.get("locations") or [] if isinstance(l, dict)), {})
+    sal_min, sal_max = _hollylist_salary(raw)
+    work = next((w.get("type") for w in raw.get("workType") or [] if isinstance(w, dict)), None)
+    return {
+        "title": (raw.get("title") or "").strip(),
+        "company": (raw.get("company") or {}).get("name") or "",
+        "url": raw.get("url") or "",
+        "location": ", ".join(p for p in (loc.get("city"), loc.get("region"), loc.get("countryCode")) if p),
+        "description": (raw.get("description") or {}).get("text") or "",
+        "salary_min": sal_min,
+        "salary_max": sal_max,
+        "arrangement": work if work in (REMOTE, HYBRID, ONSITE) else None,
+        "posted": (raw.get("dates") or {}).get("posted"),
+    }
+
+
 @dataclass(frozen=True)
 class Preset:
     actor: str                                   # "owner/name" as the Apify Store shows it
@@ -333,12 +425,26 @@ PRESETS = {
         _indeed_input, _parse_indeed, 6.0),
     "apify_linkedin": Preset(
         "valig/linkedin-jobs-scraper", "LinkedIn",
-        "LinkedIn public job search. Hours old is exact; Remote only uses LinkedIn's remote filter.",
+        "LinkedIn public job search. Hours old is exact. LinkedIn ignores Remote without login, "
+        "so Remote only drops the rows that the posting calls hybrid or on-site.",
         _linkedin_input, _parse_linkedin, 0.40),
     "apify_glassdoor": Preset(
         "valig/glassdoor-jobs-scraper", "Glassdoor",
         "Glassdoor, newest first. Hours old rounds up to whole days; empty means the last 30 days.",
         _glassdoor_input, _parse_glassdoor, 0.40),
+    # Fallbacks for the creative mode's own Behance and Hollylist clients (sources/creative.py).
+    "apify_behance": Preset(
+        "piotrv1001/behance-jobs-scraper", "Behance",
+        "Behance full-time and contract jobs; freelance briefs are not included. Hours old is not "
+        "applied. Location matches the first city name. The actor has no remote filter, so Remote "
+        "only drops the rows that Behance marks hybrid or on-site; Apify still bills them.",
+        _behance_input, _parse_behance, 1.0),
+    "apify_hollylist": Preset(
+        "datawatcher/hollylist-scraper", "Hollylist",
+        "Hollylist entertainment jobs, with full text. Members-only offers are skipped. Hours old "
+        "is not applied. Location matches the first city name. Remote also returns on-site rows, "
+        "so Remote drops the rows that the posting calls hybrid or on-site.",
+        _hollylist_input, _parse_hollylist, 1.90),
     "apify_greenhouse": _career_site("greenhouse", "Greenhouse"),
     "apify_lever": _career_site("lever.co", "Lever"),
     "apify_ashby": _career_site("ashby", "Ashby"),
@@ -379,6 +485,10 @@ def _api_error(resp: httpx.Response) -> ApifyError:
             402: "the Apify account has no credit left",
             403: "the Apify API key cannot run this actor",
             404: "the actor or run does not exist"}.get(resp.status_code, "")
+    if resp.status_code == 402 and message:
+        # R30 S-17: a 402 is also a rented actor without a subscription, a monthly platform
+        # limit or a charge cap below the actor's minimum; Apify's own message names which.
+        hint = "Apify refused to charge for this run"
     text = "; ".join(t for t in (hint, message[:200]) if t)
     return ApifyError(f"HTTP {resp.status_code}" + (f": {text}" if text else ""))
 
@@ -508,8 +618,24 @@ async def _collect(search: Search, limit: int) -> tuple[list, dict]:
     return jobs, breakdown
 
 
+# Boards that return on-site rows to a Remote-only search (see _linkedin_input,
+# _behance_input; the Hollylist actor's workType filter let an on-site Boston row through).
+_REMOTE_IGNORED = {"apify_linkedin", "apify_behance", "apify_hollylist"}
+
+
+def _not_remote(j: dict) -> str | None:
+    """The reason to drop a row that the work-arrangement cascade reads as hybrid or on-site
+    only. A row that the cascade cannot read stays: the cascade never guesses, and a
+    remote posting often says "remote" in words that no pattern matches."""
+    found = extract_arrangement(j.get("location"), j.get("title"), j.get("description"),
+                                j.get("arrangement"))["arrangements"]
+    if not found or REMOTE in found:
+        return None
+    return "Not remote: " + ", ".join(v for v in (HYBRID, ONSITE) if v in found)
+
+
 def _rejection(j: dict, include_kw, exclude_kw, global_ex: set, search_ex: set,
-               company_filter=None) -> str | None:
+               company_filter=None, remote_only: bool = False) -> str | None:
     ok, reason = title_kept(j["title"], include_kw, exclude_kw)
     if not ok:
         return reason
@@ -523,6 +649,8 @@ def _rejection(j: dict, include_kw, exclude_kw, global_ex: set, search_ex: set,
         return f"Company excluded (global): {company}"
     if company in search_ex:
         return f"Company excluded: {company}"
+    if remote_only and j.get("source") in _REMOTE_IGNORED:
+        return _not_remote(j)
     return None
 
 
@@ -558,16 +686,19 @@ async def run(search: Search) -> dict:
             include_kw, exclude_kw = search_title_filters(search, db)
             global_ex, search_ex = build_search_exclude_sets(db, search)
             existing_ids = get_existing_external_ids(db)
+            remote_only = search.is_remote is True
 
             # The loop below writes rows; H-1B lookups for the new jobs happen before it (S2-01).
             await prefetch_h1b([
                 j.get("company") for j in unique
-                if not _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter)
+                if not _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                                  search.company_filter, remote_only)
                 and make_external_id(j["company"], j["title"], j["url"]) not in existing_ids
             ])
 
             for j in unique:
-                if _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter):
+                if _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                              search.company_filter, remote_only):
                     # Counted so the Run-history line says "N filtered out" instead of a bare "0 seen".
                     row = breakdown[j["source"]]
                     row["filtered"] = row.get("filtered", 0) + 1
@@ -610,7 +741,7 @@ async def run(search: Search) -> dict:
                     with db.begin_nested():
                         db.add(job)
                         db.flush()
-                    new_jobs += 1
+                    new_jobs += counts_as_new(job)
                     existing_ids.add(ext_id)
                     breakdown[j["source"]]["new"] += 1
                 except IntegrityError:
@@ -655,12 +786,14 @@ async def preview(search: Search, db) -> dict:
         include_kw, exclude_kw = search_title_filters(search, db)
         global_ex, search_ex = build_search_exclude_sets(db, search)
         phrases = _body_phrases(db)
+        remote_only = search.is_remote is True
 
         from collections import Counter
         from backend.analyzer.h1b_checker import scan_jd_for_h1b_flags
         results = []
         for j in unique:
-            reason = _rejection(j, include_kw, exclude_kw, global_ex, search_ex, search.company_filter)
+            reason = _rejection(j, include_kw, exclude_kw, global_ex, search_ex,
+                                search.company_filter, remote_only)
             # run() drops these through analyze_inline; the preview names the phrase.
             if reason is None and phrases and j.get("description"):
                 hit = scan_jd_for_h1b_flags(j["description"], phrases)

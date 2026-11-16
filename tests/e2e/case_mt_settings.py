@@ -288,8 +288,8 @@ def _mt14(c, opg, mpg, owner_id, owner_name, member_id, member_name):
         # ── member, locked ──
         C.go(mpg, '/settings', settle=1500)
         labels = mpg.evaluate("() => [...document.querySelectorAll('label, span')].map((e) => e.textContent.trim()).filter((t) => /^(You|AI · yours|Yours|Shared · )/.test(t))")
-        c.check('member nav groups: You · AI · yours · Yours · Shared · owner',
-                all(any(l.startswith(g) for l in labels) for g in ('You', 'AI · yours', 'Yours', f'Shared · {owner_name}')), labels[:8])
+        c.check('member nav keeps the page order (no You · AI · yours · Shared regrouping)',
+                not any(l.startswith(('AI · yours', 'Shared · ')) for l in labels), labels[:8])
         c.eq('Advanced is tagged Owner only', _tag(mpg, 'advanced'), 'Owner only')
         c.eq('Display has no Per device tag for a member', _tag(mpg, 'appearance'), None)
         c.eq('Interview prep is inherited', _tag(mpg, 'prep'), f'Inherited from {owner_name}')
@@ -372,10 +372,10 @@ def _mt14(c, opg, mpg, owner_id, owner_name, member_id, member_name):
             c.check('F5: the member’s LinkedIn row reads “Set by <owner>”',
                     mpg.evaluate("""(t) => { const h = document.querySelector('[data-sec="sec-linkedin"]');
                       return !!h && h.parentElement.textContent.includes(t) }""", f'Set by {owner_name}'))
-            c.check('F5: … and its Refresh cookie row is locked (owner-only refresh)',
+            c.check('F5: … and its session rows are locked (owner-only sign-in)',
                     mpg.evaluate("""() => { const h = document.querySelector('[data-sec="sec-linkedin"]');
                       return !!h && [...h.parentElement.querySelectorAll('[data-locked="true"]')]
-                        .some((x) => x.textContent.includes('Session cookie')) }"""))
+                        .some((x) => x.textContent.includes('Mock session')) }"""))
             mpg.screenshot(path=f'{SHOTS}/member-linkedin-set-by-owner.png')
         st, li = _api('GET', '/linkedin/session', account=member_id)
         c.check('F5: the member’s LinkedIn session is the owner’s (shared)', (li or {}).get('shared') is True, li)

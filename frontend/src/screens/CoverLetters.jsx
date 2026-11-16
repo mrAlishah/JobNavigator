@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import api from '../api'
+import { track, voiceId } from '../telemetry'
 import { ArchiveBand, Band, Button, Card, Heading, HeaderRow, Helper, Label, Link, Menu, MenuItem, Mono, PageTitle, Pill, SearchInput, Segmented, Spinner, Tag } from '../ui'
 import '../theme.css'
 
@@ -283,6 +284,7 @@ export default function CoverLetters() {
       const { data } = await api.post('/cover-letters/generate', {
         resume_id: genResume, job_id: genJob, voice: genVoice, length: genLength,
       })
+      track('letter_generated', { voice: voiceId(genVoice) })
       setRunMeta((m) => ({ ...m, [data.run_id]: { label, voice: v, length: l } }))
       setPending((p) => [...p, { run_id: data.run_id, job_type: 'generate_cover_letter',
                                  scope_key: `cl:${genResume}:${genJob}`, target_job_id: genJob }])

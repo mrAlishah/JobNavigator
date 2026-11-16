@@ -26,6 +26,12 @@ import pytest
 from backend.tests.r4_support import client  # noqa: F401
 
 
+def _by_name(db, job) -> dict:
+    """A job's scores as the API shows them (stored by résumé id since 3.1)."""
+    from backend.analyzer.score_keys import display, resume_names
+    return display(job.cv_scores or {}, None, None, job.cv_score_names, resume_names(db))[0]
+
+
 class SessionCounter:
     """Counts sessions that are currently open, and the high-water mark."""
 
@@ -234,7 +240,7 @@ async def test_no_session_is_open_while_the_llm_call_is_awaited(
     test_db.expire_all()
     from backend.models.db import Job
     job = test_db.query(Job).filter(Job.id == job_id).first()
-    assert (job.cv_scores or {}).get("PM") == 80
+    assert _by_name(test_db, job).get("PM") == 80
 
 
 @pytest.mark.asyncio
@@ -269,7 +275,7 @@ async def test_batch_pipeline_holds_no_session_across_the_llm_call(
     assert peaks and max(peaks) == 0, f"sessions open during LLM calls: {peaks}"
     assert counter.open == 0
     test_db.expire_all()
-    assert all((j.cv_scores or {}).get("PM") == 65 for j in test_db.query(Job).all())
+    assert all(_by_name(test_db, j).get("PM") == 65 for j in test_db.query(Job).all())
 
 
 @pytest.mark.asyncio

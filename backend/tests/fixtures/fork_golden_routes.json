@@ -1,0 +1,1391 @@
+{
+ "openapi_sha256": "17f7cd95977ccacc947af47f7a48baa527cfd3cb979154f5e48dbbce3e3ececd",
+ "routes": [
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "tracer_redirect_param",
+   "path": "/"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_accounts",
+   "path": "/api/accounts"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_account",
+   "path": "/api/accounts"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_account",
+   "path": "/api/accounts/{account_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_account",
+   "path": "/api/accounts/{account_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "issue_api_token",
+   "path": "/api/accounts/{account_id}/api-token"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "export_account",
+   "path": "/api/accounts/{account_id}/export"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_activity_log",
+   "path": "/api/activity-log"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_analysis",
+   "path": "/api/analyze/{job_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_applications",
+   "path": "/api/applications"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_application",
+   "path": "/api/applications"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_delete_applications",
+   "path": "/api/applications/bulk-delete"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_update_applications",
+   "path": "/api/applications/bulk-update"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "extract_posting",
+   "path": "/api/applications/extract"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_interview",
+   "path": "/api/applications/interviews/{interview_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_interview",
+   "path": "/api/applications/interviews/{interview_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_application",
+   "path": "/api/applications/{app_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_application",
+   "path": "/api/applications/{app_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "add_interview",
+   "path": "/api/applications/{app_id}/interviews"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "prep_bundle",
+   "path": "/api/applications/{app_id}/prep"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "auth_accounts",
+   "path": "/api/auth/accounts"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "logout",
+   "path": "/api/auth/logout"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "auth_me",
+   "path": "/api/auth/me"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "auth_owner_lock",
+   "path": "/api/auth/owner-lock"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "set_session",
+   "path": "/api/auth/set-session"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "auth_switch",
+   "path": "/api/auth/switch"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "verify_api_key",
+   "path": "/api/auth/verify"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "auth_verify_owner_pin",
+   "path": "/api/auth/verify-owner-pin"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "auth_verify_pin",
+   "path": "/api/auth/verify-pin"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_auto_reject",
+   "path": "/api/auto-reject/run"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "autofill_answer",
+   "path": "/api/autofill/answer"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "autofill_answer_stream",
+   "path": "/api/autofill/answer/stream"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "autofill_config",
+   "path": "/api/autofill/config"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_companies",
+   "path": "/api/companies"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_company",
+   "path": "/api/companies"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "auto_create_from_jobs",
+   "path": "/api/companies/auto-create-from-jobs"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "backfill_h1b_jobs",
+   "path": "/api/companies/backfill-h1b-jobs"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_activate",
+   "path": "/api/companies/bulk-activate"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "clone_company",
+   "path": "/api/companies/clone"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "company_clone_sources",
+   "path": "/api/companies/clone-sources"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "refresh_h1b_all",
+   "path": "/api/companies/refresh-h1b"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_company",
+   "path": "/api/companies/{company_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_company",
+   "path": "/api/companies/{company_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "acknowledge_company_warning",
+   "path": "/api/companies/{company_id}/acknowledge"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "test_scrape_company",
+   "path": "/api/companies/{company_id}/test-scrape"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_cover_letters",
+   "path": "/api/cover-letters"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_cover_letter",
+   "path": "/api/cover-letters"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "generate_cover_letter",
+   "path": "/api/cover-letters/generate"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_templates",
+   "path": "/api/cover-letters/templates"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_cover_letter",
+   "path": "/api/cover-letters/{cl_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_cover_letter",
+   "path": "/api/cover-letters/{cl_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_cover_letter",
+   "path": "/api/cover-letters/{cl_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "export_pdf",
+   "path": "/api/cover-letters/{cl_id}/pdf"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_tracer_stats",
+   "path": "/api/cover-letters/{cl_id}/tracer-stats"
+  },
+  {
+   "deps": [
+    "require_owner"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_db_backup",
+   "path": "/api/db/backup"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_job_cleanup",
+   "path": "/api/db/cleanup"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_email_check",
+   "path": "/api/email/check-now"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "gmail_callback",
+   "path": "/api/gmail/callback"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "gmail_connect",
+   "path": "/api/gmail/connect"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "gmail_disconnect",
+   "path": "/api/gmail/disconnect"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "gmail_status",
+   "path": "/api/gmail/status"
+  },
+  {
+   "deps": [
+    "require_owner"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_h1b_refresh",
+   "path": "/api/h1b/refresh"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_failing_entities",
+   "path": "/api/health/entities"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_jobs",
+   "path": "/api/jobs"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_backfill_descriptions",
+   "path": "/api/jobs/backfill-descriptions"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_delete_jobs",
+   "path": "/api/jobs/bulk-delete"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "bulk_update_jobs",
+   "path": "/api/jobs/bulk-update"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "cache_applied_jobs",
+   "path": "/api/jobs/cache-applied"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_job_companies",
+   "path": "/api/jobs/companies/list"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "job_facets",
+   "path": "/api/jobs/facets"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "feed_stats",
+   "path": "/api/jobs/feed-stats"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "linkedin_import",
+   "path": "/api/jobs/linkedin-import"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "linkedin_import_progress",
+   "path": "/api/jobs/linkedin-import/progress"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_manual_job",
+   "path": "/api/jobs/manual"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "save_from_extension",
+   "path": "/api/jobs/save-from-extension"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_job_sources",
+   "path": "/api/jobs/sources/list"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "unscored_ids",
+   "path": "/api/jobs/unscored-ids"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_job_verdicts",
+   "path": "/api/jobs/verdicts/list"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_job",
+   "path": "/api/jobs/{job_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_job",
+   "path": "/api/jobs/{job_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_cached_page",
+   "path": "/api/jobs/{job_id}/cached-page"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "frame_check",
+   "path": "/api/jobs/{job_id}/frame-check"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_live_page",
+   "path": "/api/jobs/{job_id}/live-page"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "session_status",
+   "path": "/api/linkedin/session"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "session_pin",
+   "path": "/api/linkedin/session/pin"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "session_refresh",
+   "path": "/api/linkedin/session/refresh"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_efforts",
+   "path": "/api/llm/efforts"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_models",
+   "path": "/api/llm/models"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_active_jobs",
+   "path": "/api/monitor/active"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_finished",
+   "path": "/api/monitor/finished"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_run_history",
+   "path": "/api/monitor/history"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_in_flight",
+   "path": "/api/monitor/in-flight"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_run_detail",
+   "path": "/api/monitor/run/{run_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_persona",
+   "path": "/api/persona"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_persona",
+   "path": "/api/persona"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "import_persona",
+   "path": "/api/persona/import"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "append_qa_bank",
+   "path": "/api/persona/qa-bank"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_resumes",
+   "path": "/api/resumes"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_resume",
+   "path": "/api/resumes"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "copy_resume_for_job",
+   "path": "/api/resumes/copy"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "import_pdf",
+   "path": "/api/resumes/import-pdf"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "resume_shelf",
+   "path": "/api/resumes/shelf"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "tailor_resume",
+   "path": "/api/resumes/tailor"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_templates",
+   "path": "/api/resumes/templates"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_resume",
+   "path": "/api/resumes/{resume_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_resume",
+   "path": "/api/resumes/{resume_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_resume",
+   "path": "/api/resumes/{resume_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "export_docx",
+   "path": "/api/resumes/{resume_id}/docx"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "export_pdf",
+   "path": "/api/resumes/{resume_id}/pdf"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "preview_resume",
+   "path": "/api/resumes/{resume_id}/preview"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "score_check",
+   "path": "/api/resumes/{resume_id}/score-check"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_tracer_stats",
+   "path": "/api/resumes/{resume_id}/tracer-stats"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_scheduler_jobs",
+   "path": "/api/scheduler/jobs"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_scrape_log",
+   "path": "/api/scrape-log"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_company_scrape",
+   "path": "/api/scrape/company/{company_id}"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_all_scrapes",
+   "path": "/api/scrape/run-all"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_searches",
+   "path": "/api/searches"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "create_search",
+   "path": "/api/searches"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_apify_boards",
+   "path": "/api/searches/apify-boards"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "clone_search",
+   "path": "/api/searches/clone"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "search_clone_sources",
+   "path": "/api/searches/clone-sources"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "list_countries",
+   "path": "/api/searches/countries"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_test_result",
+   "path": "/api/searches/test-result/{run_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "DELETE"
+   ],
+   "name": "delete_search",
+   "path": "/api/searches/{search_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_search",
+   "path": "/api/searches/{search_id}"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "acknowledge_search_warning",
+   "path": "/api/searches/{search_id}/acknowledge"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_search",
+   "path": "/api/searches/{search_id}/run"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "test_search",
+   "path": "/api/searches/{search_id}/test"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_settings",
+   "path": "/api/settings"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_settings",
+   "path": "/api/settings"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "POST"
+   ],
+   "name": "check_apify_key",
+   "path": "/api/settings/apify/check"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_defaults",
+   "path": "/api/settings/defaults"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_policies",
+   "path": "/api/settings/policies"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "PATCH"
+   ],
+   "name": "update_policy",
+   "path": "/api/settings/policies"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "upload_profile_image",
+   "path": "/api/settings/profile-image"
+  },
+  {
+   "deps": [
+    "get_db"
+   ],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_sections",
+   "path": "/api/settings/sections"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_stats",
+   "path": "/api/stats"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "llm_costs",
+   "path": "/api/stats/llm-costs"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_stats_sankey",
+   "path": "/api/stats/sankey"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_score_distribution",
+   "path": "/api/stats/score-distribution"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "get_stats_timeline",
+   "path": "/api/stats/timeline"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "trigger_digest",
+   "path": "/api/telegram/digest"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_link_code",
+   "path": "/api/telegram/link-code"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_register_webhook",
+   "path": "/api/telegram/register-webhook"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_rotate_webhook_secret",
+   "path": "/api/telegram/rotate-webhook-secret"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_test",
+   "path": "/api/telegram/test"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_webhook",
+   "path": "/api/telegram/webhook"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "POST"
+   ],
+   "name": "telegram_member_webhook",
+   "path": "/api/telegram/webhook/{bot_account_id}"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "tracer_redirect",
+   "path": "/cv/{token}"
+  },
+  {
+   "deps": [],
+   "methods": [
+    "GET"
+   ],
+   "name": "health_check",
+   "path": "/health"
+  }
+ ]
+}

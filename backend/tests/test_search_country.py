@@ -283,11 +283,28 @@ def test_a_raising_backfill_does_not_abort_the_migration(test_db, monkeypatch):
     seed.run_migrations(test_db)      # raises if the guard is missing
 
 
-def test_aliases_survive_a_plain_string_enum_value():
-    """If a later jobspy drops the tuple, value[0] would be the letter "u" and "usa" would silently become an invalid country."""
-    from backend.countries import _aliases
+def test_aliases_read_jobspy_1_4_names_and_alias_table():
+    """jobspy 1.4: a member's value is its name, other spellings sit in model.country_aliases."""
+    from jobspy.model import Country
+    from backend.countries import _aliases, normalize_country, supported_countries
 
-    class _Member:
-        value = "usa,us,united states"
+    assert _aliases(Country.USA) == ["usa", "us", "united states"]
+    labels = dict(supported_countries())
+    assert labels["usa"] == "United States"
+    assert labels["uk"] == "United Kingdom"
+    assert labels["czech republic"] == "Czech Republic"
+    for spelling in ("US", "United States", "usa", " Usa "):
+        assert normalize_country(spelling) == "usa"
+    # dropped in 1.4: no Indeed or Glassdoor site
+    assert normalize_country("bulgaria") is None
+    assert "bulgaria" not in labels
 
-    assert _aliases(_Member) == ["usa", "us", "united states"]
+
+def test_indeed_host_reads_the_indeed_scrapers_own_tables():
+    from backend.countries import indeed_host
+
+    assert indeed_host("usa") == "www.indeed.com"
+    assert indeed_host("United Kingdom") == "uk.indeed.com"
+    assert indeed_host("germany") == "de.indeed.com"
+    assert indeed_host("malaysia") == "malaysia.indeed.com"
+    assert indeed_host("atlantis") is None

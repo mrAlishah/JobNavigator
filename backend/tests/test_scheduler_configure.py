@@ -160,6 +160,59 @@ def _fresh(test_db, monkeypatch, rows):
     return sched_mod, fresh
 
 
+def _run(test_db, started, status="completed", trigger="scheduler", job_type="scrape_all"):
+    from backend.models.db import JobRun
+    test_db.add(JobRun(job_type=job_type, trigger=trigger, status=status, started_at=started))
+    test_db.commit()
+
+
+def test_scrape_interval_counts_from_the_last_scheduled_scrape(test_db, monkeypatch):
+    """A restart does not start the interval again: the next scrape is the last one plus the interval."""
+    from datetime import datetime, timedelta, timezone
+    sched_mod, _ = _fresh(test_db, monkeypatch, {})
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+    _run(test_db, now - timedelta(hours=10))
+    assert sched_mod.next_scrape_time(3500, now=now) == now - timedelta(hours=10) + timedelta(minutes=3500)
+
+
+def test_an_overdue_scrape_runs_shortly_after_start(test_db, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    sched_mod, _ = _fresh(test_db, monkeypatch, {})
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+    _run(test_db, now - timedelta(days=5))
+    assert sched_mod.next_scrape_time(3500, now=now) == now + sched_mod.OVERDUE_DELAY
+
+
+def test_no_scheduled_scrape_yet_runs_shortly_after_start(test_db, monkeypatch):
+    from datetime import datetime, timezone
+    sched_mod, _ = _fresh(test_db, monkeypatch, {})
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+    assert sched_mod.next_scrape_time(60, now=now) == now + sched_mod.OVERDUE_DELAY
+
+
+def test_failed_manual_and_other_runs_do_not_count(test_db, monkeypatch):
+    """A scrape cut off by a shutdown (failed), a manual Run all and other job types leave it overdue."""
+    from datetime import datetime, timedelta, timezone
+    sched_mod, _ = _fresh(test_db, monkeypatch, {})
+    now = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
+    _run(test_db, now - timedelta(days=5))
+    _run(test_db, now - timedelta(hours=1), status="failed")
+    _run(test_db, now - timedelta(hours=1), trigger="manual")
+    _run(test_db, now - timedelta(hours=1), job_type="email_check")
+    assert sched_mod.next_scrape_time(3500, now=now) == now + sched_mod.OVERDUE_DELAY
+
+
+def test_configure_puts_the_scrape_at_the_computed_time(test_db, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    sched_mod, fresh = _fresh(test_db, monkeypatch, {
+        "scrape_interval_minutes": "3500", "email_check_interval_minutes": "0"})
+    last = datetime.now(timezone.utc) - timedelta(hours=10)
+    _run(test_db, last)
+    sched_mod.configure_scheduler()
+    job = fresh.get_job("scrape_all")
+    assert abs((job.next_run_time - (last + timedelta(minutes=3500))).total_seconds()) < 1
+
+
 def test_garbage_interval_does_not_break_boot(test_db, monkeypatch, caplog):
     """A non-numeric interval must not raise ValueError out of configure_scheduler; it logs an error and skips that job."""
     import logging

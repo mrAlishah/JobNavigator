@@ -160,6 +160,44 @@ describe('CaribbeanJobs · v2 Searches', () => {
   })
 })
 
+describe('Himalayas and Eluta · v2 Searches', () => {
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear() })
+
+  const HIM = { ...SEARCH, id: 's5', name: 'Remote designers', search_mode: 'himalayas', search_term: 'designer', country: 'canada', direct_url: '', sources: [] }
+  const ELU = { ...SEARCH, id: 's6', name: 'Vancouver designers', search_mode: 'eluta', search_term: 'designer', location: 'Vancouver', direct_url: '', sources: [] }
+
+  it('each mode has its badge and summary', async () => {
+    mockApi([HIM, ELU])
+    renderScreen()
+    expect((await screen.findByText('HIMALAYAS')).className).toContain('sm-himalayas')
+    expect(screen.getByText('ELUTA').className).toContain('sm-eluta')
+    expect(screen.getByText(/“designer” · Remote · canada/)).toBeTruthy()
+    expect(screen.getByText(/“designer” · Vancouver/)).toBeTruthy()
+  })
+
+  it('the Himalayas editor has Country and no Location or Remote', async () => {
+    mockApi([HIM])
+    renderScreen()
+    fireEvent.click(await screen.findByText('Remote designers'))
+    await screen.findByText('Save changes')
+    expect(screen.getByText(/Every job is remote/)).toBeTruthy()
+    expect(screen.getByLabelText('Country')).toBeTruthy()
+    expect(screen.queryByLabelText('Location')).toBeNull()
+    expect(screen.queryByLabelText('Remote')).toBeNull()
+  })
+
+  it('the Eluta editor has Location, the daily-limit note and no Country', async () => {
+    mockApi([ELU])
+    renderScreen()
+    fireEvent.click(await screen.findByText('Vancouver designers'))
+    await screen.findByText('Save changes')
+    expect(screen.getByText(/run interval of 1440 minutes/)).toBeTruthy()
+    expect(screen.getByLabelText('Location')).toBeTruthy()
+    expect(screen.queryByLabelText('Country')).toBeNull()
+    expect(screen.queryByText(/Results wanted/)).toBeNull()
+  })
+})
+
 describe('TrulyRemoteWork · v2 Searches', () => {
   beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear() })
 
@@ -202,6 +240,20 @@ describe('TrulyRemoteWork · v2 Searches', () => {
     fireEvent.click(await screen.findByTitle(/^Preview run/))
     await waitFor(() => expect(api.post.mock.calls[0]?.[0]).toBe('/searches/s4/test'))
     expect(await screen.findByText('worldwide remote · 25 new per run')).toBeTruthy()
-    expect(screen.getAllByText('body check needs the description')).toHaveLength(1)
+    expect(screen.getAllByText('posting body text check was skipped')).toHaveLength(1)
+  })
+})
+
+describe('Direct-link rate · Searches', () => {
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear() })
+
+  it('names the share of a search’s jobs with a direct link, from five jobs on', async () => {
+    mockApi([
+      { ...SEARCH, id: 'a', name: 'Many', direct_rate: { direct: 6, total: 9 } },
+      { ...SEARCH, id: 'b', name: 'Few', search_term: 'few', direct_rate: { direct: 1, total: 3 } },
+    ])
+    renderScreen()
+    expect(await screen.findByText(/67% direct links/)).toBeTruthy()
+    expect(screen.queryByText(/33% direct links/)).toBeNull()
   })
 })

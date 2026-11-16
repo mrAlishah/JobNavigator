@@ -29,11 +29,11 @@ def test_persona_patch_merges_into_node(api_client, test_db):
 
     resp = api_client.patch(
         "/api/persona",
-        json={"contact": {"name": "Viktor Esadze", "email": "viktor@example.com"}},
+        json={"contact": {"name": "Jordan Blake", "email": "jordan@example.com"}},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["contact"] == {"name": "Viktor Esadze", "email": "viktor@example.com"}
+    assert data["contact"] == {"name": "Jordan Blake", "email": "jordan@example.com"}
     # Other nodes untouched
     assert data["work_auth"] == {}
 

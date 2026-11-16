@@ -9,6 +9,11 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 # MT-2: a query on an account-owned model without an account context raises in tests
 # instead of falling back to the owner. MT_STRICT=0 turns that off for a local run.
 os.environ.setdefault("MT_STRICT", "1")
+# The app's lifespan must not start the runner sync loop: in a live backend container
+# (JN_RUNNER_MANAGEMENT=1) it would read the test DB from a thread, hang the shutdown
+# and send the test accounts' providers to the real runner manager. Unset, as in CI:
+# the backend then defaults to off and the manager's own tests to on.
+os.environ.pop("JN_RUNNER_MANAGEMENT", None)
 
 
 def pytest_configure(config):
@@ -66,6 +71,16 @@ def _clean_auth_throttle():
     _reset()
     yield
     _reset()
+
+
+@pytest.fixture(autouse=True)
+def _no_reused_fetches():
+    """Cross-run fetch reuse (`targets.shared_fetch_for`) keeps recent fetches in-process;
+    one test's fake postings must never reach the next test's run."""
+    from backend.scraper.targets import reset_shared_fetches
+    reset_shared_fetches()
+    yield
+    reset_shared_fetches()
 
 
 @pytest.fixture(autouse=True)

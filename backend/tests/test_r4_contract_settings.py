@@ -14,7 +14,7 @@ from backend.tests.r4_support import (  # noqa: F401
 
 # ══ GET /api/settings ════════════════════════════════════════════════════════
 
-SECRET_KEYS = ["llm_api_key", "gmail_refresh_token", "telegram_webhook_secret",
+SECRET_KEYS = ["anthropic_api_key", "gmail_refresh_token", "telegram_webhook_secret",
                "linkedin_password", "linkedin_session_id"]
 
 
@@ -31,8 +31,8 @@ def test_get_settings_redacts_secret_shaped_keys(client, test_db):
 
 
 def test_get_settings_empty_secret_stays_empty_not_dots(client, test_db):
-    set_setting(test_db, "llm_api_key", "")
-    assert client.get("/api/settings").json()["llm_api_key"] == ""
+    set_setting(test_db, "anthropic_api_key", "")
+    assert client.get("/api/settings").json()["anthropic_api_key"] == ""
 
 
 def test_get_settings_parses_json_values(client, test_db):
@@ -178,12 +178,12 @@ def test_patch_settings_rejects_non_string_enum_values(client, bad):
 
 def test_patch_settings_skips_the_redaction_placeholder(client, test_db):
     """Re-saving the Settings form must not overwrite a secret with six bullets."""
-    set_setting(test_db, "llm_api_key", "real-key")
+    set_setting(test_db, "anthropic_api_key", "real-key")
     r = assert_clean(client.patch("/api/settings",
-                                  json={"llm_api_key": "•" * 6}), 200)
+                                  json={"anthropic_api_key": "•" * 6}), 200)
     assert r.json()["updated"] == []
     from backend.models.db import Setting
-    row = test_db.query(Setting).filter(Setting.key == "llm_api_key").first()
+    row = test_db.query(Setting).filter(Setting.key == "anthropic_api_key").first()
     test_db.refresh(row)
     assert row.value == "real-key"
 
@@ -257,7 +257,7 @@ def test_llm_models_provider_rejection_is_502_not_500(client, test_db, monkeypat
     import backend.api.routes_llm as rl
     rl._cache.clear()
     set_setting(test_db, "llm_provider", "openai")
-    set_setting(test_db, "llm_api_key", "bad-key")
+    set_setting(test_db, "openai_api_key", "bad-key")
 
     async def _boom(key):
         request = httpx.Request("GET", "https://api.openai.com/v1/models")
@@ -296,7 +296,7 @@ def test_llm_models_opencode_go_passes_the_resolved_key(client, test_db, monkeyp
     import backend.api.routes_llm as rl
     rl._cache.clear()
     set_setting(test_db, "llm_provider", "opencode_go")
-    set_setting(test_db, "llm_api_key", "sk-go")
+    set_setting(test_db, "opencode_api_key", "sk-go")
     seen = {}
 
     async def _models(key):

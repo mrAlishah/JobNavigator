@@ -44,8 +44,10 @@ module: it fetches for, and feeds, only the account that pressed it.
 Everything here is pure (no DB writes); loading rows across accounts is the caller's job
 (`load_active`), done inside `unscoped()`.
 """
+import asyncio
 import copy
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -56,9 +58,7 @@ from backend.accounts.context import unscoped
 
 logger = logging.getLogger("jobnavigator.scraper.targets")
 
-EXTENSION_MODES = ("linkedin_extension", "extension")
-# Modes whose fetch depends on the account's own login/session, never shared.
-_PER_ACCOUNT_MODES = ("linkedin_personal", "jobright")
+# Which modes may share a fetch is `search_modes.SearchMode.shareable`.
 
 
 # ── Shared fetch ─────────────────────────────────────────────────────────────
@@ -68,8 +68,8 @@ class SharedFetch:
 
     The first subscriber's run performs the fetch through `get()` / `get_sync()`; later
     subscribers get a deep copy of the same postings (or the same exception), so an ingest
-    can never change what the next account sees. Subscribers run one after another (the
-    scrape has one global concurrency limit), so no lock is needed.
+    can never change what the next account sees. Within one run the subscribers go one
+    after another.
 
     `params` holds the fetch-side values that differ from a subscriber's own, e.g.
     {"results_wanted": 200, "hours_old": 72} (the max among subscribers).
@@ -78,7 +78,10 @@ class SharedFetch:
     that are the same for everyone (caribbeanjobs: detail pages by URL; trulyremote: `.md`
     job pages by URL; both: the board's throttle stop, `<source>_halt`, so once one subscriber
     was stopped by a 429 the later ones request no page that run). Only raw, account-
-    independent page data goes in it, never anything an ingest filtered or wrote."""
+    independent page data goes in it, never anything an ingest filtered or wrote.
+
+    A later run can hold the same instance (`shared_fetch_for`, cross-run reuse), so the
+    fetch itself is locked: the first caller fetches, the others wait and get copies."""
 
     def __init__(self, key=None, params: Optional[dict] = None):
         self.key = key
@@ -87,37 +90,136 @@ class SharedFetch:
         self.done = False
         self.calls = 0           # how many times the fetch really ran (0 or 1)
         self.duration = 0.0
+        self.finished_at: Optional[float] = None   # time.monotonic() when the fetch ended
         self._value = None
         self._error: Optional[BaseException] = None
+        # Two runs can hold the same fetch (`shared_fetch_for`), so the first caller fetches
+        # and the others wait for it: an asyncio lock for `get`, a thread lock for `get_sync`
+        # (JobSpy runs in a worker thread).
+        self._thread_lock = threading.Lock()
+        self._async_lock: Optional[asyncio.Lock] = None
+        self._lock_loop = None
 
     def _result(self):
         if self._error is not None:
             raise self._error
         return copy.deepcopy(self._value)
 
+    def _finish(self, start: float):
+        self.duration = time.time() - start
+        self.finished_at = time.monotonic()
+        self.done = True
+
+    def _lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._lock_loop is not loop:     # one loop in the app; tests use a fresh one each
+            self._async_lock, self._lock_loop = asyncio.Lock(), loop
+        return self._async_lock
+
     async def get(self, fetch: Callable[[], Any]):
         if not self.done:
-            start = time.time()
-            self.calls += 1
-            try:
-                self._value = await fetch()
-            except Exception as e:
-                self._error = e
-            self.duration = time.time() - start
-            self.done = True
+            async with self._lock():
+                if not self.done:
+                    start = time.time()
+                    self.calls += 1
+                    try:
+                        self._value = await fetch()
+                    except Exception as e:
+                        self._error = e
+                    self._finish(start)
         return self._result()
 
     def get_sync(self, fetch: Callable[[], Any]):
         if not self.done:
-            start = time.time()
-            self.calls += 1
-            try:
-                self._value = fetch()
-            except Exception as e:
-                self._error = e
-            self.duration = time.time() - start
-            self.done = True
+            with self._thread_lock:
+                if not self.done:
+                    start = time.time()
+                    self.calls += 1
+                    try:
+                        self._value = fetch()
+                    except Exception as e:
+                        self._error = e
+                    self._finish(start)
         return self._result()
+
+    def covers(self, params: Optional[dict]) -> bool:
+        """Whether this fetch serves a run that asks for `params`: every numeric value
+        (results_wanted, hours_old) at least as large, anything else equal."""
+        for k, v in (params or {}).items():
+            mine = self.params.get(k)
+            if isinstance(v, (int, float)) and isinstance(mine, (int, float)):
+                if mine < v:
+                    return False
+            elif mine != v:
+                return False
+        return True
+
+    def reusable(self, now: float) -> bool:
+        """In flight, or finished within REUSE_SECONDS with postings and no error. A failed or
+        empty fetch (a 429, a board that was down) is shared within its own run only."""
+        if not self.done:
+            return True
+        return (self._error is None and _has_postings(self._value)
+                and now - (self.finished_at or 0) <= REUSE_SECONDS)
+
+
+# Cross-run reuse. Runs go one after another (the scrape gate), so two accounts' Run alls,
+# or a manual Run all and the scheduled scrape, would each download the same board minutes
+# apart. A run asks `shared_fetch_for(key, params)` and gets the earlier run's fetch when it
+# is still going or ended less than REUSE_SECONDS ago and covers the request. What is shared
+# is raw board data only; each account's ingest still filters, dedups and writes its own rows.
+REUSE_SECONDS = 600
+_recent: dict = {}
+_recent_lock = threading.Lock()
+
+
+def _has_postings(value) -> bool:
+    """A fetch result that carries postings. Sources return a list/DataFrame, or a tuple
+    whose first item is one ((postings, errors))."""
+    if isinstance(value, tuple):
+        value = value[0] if value else None
+    if value is None:
+        return False
+    try:
+        return len(value) > 0
+    except TypeError:
+        return True
+
+
+def reusable_key(key) -> bool:
+    """Keys that name a per-account fetch (the account's own session, a paid Apify run) or
+    a row whose key could not be built are never shared across runs."""
+    return bool(key) and key[0] != "unkeyed" and not (len(key) > 1 and key[1] == "own")
+
+
+def shared_fetch_for(key, params: Optional[dict] = None) -> "SharedFetch":
+    """The SharedFetch a run should use for target `key`: a recent or in-flight one of
+    another run when it covers `params`, else a new one (registered for later runs)."""
+    if not reusable_key(key):
+        return SharedFetch(key, params)
+    now = time.monotonic()
+    with _recent_lock:
+        for k in [k for k, f in _recent.items() if not f.reusable(now)]:
+            _recent.pop(k, None)
+        earlier = _recent.get(key)
+        if earlier is not None and earlier.covers(params):
+            age = "in flight" if not earlier.done else f"{now - earlier.finished_at:.0f}s old"
+            logger.info(f"Reusing the fetch of {key[0]} target ({age})")
+            if earlier.done:
+                # A board's throttle stop (`<source>_halt`) lasts one run; pages the earlier
+                # run already read stay in the memo and are not requested again.
+                for k in [k for k in earlier.memo if k.endswith("_halt")]:
+                    earlier.memo.pop(k, None)
+            return earlier
+        fresh = SharedFetch(key, params)
+        _recent[key] = fresh
+        return fresh
+
+
+def reset_shared_fetches() -> None:
+    """Forget every recent fetch (tests)."""
+    with _recent_lock:
+        _recent.clear()
 
 
 # ── Keys ─────────────────────────────────────────────────────────────────────
@@ -200,16 +302,10 @@ def search_key(search) -> tuple:
 
 def search_fetch_params(subscribers: list) -> dict:
     """The fetch-side values for a shared search target: the max of the trimmed fields."""
-    mode = subscribers[0].search_mode or "keyword"
-    if mode == "keyword":
-        return {
-            "results_wanted": max((s.results_wanted or 50) for s in subscribers),
-            "hours_old": max((s.hours_old or 24) for s in subscribers),
-        }
-    if mode in ("freehire", "caribbeanjobs"):
-        return {"results_wanted": max((s.results_wanted or 100) for s in subscribers)}
-    # trulyremote: the roster is fetched whole; results_wanted applies per subscriber after dedup.
-    return {}
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(subscribers[0].search_mode)
+    return {field: max((getattr(s, field) or default) for s in subscribers)
+            for field, default in (mode.fetch_params if mode else ())}
 
 
 # QA F10 / R4-05: when JobSpy subscribers may share one fetch. A shared fetch runs at the
@@ -277,8 +373,10 @@ def split_search_targets(targets: list) -> list:
 
 
 def is_shareable_search(search) -> bool:
-    # Never "apify": each account's run is billed to its own token (see the docstring).
-    return (search.search_mode or "keyword") in ("keyword", "levels_fyi", "freehire", "caribbeanjobs", "trulyremote")
+    # Never "apify" (billed per account) nor the own-session modes; see search_modes.py.
+    from backend.scraper.search_modes import get_mode
+    mode = get_mode(search.search_mode)
+    return bool(mode and mode.shareable)
 
 
 # ── Due-ness ─────────────────────────────────────────────────────────────────

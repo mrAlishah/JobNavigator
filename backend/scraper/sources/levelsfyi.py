@@ -5,14 +5,18 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.exc import IntegrityError
 
 from backend.models.db import SessionLocal, Job, Search, get_existing_external_ids
 from backend.scraper._shared.dedup import make_external_id, make_content_hash
+from backend.scraper._shared.posting_links import counts_as_new
+from backend.scraper._shared.postings import resolve_short_links
 from backend.scraper._shared.browser import _get_browser, _new_page, _close_page
-from backend.scraper._shared.urls import _clean_application_url
-from backend.scraper._shared.filters import _apply_company_filters
+from backend.scraper._shared.filters import _apply_company_filters, include_hit
+from backend.scraper._shared import levels_jobs
+from backend.scraper._shared.link_kinds import EASY_APPLY
 
 logger = logging.getLogger("jobnavigator.playwright")
 
@@ -22,6 +26,38 @@ logger = logging.getLogger("jobnavigator.playwright")
 def _is_levelsfyi(url: str) -> bool:
     """Check if URL is a levels.fyi job search page."""
     return "levels.fyi" in url.lower() and "/jobs" in url.lower()
+
+
+class LevelsFyiPageError(RuntimeError):
+    """The page is not a listing the scraper can read (HTTP error, bot check, changed
+    layout); a retry cannot fix it."""
+
+
+# One company card. Levels.fyi renames its CSS classes ("x__companyJobTitle" became
+# "h_Bkua_companyJobTitle"), so every selector matches the stable part of the name only.
+_CARD_SELECTORS = (
+    '[class*="company-jobs-preview-card"][class*="__container"]',
+    'div:has(> [class*="companyJobsContainer"])',
+    'div:has(> a[href*="jobId="])',
+)
+
+
+def _listing_url(url: str) -> str:
+    """The search URL without `jobId`. That parameter only opens one job in the side panel;
+    a URL copied from the browser keeps it, and Levels.fyi answers 404 for the whole
+    listing when that job is gone."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "jobId"]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def _check_listing(status, title: str) -> None:
+    """Raise when the page is not a listing, so the run reports an error and not 0 jobs."""
+    if status is not None and status >= 400:
+        raise LevelsFyiPageError(
+            f"Levels.fyi answered HTTP {status} for the search URL; open it in a browser and save a URL that works")
+    if "confirm you are human" in (title or "").lower():
+        raise LevelsFyiPageError("Levels.fyi showed its bot check instead of the job list; try again later")
 
 
 def _parse_levelsfyi_salary(location_text: str) -> tuple[str, str | None, int | None, int | None]:
@@ -57,6 +93,44 @@ def _parse_levelsfyi_salary(location_text: str) -> tuple[str, str | None, int | 
     return (location, work_arrangement, salary_min, salary_max)
 
 
+# Ids were 18 digits until 2026-10-09 and are base-36 since ("2ci7r6weraiqb"); \d+ kept only the
+# leading digits, which gave a 404 job page and merged unrelated jobs into one id.
+_JOB_ID_RE = levels_jobs.JOB_ID_RE
+
+
+
+def _levelsfyi_job_id(href: str) -> str | None:
+    """The job id from a levels.fyi link, or None."""
+    return levels_jobs.job_id(href)
+
+
+
+_POSTED_RE = re.compile(r"\s*\b((?:\d+|an?)\s+(?:minute|hour|day|week|month|year)s?\s+ago|today|yesterday|just now)\s*$", re.I)
+
+# Company heading of the card a job link sits in, found by structure, not class names: the
+# nearest ancestor that holds an <h2>.
+_CARD_COMPANY_JS = """el => { let n = el.parentElement;
+    while (n && !n.querySelector('h2')) n = n.parentElement;
+    const h = n && n.querySelector('h2'); return h ? h.innerText.trim() : ''; }"""
+
+
+def _split_link_text(text: str) -> tuple[str, str, str]:
+    """(title, location/pay line, posted) from a job link's visible text, used when the class
+    names no longer match: the first line is the title followed by when it was posted
+    ("Senior PM, Payments 2 days ago"); the line with a middle dot is location, arrangement and pay."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return "", "", ""
+    m = _POSTED_RE.search(lines[0])
+    title = lines[0][: m.start()].strip() if m else lines[0]
+    posted = m.group(1) if m else ""
+    rest = lines[1:]
+    if not posted and rest and _POSTED_RE.fullmatch(" " + rest[0]):
+        posted = rest.pop(0).strip()
+    loc = next((line for line in rest if "·" in line), rest[0] if rest else "")
+    return title, loc, posted
+
+
 async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bool = False):
     """Extract all job links from a single company card. Returns (jobs, rejected)."""
     jobs = []
@@ -78,17 +152,16 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
         if not href:
             continue
 
-        job_id_match = re.search(r'jobId=(\d+)', href)
-        if not job_id_match:
+        job_id = _levelsfyi_job_id(href)
+        if not job_id:
             continue
-        job_id = job_id_match.group(1)
         if job_id in seen_ids:
             continue
         seen_ids.add(job_id)
 
         title = ""
         try:
-            title_el = await link.query_selector('[class*="__companyJobTitle"]')
+            title_el = await link.query_selector('[class*="companyJobTitle"]')
             if title_el:
                 title = await title_el.evaluate("""el => {
                     const clone = el.cloneNode(true);
@@ -103,7 +176,7 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
         work_arrangement = None
         salary_min = salary_max = None
         try:
-            loc_el = await link.query_selector('[class*="__companyJobLocation"]')
+            loc_el = await link.query_selector('[class*="companyJobLocation"]')
             if loc_el:
                 loc_text = (await loc_el.inner_text()).strip()
                 location, work_arrangement, salary_min, salary_max = _parse_levelsfyi_salary(loc_text)
@@ -112,23 +185,38 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
 
         date_posted = ""
         try:
-            date_el = await link.query_selector('[class*="__companyJobDate"]')
+            date_el = await link.query_selector('[class*="companyJobDate"]')
             if date_el:
                 date_posted = (await date_el.inner_text()).strip()
         except Exception:
             pass
 
+        if not title:   # the class names changed again: read the link's visible text instead
+            try:
+                title, loc_text, posted = _split_link_text(await link.inner_text())
+                if loc_text and not location:
+                    location, work_arrangement, salary_min, salary_max = _parse_levelsfyi_salary(loc_text)
+                date_posted = date_posted or posted
+            except Exception:
+                pass
+        link_company = company_name
+        if not link_company:
+            try:
+                link_company = await link.evaluate(_CARD_COMPANY_JS)
+            except Exception:
+                link_company = ""
+
         job_url = f"https://www.levels.fyi/jobs?jobId={job_id}"
 
         if not title:
             if debug:
-                rejected_list.append({"title": "(empty)", "url": job_url, "company": company_name, "reason": "No title"})
+                rejected_list.append({"title": "(empty)", "url": job_url, "company": link_company, "reason": "No title"})
             continue
 
         jobs.append({
             "title": title,
             "url": job_url,
-            "company": company_name,
+            "company": link_company,
             "location": location,
             "work_arrangement": work_arrangement,
             "salary_min": salary_min,
@@ -140,13 +228,21 @@ async def _levelsfyi_extract_jobs_from_card(card, page, seen_ids: set, debug: bo
 
 
 async def _levelsfyi_extract_detail(page, job_url: str) -> dict:
-    """Visit a levels.fyi job detail page and extract application URL, salary and description from its __NEXT_DATA__ JSON (pageProps.initialJobDetails)."""
-    result = {"application_url": None, "salary_min": None, "salary_max": None, "description": None}
+    """Visit a levels.fyi job detail page and extract application URL, salary and description from
+    its __NEXT_DATA__ JSON (levels_jobs.job_fields). `found` is True when the page had the job's
+    data, so a missing application URL means the job is applied to on levels.fyi itself."""
+    result = {"application_url": None, "salary_min": None, "salary_max": None, "description": None,
+              "found": False}
 
     try:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
 
-        # __NEXT_DATA__ is SSR — available immediately on domcontentloaded
+        # __NEXT_DATA__ is SSR, but Levels.fyi's AWS WAF can first serve a challenge page that runs
+        # a script and reloads into the real one; wait for the data instead of reading the challenge.
+        try:
+            await page.wait_for_selector("#__NEXT_DATA__", state="attached", timeout=15000)
+        except Exception:
+            logger.debug(f"levels.fyi detail: no page data after 15 s for {job_url}")
         try:
             next_data = await page.evaluate("""() => {
                 const el = document.getElementById('__NEXT_DATA__');
@@ -154,33 +250,9 @@ async def _levelsfyi_extract_detail(page, job_url: str) -> dict:
                 try { return JSON.parse(el.textContent); } catch { return null; }
             }""")
 
-            if next_data:
-                props = next_data.get("props", {}).get("pageProps", {})
-                job_data = (
-                    props.get("initialJobDetails")
-                    or props.get("job")
-                    or props.get("jobData")
-                    or props.get("initialJob")
-                    or {}
-                )
-
-                app_url = job_data.get("applicationUrl") or job_data.get("applyUrl") or ""
-                if app_url:
-                    result["application_url"] = _clean_application_url(app_url)
-
-                desc = job_data.get("description") or ""
-                if len(desc) > 50:
-                    result["description"] = desc[:30000]
-
-                # Salary: prefer base, fallback to total (USD only)
-                currency = (job_data.get("baseSalaryCurrency") or job_data.get("currency") or "USD").upper()
-                if currency == "USD":
-                    sal_min = job_data.get("minBaseSalary") or job_data.get("minTotalSalary")
-                    sal_max = job_data.get("maxBaseSalary") or job_data.get("maxTotalSalary")
-                    if sal_min and isinstance(sal_min, (int, float)) and sal_min > 0:
-                        result["salary_min"] = int(sal_min)
-                    if sal_max and isinstance(sal_max, (int, float)) and sal_max > 0:
-                        result["salary_max"] = int(sal_max)
+            job_data = levels_jobs.job_object(next_data) if next_data else {}
+            if job_data:
+                result.update(levels_jobs.job_fields(job_data), found=True)
         except Exception as e:
             logger.debug(f"levels.fyi detail __NEXT_DATA__ extraction failed for {job_url}: {e}")
 
@@ -203,7 +275,8 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
     page_num = 0
     try:
         page = await _new_page(browser)
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        response = await page.goto(_listing_url(url), wait_until="domcontentloaded", timeout=45000)
+        _check_listing(response.status if response else None, await page.title())
 
         # Wait for job cards to render (client-side decryption + React render)
         try:
@@ -233,10 +306,11 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
         while page_num < max_pages:
             page_num += 1
 
-            # Primary card selector, with fallback using :has() pseudo-class
-            cards = await page.query_selector_all('[class*="company-jobs-preview-card"][class*="__container"]')
-            if not cards:
-                cards = await page.query_selector_all('div:has(> a[href*="jobId="])')
+            cards = []
+            for selector in _CARD_SELECTORS:
+                cards = await page.query_selector_all(selector)
+                if cards:
+                    break
             if not cards:
                 cards = [None]
 
@@ -252,7 +326,7 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
             # Click next pagination button
             has_next = False
             try:
-                pag_buttons = await page.query_selector_all('[class*="paginationButton"] button.MuiButton-root')
+                pag_buttons = await page.query_selector_all('[class*="paginationButton"] .MuiButton-root')
                 if not pag_buttons:
                     logger.info("levels.fyi: no pagination buttons, single page")
                     break
@@ -284,7 +358,7 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                                 if new_first and new_first != old_first_href:
                                     break  # Content changed
                                 # Also check if MUI button got outlined class (current page)
-                                cur_btns = await page.query_selector_all('[class*="paginationButton"] button.MuiButton-root')
+                                cur_btns = await page.query_selector_all('[class*="paginationButton"] .MuiButton-root')
                                 for cb in cur_btns:
                                     cb_text = (await cb.inner_text()).strip()
                                     cb_class = await cb.get_attribute("class") or ""
@@ -313,6 +387,10 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                 logger.info("levels.fyi: 0 new jobs for 2+ consecutive pages, stopping")
                 break
 
+        if not jobs and await page.query_selector('a[href*="jobId="]'):
+            raise LevelsFyiPageError(
+                "Levels.fyi lists jobs, but the scraper read none of them: the page layout changed")
+
         # ── Pass 3: Enrich jobs with detail page data (concurrent) ────────
         if jobs:
             NUM_TABS = 5
@@ -329,14 +407,16 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                 async def _worker(_tab_idx, pg, job_slice):
                     nonlocal enriched
                     for j in job_slice:
-                        job_id_match = re.search(r'jobId=(\d+)', j["url"])
-                        if not job_id_match:
+                        job_id = _levelsfyi_job_id(j["url"])
+                        if not job_id:
                             continue
-                        detail_url = f"https://www.levels.fyi/jobs?jobId={job_id_match.group(1)}"
+                        detail_url = f"https://www.levels.fyi/jobs?jobId={job_id}"
                         try:
                             detail = await _levelsfyi_extract_detail(pg, detail_url)
                             if detail.get("application_url"):
                                 j["application_url"] = detail["application_url"]
+                            elif detail.get("found"):
+                                j["levels_apply"] = True   # no employer link: applied to on levels.fyi
                             if detail.get("description"):
                                 j["description"] = detail["description"]
                             if detail.get("salary_min") and (not j.get("salary_min") or detail["salary_min"] != j["salary_min"]):
@@ -360,6 +440,8 @@ async def _scrape_levelsfyi(url: str, browser=None, debug: bool = False, max_pag
                 for dp in detail_pages:
                     await _close_page(dp)
 
+    except LevelsFyiPageError:
+        raise
     except Exception as e:
         logger.error(f"levels.fyi scraper error: {e}")
         if debug:
@@ -421,7 +503,7 @@ async def run(search: Search, shared=None) -> dict:
         kept_jobs = []
         for j in raw_jobs:
             title_lower = j["title"].lower()
-            if include_kw and not any(kw.lower() in title_lower for kw in include_kw):
+            if include_kw and not any(include_hit(kw, title_lower) for kw in include_kw):
                 continue
             if exclude_kw and any(re.search(r'\b' + re.escape(kw) + r'\b', title_lower) for kw in exclude_kw):
                 continue
@@ -515,6 +597,7 @@ async def run(search: Search, shared=None) -> dict:
                 j["company"] for j in kept_jobs
                 if make_external_id(j["company"], j["title"], j.get("application_url") or j["url"]) not in existing_ids
             ])
+            landed = await resolve_short_links([j.get("application_url") or j["url"] for j in kept_jobs])
             for j in kept_jobs:
                 # Use application_url as primary URL if available, fallback to levels.fyi URL
                 apply_url = j.get("application_url") or ""
@@ -539,6 +622,7 @@ async def run(search: Search, shared=None) -> dict:
                     company=j["company"],
                     title=j["title"],
                     url=job_url,
+                    apply_url=landed.get(job_url),
                     source="levels_fyi",
                     search_id=search.id,
                     location=j.get("location") or None,
@@ -547,6 +631,8 @@ async def run(search: Search, shared=None) -> dict:
                     seen=False,
                     saved=False,
                 )
+                if j.get("levels_apply") and not apply_url:
+                    job.link_kind = EASY_APPLY   # kept on insert: link_kinds.classify
 
                 if j.get("salary_min"):
                     job.salary_min = j["salary_min"]
@@ -580,7 +666,7 @@ async def run(search: Search, shared=None) -> dict:
                     with db.begin_nested():
                         db.add(job)
                         db.flush()
-                    new_jobs += 1
+                    new_jobs += counts_as_new(job)
                     existing_ids.add(ext_id)
                 except IntegrityError:
                     logger.debug(f"Duplicate external_id for '{j['title']}' at {j.get('company')}, skipping")

@@ -1,4 +1,4 @@
-"""Resume PDFs keep the preview margins on every printed page (vertical in @page, sides on .page)."""
+"""Resume PDFs keep the preview margins on every printed page."""
 
 import re
 from pathlib import Path
@@ -14,6 +14,9 @@ def _template_names():
         path.name
         for path in TEMPLATES_DIR.iterdir()
         if (path / "template.html.j2").exists()
+        # The fork's own templates lay out their pages themselves (they read footer_reserved_in);
+        # test_resume_template_ownership.py covers them and what the renderer adds to the others.
+        and "footer_reserved_in" not in (path / "template.html.j2").read_text()
     )
 
 
@@ -27,13 +30,10 @@ def test_resume_template_repeats_preview_margins_on_every_page(name):
 
     assert page_margin, f"{name} has no @page margin"
     assert preview_padding, f"{name} has no preview padding"
-    # The fork keeps the vertical whitespace in @page (the only margin Chromium re-applies on every
-    # page it paginates into; its bottom is the tailored footer's reserved band) and leaves the side
-    # padding on the centred .page box, which repeats per page by itself.
-    page_top = page_margin.group(1).split()[0]
-    assert page_top == preview_padding.group(1).split()[0], (
-        f"{name} print top margin differs from its preview padding"
+    assert page_margin.group(1) == preview_padding.group(1), (
+        f"{name} print margins differ from its preview padding"
     )
-    assert ".page { padding-top: 0; padding-bottom: 0; }" in source, (
-        f"{name} must drop the wrapper's vertical padding when the @page margins take over"
+    assert ".page { width: auto; padding: 0; margin: 0; }" in source, (
+        f"{name} must remove wrapper padding when @page margins take over"
     )
+

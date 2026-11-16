@@ -37,16 +37,25 @@ Everything that scores, tailors or writes needs a language model. Choose one pri
 | Antigravity CLI | a Google Antigravity subscription, see below | subscription |
 | OpenCode Go | a Go subscription key; OpenAI-compatible endpoint, no login | subscription |
 
-Pick the model from the list (or search the provider's catalog under Model catalog). Save.
+Pick the model from the list (or search the provider's catalog under Model catalog). Save. The API key box under the Primary (and on each override) holds one key per provider: paste the Anthropic key once and every slot on Claude API uses it; switching a slot to OpenAI shows the OpenAI key instead, and switching back brings the Anthropic key back. An empty box uses the provider's variable from `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY`) for the owner and for members who inherit Models.
 
 **Ollama or LM Studio on the host, backend in Docker.** Inside the container `localhost` is the container itself, so the default addresses (`http://localhost:11434` for Ollama, `http://localhost:1234/v1` for LM Studio) do not reach your host. Set the address under **Settings › AI › Models** (the Ollama and LM Studio address boxes appear while some model uses that provider), e.g. `http://host.docker.internal:11434` for Ollama and `http://host.docker.internal:1234/v1` for LM Studio, or put `OLLAMA_BASE_URL` / `LMSTUDIO_BASE_URL` in `.env` and run `docker compose up -d backend`. The addresses are install-wide: only the owner edits them.
 
-**Subscriptions instead of API keys.** The Codex, Claude Code and Antigravity CLIs are installed in the backend image, so you log in through the container:
+**Subscriptions instead of API keys.** Codex, Claude Code and Antigravity each have an optional runner image; login commands run in that runner:
 
-- Codex CLI: `docker compose exec backend codex login --device-auth`, follow the URL, then `docker compose exec backend codex login status` to confirm. The login persists in the `codex_auth` Docker volume.
-- Claude Code: `docker compose exec backend claude setup-token`, follow the URL and paste the code; it prints a long-lived token. Put it in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...` and run `docker compose up -d backend` so the container picks it up (or paste it into Settings › Models › Claude Code token).
+Save a subscription provider in Settings to download its missing image and start its
+container automatically. Models shows download/start/error status. All profiles and
+feature overrides count; a container is removed after no profile selects it and active
+requests finish. Images and logins are kept. Leave `COMPOSE_PROFILES` unset.
+For an unreleased source checkout, build the selected runners first, e.g.
+`docker compose build codex-runner`, then `docker compose up --build -d`.
+Existing Codex and Antigravity logins are reused. See [CLI runners](CLI-RUNNERS.md)
+for migration and the manual-profile fallback.
+
+- Codex CLI: `docker compose run --rm -it codex-runner codex login --device-auth`, follow the URL, then `docker compose run --rm -it codex-runner codex login status` to confirm. The login persists in the `codex_auth` Docker volume.
+- Claude Code: `docker compose run --rm -it claude-runner claude setup-token`, follow the URL and paste the code; it prints a long-lived token. Put it in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...` and run `docker compose up -d backend` so the container picks it up (or paste it into Settings › Models › Claude Code token).
   - Several accounts: a member whose Models section is set to Own logs in with its own subscription. `docker compose exec backend python -m backend.scripts.cli_login <codex|agy|claude> "<account name>"` prints the exact command for that account (Codex and Antigravity get their own login folder; for Claude Code the member pastes its `claude setup-token` token into Settings › Models).
-- Antigravity CLI: `docker compose exec -it backend agy`. The container has no browser, so the CLI prints a URL and asks for the code it shows. The login persists in the `antigravity_auth` Docker volume.
+- Antigravity CLI: `docker compose run --rm -it antigravity-runner agy`. The container has no browser, so the CLI prints a URL and asks for the code it shows. The login persists in the `antigravity_auth` Docker volume.
 - OpenCode Go: no container login. It is an OpenAI-compatible endpoint, so just paste the Go API key under **Settings › AI** and pick **OpenCode Go**. A member whose Models section is Own pastes its own Go key there; it never uses the owner's. Go is a coding-agent plan meant for the key holder's own use, so on a household install each member should set their own key rather than inherit the owner's.
 
 When a plan limit is hit, the call fails over to the fallback provider instead of retrying.
@@ -75,7 +84,7 @@ You can have several base résumés (say, one for data roles, one for management
 
 **Companies** is your target list. Nothing creates companies for you; you add them (or apply to a job, which creates its company).
 
-A few well-known companies are seeded but switched off so you can see the shape. To add your own: **Add company**, give it a name and paste the career page URL. The ATS is auto-detected (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, Rippling, Oracle HCM, Phenom, TalentBrew, Amazon, Meta, Google; anything else goes through the generic Playwright reader). Per company you can set:
+A few well-known companies are seeded but switched off so you can see the shape. To add your own: **Add company**, give it a name and paste the career page URL. The ATS is auto-detected (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, Rippling, Oracle HCM, Phenom, TalentBrew, Amazon, Uber, Meta, Google; anything else goes through the generic Playwright reader). Per company you can set:
 
 - **Score new jobs against**: which base résumés, and Off / Light / Full.
 - **Title include / exclude** and other import rules so only relevant roles come in.
@@ -91,10 +100,13 @@ Turn the company on and press its run button once. The result shows on the row (
 - **Keyword (JobSpy)**: LinkedIn, Indeed, ZipRecruiter and Google in one go. Search term, location, hours old, results wanted, remote, job type. Results are not deduplicated across boards as tightly as the ATS scrapers, so start with a modest results count.
 - **Levels.fyi**, **Jobright.ai**, **freehire.me**, **CaribbeanJobs.com**: paste a URL from the site with your filters applied. CaribbeanJobs.com answers many networks with a Cloudflare challenge that the scraper does not pass; from such a network its runs and Tests fail and say so. Read the terms note in its editor and `LEGAL_DISCLAIMER.md` first.
 - **TrulyRemoteWork.com**: reads the board's full corpus of worldwide-remote roles. Every listing is remote with no location restriction, so it needs no term or URL — narrow it with the title filters and Company include / exclude. **New jobs per run** caps how many new jobs' pages one run opens; the first runs work through the board in steps of that size. The board asks that its content not be used for training; see `LEGAL_DISCLAIMER.md`.
+- **Creative boards**: illustration, design, art direction, animation and game-art jobs from Behance, Dribbble, ArtStation, Wana Create, Hollylist and Work With Indies, read from each site's own API or feed (no login, no Apify key). Tick the boards, enter one search term per search ("illustrator", "motion designer") and narrow with the title filters. Remote applies on every board. Location is one city name (Behance ignores it); on Remote searches, Country drops the Behance jobs that are not open to that country. Read the terms note in its editor and `LEGAL_DISCLAIMER.md` first.
+- **Himalayas**: remote jobs from every field through the public API of himalayas.app. Enter a search term; Country keeps the jobs open to that country, worldwide ones included. Himalayas asks that applicants use its job link, which is the link a job keeps.
+- **Eluta**: Canadian jobs from employer career sites. Location is a city with a 50 km radius; empty means all of Canada. Eluta allows 10 RSS checks a day from one address, so give each search a run interval of 1440 minutes. Read the terms note in its editor and `LEGAL_DISCLAIMER.md` first.
 - **LinkedIn Personal**: your own LinkedIn session through Playwright. Read the notice in Settings › Integrations › LinkedIn first.
-- **Apify**: paid scrapers from the Apify Store for Indeed, LinkedIn, Glassdoor, and keyword search across every company on Greenhouse, Lever, Ashby and Workday. Put your Apify API token in Settings › Apify and press **Check key**. Apify bills your account for each result, so keep Results wanted low (at most 200 per board) and the run interval long. A new Apify search starts paused; resume it on its card once the boards look right. Every run carries a spend cap and stops after 15 minutes, and Test asks before it runs, with the estimated cost. With several accounts each account uses its own token; the owner can let a member inherit the owner's token (and pay for that member's runs). **The Apify Creator plan does not work:** it cannot run Store actors, and every board fails with `403 public-actor-disabled`. Use the Free plan or a paid plan.
+- **Apify**: paid scrapers from the Apify Store for Indeed, LinkedIn, Glassdoor, Behance and Hollylist (fallbacks for the creative boards), and keyword search across every company on Greenhouse, Lever, Ashby and Workday. Put your Apify API token in Settings › Apify and press **Check key**. Apify bills your account for each result, so keep Results wanted low (at most 200 per board) and the run interval long. A new Apify search starts paused; resume it on its card once the boards look right. Every run carries a spend cap and stops after 15 minutes, and Test asks before it runs, with the estimated cost. With several accounts each account uses its own token; the owner can let a member inherit the owner's token (and pay for that member's runs). **The Apify Creator plan does not work:** it cannot run Store actors, and every board fails with `403 public-actor-disabled`. Use the Free plan or a paid plan.
 
-Each search has its own auto-scoring depth, title include/exclude, company include/exclude, minimum score, and a run interval. "Skip active companies" leaves out companies you already scrape directly. Run it once by hand; afterwards the scheduler runs it on its interval.
+Each search has its own auto-scoring depth, title include/exclude, company include/exclude, minimum score, and a run interval. "Skip my active companies" leaves out companies you already scrape directly. Run it once by hand; afterwards the scheduler runs it on its interval.
 
 Two searches are always present and cannot be run or deleted: **Extension** and **Extension LI**. They are the inboxes for jobs the Chrome extension sends.
 
@@ -109,6 +121,8 @@ From a row you can:
 - **Cover letter**: generated from the paired résumé, your Persona and a voice preset.
 - **Save** moves the job into Applications; **Skip** hides it.
 
+One posting is one job, however many sites list it: a copy (the same posting under another link, the same role in another city, or a repost) is listed on the original's row under **Also listed** and kept out of the feed; Settings › Copies of a posting can send any kind to New instead. **Open** and the preview use the employer's own posting whenever one is known; the **Link** filter (Direct, Board link; Easy Apply counts as Direct) shows which jobs have one, and a mock LinkedIn account (step 8) finds it for LinkedIn listings. A job's posting is checked when you open it: a closed one gets a red dot on its card and **Closed posting** in its panel, and the **Posting** filter (Open / Closed) appears once one is found.
+
 The posting preview is an iframe. Sites that refuse framing stay blank unless the extension is installed (see below); **Open** always works.
 
 ## 6. Applications
@@ -119,11 +133,17 @@ Saved jobs appear in **Applications** with stages (applied, screening, interview
 
 Install: `chrome://extensions` › Developer mode › **Load unpacked** › the `extension/` folder of the repo. Open the popup, go to its settings and enter the server URL (`http://localhost`) and the dashboard API key from step 0.
 
+If you run the dashboard on a custom port (for example `http://localhost:8088`) or if the extension's requests are blocked by CORS, set `ALLOWED_ORIGINS` in `.env` to include your dashboard URL and your extension's origin (`chrome-extension://<extension-id>`, shown under the extension's **ID** on `chrome://extensions`), then recreate the backend container (`docker compose up -d backend`):
+
+```ini
+ALLOWED_ORIGINS=http://localhost,http://localhost:3000,http://localhost:80,http://localhost:8088,chrome-extension://<extension-id>
+```
+
 It gives you:
 
 - **Posting preview**: lifts the frame-blocking headers only for frames the dashboard opens, so previews of most career pages work.
 - **Save any job**: from any page, one click sends title, company, URL and the description to the Extension search.
-- **LinkedIn capture**: while you browse `linkedin.com/jobs/collections/*` it collects job ids and imports them with full details. This needs a separate LinkedIn account under Settings › Integrations › LinkedIn; do not use your real one.
+- **LinkedIn capture**: while you browse `linkedin.com/jobs/collections/*` it collects job ids and imports them with full details through the mock account's session (Settings › LinkedIn, step 8); do not use your real account as the mock.
 - **Autofill**: on ATS application forms it fills fields from your Persona and drafts answers to free-text questions with the LLM (toggle in the popup).
 
 If you change the extension's files later, remove and re-add it; a plain reload does not pick up new URL patterns.
@@ -133,6 +153,8 @@ If you change the extension's files later, remove and re-add it; a plain reload 
 **Telegram**: create a bot with @BotFather, put the token in `.env` as `TELEGRAM_BOT_TOKEN`, restart, then enter your chat id under Settings › Integrations › Notifications and enable notifications. You get new-job alerts, a daily digest and scrape health, with inline actions.
 
 **Gmail**: create OAuth credentials in Google Cloud (Gmail read-only scope), put client id and secret in `.env` and restart. In the same OAuth client add `<your dashboard address>/api/gmail/callback` (e.g. `http://localhost/api/gmail/callback`) under Authorized redirect URIs. Then each account connects its own mailbox under Settings › Email classification › Gmail › Connect Gmail. The older route still works for the owner: run `py backend/gmail_oauth_setup.py` (or `python`) on your machine once and paste the refresh token it prints into `.env` as `GMAIL_REFRESH_TOKEN`; the owner uses it until they connect in the app. Members never use it. The backend then polls each connected mailbox, classifies replies and updates the matching application.
+
+**LinkedIn**: Settings › LinkedIn has two sessions, each with its own **Sign in** (LinkedIn emails a PIN; the row asks for it). The **Main account** is yours and only LinkedIn Personal searches use it. The **Mock account** is a separate LinkedIn account you create for the tool: the extension's LinkedIn capture uses it, and after every scrape it looks up the employer's own link for LinkedIn listings (one request every 2 seconds, up to 200 per run). It is optional, but without it LinkedIn listings keep their LinkedIn link. Never enter your real account as the mock one; the lookup refuses to run on it.
 
 **H-1B**: Settings › Pipeline holds the global exclude phrases scanned in every description and the cron that refreshes the sponsorship dataset. Ignore it if visa sponsorship is not your concern.
 
@@ -152,7 +174,9 @@ One install can hold up to five accounts, for a household or a couple of friends
 
 ## 9. Scheduling, backups, upkeep
 
-Settings › Pipeline › Scheduler holds every interval and cron: scraping, email polling, backups, cleanup of old unsaved jobs, auto-reject of stale applications. Each cron field explains itself and offers presets.
+Settings › Pipeline › Scheduler holds every interval and cron: scraping, email polling, backups, cleanup of old unsaved jobs, auto-reject of stale applications. Each cron field explains itself and offers presets. The scrape interval counts from the last scheduled scrape, so restarts do not reset it; one that is overdue runs two minutes after the backend starts. Crons (backups, cleanup) run only while the machine is on.
+
+**Telemetry.** After the first sign-in the owner is asked once whether the install may send anonymous scraper/AI health (**Essentials**) and app usage (**Yes**) to help the project see what needs maintaining first; Settings › Telemetry changes it and lists what is sent. Nothing is sent before that choice, and `JN_TELEMETRY=off` in `.env` turns it off for good.
 
 Backups are plain-SQL `pg_dump` files (`backups/jobnavigator_<timestamp>.sql`, newest 5 kept) written on the backup cron; you can trigger one from Settings › System. Removing an account takes one first (`backups/pre_remove_<timestamp>_<name>.sql`; the newest 5 are kept, older ones are deleted on the next removal). The files are made restorable on the bundled postgres:16 (the pg17-only `SET transaction_timeout` line is stripped). To restore into an empty database, strict mode:
 

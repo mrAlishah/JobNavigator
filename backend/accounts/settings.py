@@ -42,18 +42,30 @@ POLICY_MODES = (INHERIT, OWN)
 _LLM_FEATURES = ("", "llm_fallback_", "scoring_", "cv_tailor_", "cover_letter_", "autofill_", "email_")
 
 
+# One API key per provider (3.1): every model slot on a provider uses its key, so switching a
+# slot's provider back and forth never loses or mis-sends a key. Setting = env var in lower case.
+PROVIDER_KEY_SETTINGS = {"claude_api": "anthropic_api_key", "openai": "openai_api_key",
+                         "openrouter": "openrouter_api_key", "opencode_go": "opencode_api_key"}
+# The per-slot keys they replace: migrated once (seed.migrate_llm_provider_keys), then neither
+# served nor writable nor read; the rows stay one release for a downgrade.
+LEGACY_LLM_KEY_SETTINGS = ("llm_api_key", "llm_fallback_api_key", "scoring_llm_api_key",
+                           "cv_tailor_llm_api_key", "cover_letter_llm_api_key",
+                           "autofill_llm_api_key", "email_llm_api_key")
+
+
 def _llm_keys() -> list:
     keys = []
     for f in _LLM_FEATURES:
         base = "llm_fallback" if f == "llm_fallback_" else f"{f}llm"
-        for part in ("provider", "model", "api_key", "effort"):
+        for part in ("provider", "model", "effort"):
             keys.append(f"{base}_{part}")
-    return keys
+    return keys + list(PROVIDER_KEY_SETTINGS.values())
 
 
 # (id, label, scope, default mode, Settings-screen sections it appears in, keys)
 _SECTIONS = [
-    ("feed", "Feed", POLICY, OWN, ["feed"], ["feed_zoom_floater"]),
+    # shown under Display on the Settings screen, with the browser-only look rows
+    ("feed", "Feed", POLICY, OWN, ["appearance"], ["feed_zoom_floater"]),
     # claude_code_oauth_token: the Claude Code subscription login per account (MT-15).
     ("models", "Models", POLICY, INHERIT, ["models"], _llm_keys() + ["llm_models_list", "claude_code_oauth_token"]),
     # The host's local model servers: one address per install, so a member cannot point the
@@ -64,16 +76,19 @@ _SECTIONS = [
         "scoring_rubric", "scoring_output_light", "scoring_output_full"]),
     # A résumé id belongs to one account: never inherited (MT-4 leftover).
     ("default_resume", "Default résumé", OWN_ALWAYS, OWN, ["scoring"], ["default_resume_id"]),
-    # Process-wide semaphores: one value for the install.
     # The résumé profile photo belongs to one person: never inherited, so a member's résumés never
     # print the owner's picture (the fork's Professional templates, Settings › Resumes).
     ("resumes", "Résumés", OWN_ALWAYS, OWN, ["resumes"], ["profile_image_path"]),
-    ("limits", "Parallel limits", OWNER_ONLY, INHERIT, ["scoring", "tailoring"], [
-        "scoring_max_concurrent", "tailoring_max_concurrent"]),
-    ("tailoring", "Tailoring", POLICY, INHERIT, ["tailoring"], [
-        "cv_tailor_prompt", "persona_tailor_prompt", "tailor_auto_quick_score"]),
+    # Process-wide semaphores: one value for the install.
+    ("limits", "Parallel limits", OWNER_ONLY, INHERIT, ["scoring", "tailoring", "scheduler"], [
+        "scoring_max_concurrent", "tailoring_max_concurrent", "scrape_max_concurrent"]),
+    ("tailoring", "Résumé & tailoring", POLICY, INHERIT, ["tailoring"], [
+        "cv_tailor_prompt", "persona_tailor_prompt", "tailor_auto_quick_score", "resume_template"]),
     ("letters", "Cover letters", POLICY, INHERIT, ["letters"], [
-        "cover_letter_default_voice", "cover_letter_voice_presets", "cover_letter_prompt"]),
+        "cover_letter_default_voice", "cover_letter_voice_presets", "cover_letter_prompt",
+        "cover_letter_template"]),
+    # The templates an account last picked in the résumé and letter editors: its own, never inherited.
+    ("last_templates", "Last picked templates", OWN_ALWAYS, OWN, [], ["resume_last_template", "cover_letter_last_template"]),
     ("autofill", "Autofill", POLICY, INHERIT, ["autofill"], [
         "autofill_default_length", "autofill_prompt", "autofill_field_patterns",
         "autofill_option_synonyms"]),
@@ -87,8 +102,11 @@ _SECTIONS = [
     ("backups", "Backups", OWNER_ONLY, INHERIT, ["scheduler", "advanced"], ["backup_cron"]),
     ("h1b", "H-1B", OWNER_ONLY, INHERIT, ["scheduler"], ["h1b_cron"]),
     ("exclude", "Global exclude", POLICY, OWN, ["exclude"], [
-        "body_exclusion_phrases", "title_exclude_global", "company_exclude_global"]),
+        "body_exclusion_phrases", "title_exclude_global", "company_exclude_global", "job_countries_allowed"]),
     ("dedup", "Dedup tracking params", OWNER_ONLY, INHERIT, ["dedup"], ["dedup_tracking_params"]),
+    # where each kind of copy goes (posting_links.py): ignored (default) or new
+    ("copies", "Copies of a posting", POLICY, INHERIT, ["copies"], [
+        "dedup_copy_link", "dedup_copy_city", "dedup_copy_repost"]),
     # MT-17: telegram_bot_mode / telegram_bot_token pick a member's own bot (the owner always
     # uses the household bot); telegram_own_webhook_secret signs that bot's webhook (never served).
     ("notifications", "Notifications", OWN_ALWAYS, OWN, ["notifications"], [
@@ -104,15 +122,18 @@ _SECTIONS = [
     # owner's; 'inherit' = the member's Apify searches bill the owner's Apify account.
     ("apify", "Apify", POLICY, OWN, ["apify"], ["apify_api_key"]),
     ("linkedin", "LinkedIn", POLICY, OWN, ["linkedin"], [
-        "linkedin_email", "linkedin_password", "linkedin_mock_email", "linkedin_mock_password",
-        "linkedin_use_mock_account"]),
+        "linkedin_email", "linkedin_password", "linkedin_mock_email", "linkedin_mock_password"]),
     ("advanced", "Advanced", OWNER_ONLY, INHERIT, ["advanced"], ["proxy_url", "dashboard_api_key"]),
+    # telemetry/level.py: one choice per install, the owner's (JN_TELEMETRY overrides it)
+    ("telemetry", "Telemetry", OWNER_ONLY, INHERIT, ["telemetry"], ["telemetry_level"]),
     # Not a section of the Settings screen. MT-19: the token is connected from a row in Email
     # classification (GET /api/gmail/connect); gmail_token_status = the "expired" marker after
     # an invalid_grant (never served).
     ("gmail", "Gmail", OWN_ALWAYS, OWN, [], ["gmail_processed_ids", "gmail_refresh_token", "gmail_token_status"]),
     # account_cookie_secret: HMAC key of the jn_account cookie (MT-10); never served.
-    ("system", "System", OWNER_ONLY, INHERIT, [], ["llm_seeded_models", "llm_local_seed_cleared", "account_cookie_secret"]),
+    # telemetry_install_id / telemetry_last_sent_at: telemetry state, never served.
+    ("system", "System", OWNER_ONLY, INHERIT, [], ["llm_seeded_models", "llm_local_seed_cleared", "account_cookie_secret",
+                                                   "telemetry_install_id", "telemetry_last_sent_at"]),
 ]
 
 SETTING_SECTIONS = {

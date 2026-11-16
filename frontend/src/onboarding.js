@@ -20,7 +20,8 @@ export const alreadyWelcomed = () => {
 // next release can raise its own by bumping the value; anything else — an older
 // mark, no mark — means this release has not been announced to this profile yet.
 export const NEWUI_KEY = 'jobnavigator_newui_seen'
-export const NEWUI_VERSION = '2.0.0'
+// 3.1: raised again so returning users see the accounts (multi-tenancy) line once.
+export const NEWUI_VERSION = '3.1'
 // Keys only an EXISTING install can have written. A profile carrying any of them
 // (or the welcome mark itself) used JobNavigator before the redesign, which is
 // exactly the audience for "here is what moved" — a genuinely fresh profile has

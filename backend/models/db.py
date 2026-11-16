@@ -182,7 +182,7 @@ class Search(AccountScoped, Base):
     name = Column(String, nullable=False)
     active = Column(Boolean, default=True)
     sources = Column(JSON, default=["linkedin", "indeed", "zip_recruiter", "google", "direct"])
-    search_mode = Column(String, default="keyword")  # keyword | levels_fyi | linkedin_personal | jobright | freehire | apify | caribbeanjobs | trulyremote | extension | linkedin_extension
+    search_mode = Column(String, default="keyword")  # one of backend/scraper/search_modes.py SEARCH_MODES
     search_term = Column(String, nullable=True)
     direct_url = Column(String, nullable=True)
     # A city or a region, never a country: `country` is the single country
@@ -244,6 +244,10 @@ class Company(AccountScoped, Base):
     # H-1B metrics moved to the VisaCache table (single source of truth, keyed by
     # company name + country) so search-sourced companies not in this table are covered.
     last_scraped_at = Column(DateTime(timezone=True), nullable=True)
+    # 3.2: the last full scrape (missing_postings.py): which links it read and how many
+    # postings it saw; a change of links starts the missing count again.
+    board_signature = Column(String(64), nullable=True)
+    board_count = Column(Integer, nullable=True)
     # See Search.warning_acknowledged_at — same contract, per company.
     warning_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
@@ -266,6 +270,19 @@ class VisaCache(Base):
     last_error = Column(String, nullable=True)
 
     __table_args__ = (UniqueConstraint("name_key", "country", name="uq_visa_cache_name_country"),)
+
+
+class LinkedinLookup(Base):
+    """One answer per LinkedIn job, install-wide (the same for every account): the employer's
+    apply link LinkedIn shows a logged-in user, or that the job is Easy Apply or gone.
+    Written by scraper/_shared/linkedin_lookup.py; a job is never asked about twice."""
+    __tablename__ = "linkedin_lookups"
+
+    linkedin_id = Column(String, primary_key=True)
+    apply_url = Column(String, nullable=True)
+    result = Column(String(12), nullable=False)        # employer | easy_apply | gone
+    job_state = Column(String(20), nullable=True)      # LinkedIn's jobState (LISTED, CLOSED, ...)
+    checked_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────
@@ -319,10 +336,39 @@ class Job(AccountScoped, Base):
     h1b_jd_flag = Column(Boolean, default=False)
     h1b_jd_snippet = Column(String, nullable=True)
     h1b_verdict = Column(String, nullable=True)  # likely | unlikely | unknown
-    cv_scores = Column(JSON, default={})     # {"CV Name": score, ...}
+    cv_scores = Column(JSON, default={})     # {"<résumé id>" | "Tailored" | "Persona": score, ...}
     best_cv_score = Column(Float, nullable=True, index=True)
     best_cv = Column(String, nullable=True)
     scoring_report = Column(JSON, nullable=True)  # Structured report: summary, keywords, requirement mapping
+    # 3.1: cv_scores / scoring_report / best_cv are keyed by résumé id ("Tailored" and "Persona"
+    # as before); this keeps {résumé id: name at scoring time} so a deleted résumé keeps a label.
+    # Read and written through backend/analyzer/score_keys.py.
+    cv_score_names = Column(JSON, nullable=True)
+    # 3.1: which posting the job is (scraper/_shared/postings.py, posting_links.py).
+    # `apply_url` is the employer's own posting when `url` is a job board listing or a
+    # wrapped link; `posting_key` names the posting whatever link spelled it
+    # ("greenhouse:8686811002"); a job that repeats a posting the feed already has is
+    # stored with status "duplicate" and `duplicate_of` pointing at that job.
+    apply_url = Column(String, nullable=True)
+    posting_key = Column(String, nullable=True, index=True)
+    duplicate_of = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"),
+                          nullable=True, index=True)
+    # direct | board | easy_apply (scraper/_shared/link_kinds.py)
+    link_kind = Column(String(12), nullable=True)   # indexed with account_id (seed.run_migrations)
+    # 3.2: a copy's kind (posting_links.py): link | city | repost; NULL for an original
+    copy_kind = Column(String(10), nullable=True)
+    # 3.2: is the posting still open (scraper/_shared/still_open.py): open | closed | unknown,
+    # why, and when; checked where it matters, kept a day.
+    open_state = Column(String(10), nullable=True)
+    open_reason = Column(String, nullable=True)
+    open_checked_at = Column(DateTime(timezone=True), nullable=True)
+    # 3.2: full company scrapes in a row this posting was missing from (missing_postings.py)
+    missed_scrapes = Column(Integer, nullable=True)
+    # 3.2: the same role, which the user skipped in another place; this copy stays in the feed.
+    same_role_as = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    # 3.2: company + title as the same-role check reads it (same_role.role_hash: "Sr" is "Senior");
+    # set by posting_links for every row with a content_hash. content_hash stays the exact title.
+    role_hash = Column(String, nullable=True)   # indexed with account_id (seed.run_migrations)
     # deferred: avg 16 KB / 7 KB per row — list queries were hydrating both just to
     # compute one boolean. Use `has_cached_page` (SQL expression) for that instead.
     cached_page_html = deferred(Column(Text, nullable=True))
@@ -331,7 +377,7 @@ class Job(AccountScoped, Base):
     cache_error = Column(Text, nullable=True)
     seen = Column(Boolean, default=False)
     saved = Column(Boolean, default=False)
-    status = Column(String, default="new")  # new | saved | applied | skip
+    status = Column(String, default="new")  # new | saved | applied | skip | ignored | duplicate
     discovered_at = Column(DateTime(timezone=True), default=utcnow)
 
     # Computed in SQL without loading the deferred blob columns; .columns[0] reaches
@@ -608,6 +654,12 @@ def first_template(kind: str) -> str:
         names = []
     return names[0] if names else "traditional"
 
+
+# Garamond Modern: the cover-letter default. Named, not first_template(): a local
+# `garamond` folder sorts before it and would become the default on that install.
+DEFAULT_COVER_LETTER_TEMPLATE = "garamond_alt"
+
+
 class Resume(AccountScoped, Base):
     __tablename__ = "resumes"
 
@@ -642,7 +694,7 @@ class CoverLetter(AccountScoped, Base):
     parent_id = Column(UUID(as_uuid=True), ForeignKey("cover_letters.id", ondelete="SET NULL"), nullable=True)
     # garamond_alt (not garamond) — the garamond template dir is gitignored
     # (licensed fonts), so it may be absent on a fresh clone.
-    template = Column(String, default=lambda: first_template("cover_letter_templates"))
+    template = Column(String, default=DEFAULT_COVER_LETTER_TEMPLATE)
     page_format = Column(String, default="letter")
     json_data = Column(JSON, default={})
     # How this draft was written; lets the list/editor show it and Regenerate
@@ -814,6 +866,14 @@ def create_tables():
 from backend.accounts.scoping import install_scoping  # noqa: E402
 
 install_scoping(AccountScoped)
+
+# After the scoping listener, so a new job already carries its account when it is linked.
+from backend.scraper._shared.posting_links import install_posting_links  # noqa: E402
+install_posting_links()
+
+# After the posting links: a job outside the account's allowed countries is stored as ignored.
+from backend.scraper._shared.country_filter import install_country_filter  # noqa: E402
+install_country_filter()
 
 
 # ── Uncommitted writes (S2-01) ───────────────────────────────────────────────

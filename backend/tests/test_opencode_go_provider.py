@@ -250,7 +250,7 @@ async def test_every_other_go_error_takes_the_retry_path(monkeypatch, status, pa
 async def test_call_llm_skips_the_retries_for_a_protocol_error(monkeypatch):
     """End to end: the primary is tried once, then straight to the fallback."""
     calls = _go_answers(monkeypatch, 400, _GO_PROTOCOL)
-    settings = {"llm_provider": "opencode_go", "llm_model": "grok-4.7", "llm_api_key": "sk",
+    settings = {"llm_provider": "opencode_go", "llm_model": "grok-4.7", "opencode_api_key": "sk",
                 "llm_fallback_provider": "", "llm_fallback_model": ""}
     monkeypatch.setattr(llm_client, "_get_setting", lambda db, k, d="": settings.get(k, d))
     monkeypatch.setattr(llm_client, "SessionLocal", lambda: type("S", (), {"close": lambda self: None})())

@@ -10,7 +10,7 @@ async def test_call_llm_returns_dict(monkeypatch, mock_anthropic_client, mock_an
         return {
             "llm_provider": "claude_api",
             "llm_model": "claude-sonnet-4-6",
-            "llm_api_key": "sk-test",
+            "anthropic_api_key": "sk-test",
         }.get(key, default)
 
     monkeypatch.setattr("backend.analyzer.llm_client._get_setting", fake_get_setting)
@@ -33,7 +33,7 @@ async def test_call_llm_passes_cached_prefix(monkeypatch, mock_anthropic_client,
         return {
             "llm_provider": "claude_api",
             "llm_model": "claude-sonnet-4-6",
-            "llm_api_key": "sk-test",
+            "anthropic_api_key": "sk-test",
         }.get(key, default)
 
     monkeypatch.setattr("backend.analyzer.llm_client._get_setting", fake_get_setting)

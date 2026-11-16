@@ -7,7 +7,7 @@ from backend.models.db import Setting
 
 
 SAMPLE_RESUME = {
-    "header": {"name": "Viktor Esadze", "contact_items": [{"text": "viktor@example.com", "url": "mailto:viktor@example.com"}]},
+    "header": {"name": "Jordan Blake", "contact_items": [{"text": "jordan@example.com", "url": "mailto:jordan@example.com"}]},
     "summary": "Product manager with fintech experience.",
     "experience": [{"company": "Acme", "title": "PM", "bullets": ["Shipped X", "Led Y"]}],
     "skills": {"Core": "Roadmapping, Discovery"},
@@ -18,12 +18,12 @@ SAMPLE_RESUME = {
 
 def test_parse_extracts_json_from_noise():
     from backend.analyzer.cover_letter_generator import parse_cover_letter_response
-    raw = 'Here you go:\n{"greeting": "Dear Team,", "body_paragraphs": ["One.", "Two."], "closing": "Sincerely,", "signature": "Viktor"}\nHope that helps.'
+    raw = 'Here you go:\n{"greeting": "Dear Team,", "body_paragraphs": ["One.", "Two."], "closing": "Sincerely,", "signature": "Jordan"}\nHope that helps.'
     out = parse_cover_letter_response(raw)
     assert out["greeting"] == "Dear Team,"
     assert out["body_paragraphs"] == ["One.", "Two."]
     assert out["closing"] == "Sincerely,"
-    assert out["signature"] == "Viktor"
+    assert out["signature"] == "Jordan"
 
 
 def test_parse_applies_defaults_for_missing_fields():
@@ -63,7 +63,7 @@ def test_build_prompt_splits_prefix_and_suffix():
         "Be concise.", "standard", template,
     )
     # Prefix carries the resume + preferences (cacheable, stable per resume)
-    assert "Viktor Esadze" in prefix
+    assert "Jordan Blake" in prefix
     assert "CANDIDATE RESUME" in prefix
     assert "remote" in prefix
     # Suffix carries the volatile bits (JD, voice, length)
@@ -133,7 +133,7 @@ async def test_generate_body_calls_llm_with_cached_prefix(monkeypatch):
     async def _fake_llm(prompt, system, max_tokens=1500, cached_prefix=None):
         captured["prompt"] = prompt
         captured["cached_prefix"] = cached_prefix
-        return {"text": '{"greeting":"Dear Team,","body_paragraphs":["P1","P2","P3"],"closing":"Sincerely,","signature":"Viktor"}',
+        return {"text": '{"greeting":"Dear Team,","body_paragraphs":["P1","P2","P3"],"closing":"Sincerely,","signature":"Jordan"}',
                 "usage": {"input_tokens": 100}}
 
     monkeypatch.setattr(gen, "call_cover_letter_llm", _fake_llm)
@@ -144,7 +144,7 @@ async def test_generate_body_calls_llm_with_cached_prefix(monkeypatch):
         "Voice: {voice_instruction}\nLength: {length_instruction}\nJD: {job_description}",
     )
     # The resume goes into the cached prefix (prompt-caching win)
-    assert "Viktor Esadze" in captured["cached_prefix"]
+    assert "Jordan Blake" in captured["cached_prefix"]
     assert "JD text here." in captured["prompt"]
     assert out["body_paragraphs"] == ["P1", "P2", "P3"]
     assert out["_usage"]["input_tokens"] == 100

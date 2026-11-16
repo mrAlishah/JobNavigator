@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('initialsOf', () => {
   it('takes the first and last word, or the first two letters of one word', () => {
-    expect(initialsOf('Viktor Esadze')).toBe('VE')
+    expect(initialsOf('Jordan Blake')).toBe('JB')
     expect(initialsOf('alex')).toBe('AL')
     expect(initialsOf('Mary Ann Lee')).toBe('ML')
     expect(initialsOf('  dana  ')).toBe('DA')
@@ -166,8 +166,8 @@ describe('PinPad', () => {
   })
 
   it('shows the idle hint when nothing else is going on', () => {
-    const { container } = render(<PinPad hint="Enter Viktor's PIN" />)
-    expect(container.textContent).toContain("Enter Viktor's PIN")
+    const { container } = render(<PinPad hint="Enter Jordan's PIN" />)
+    expect(container.textContent).toContain("Enter Jordan's PIN")
   })
 })
 

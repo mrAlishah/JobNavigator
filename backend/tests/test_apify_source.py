@@ -123,6 +123,13 @@ def test_linkedin_input_passes_exact_age_and_remote_as_url_params():
     assert "datePosted" not in body                  # three fixed steps; urlParam is exact
 
 
+def test_linkedin_hint_says_remote_is_not_applied_by_linkedin():
+    """LinkedIn returns the same rows with and without f_WT=2 when not logged in (2026-10-22)."""
+    hint = apify.PRESETS["apify_linkedin"].hint
+    assert "ignores Remote without login" in hint
+    assert "remote filter" not in hint
+
+
 def test_glassdoor_input_always_has_a_location_and_whole_days():
     body = apify._glassdoor_input(_search(hours_old=25, is_remote=True), 30)
     assert body["location"] == "United States"       # required by the actor
@@ -132,7 +139,66 @@ def test_glassdoor_input_always_has_a_location_and_whole_days():
     assert "daysOld" not in apify._glassdoor_input(_search(hours_old=None), 30)
 
 
+def test_behance_input_maps_city_and_remote():
+    body = apify._behance_input(_search(search_term=" illustrator ", location="Los Angeles, CA", is_remote=True), 30)
+    # no isWorldwide: it is not a remote filter (2026-10-24), _not_remote filters instead
+    assert body == {"search": "illustrator", "maxItems": 30, "jobTypes": ["CONTRACT", "FULLTIME"],
+                    "city": "Los Angeles"}
+    assert set(apify._behance_input(_search(), 5)) == {"search", "maxItems", "jobTypes"}
+
+
+def test_hollylist_input_skips_members_only_offers():
+    body = apify._hollylist_input(_search(search_term="animator", location="London", is_remote=True), 30)
+    assert body == {"searchQueries": ["animator"], "maxResults": 30, "extractFullDetails": True,
+                    "includePremiumOffers": False, "locations": ["London"], "workType": ["remote"]}
+    assert set(apify._hollylist_input(_search(), 5)) == {"searchQueries", "maxResults", "extractFullDetails",
+                                                         "includePremiumOffers"}
+
+
 # ── item parsing ────────────────────────────────────────────────────────────
+
+def test_remote_only_drops_behance_rows_that_behance_marks_onsite():
+    """The structured remoteStatus is enough; the text need not say so."""
+    j = apify._parse_behance({"title": "Art Director", "companyName": "Fynd", "remoteStatus": "ONSITE",
+                              "url": "https://www.behance.net/joblist/fulltime/1/x", "description": "Great role"})
+    j["source"] = "apify_behance"
+    assert apify._rejection(j, [], [], set(), set(), None, True) == "Not remote: onsite"
+    j["arrangement"] = "remote"
+    assert apify._rejection(j, [], [], set(), set(), None, True) is None
+
+
+def test_parse_behance_maps_the_documented_row():
+    j = apify._parse_behance({
+        "title": "Senior Experience Designer", "companyName": "HP Inc.",
+        "url": "https://www.behance.net/joblist/fulltime/366779/Senior-Experience-Designer",
+        "description": "<p>We are seeking a <strong>UX/UI Designer</strong></p>",
+        "locationDisplay": "Palo Alto, CA, USA", "remoteStatus": "HYBRID", "postedOn": 1791463395})
+    assert (j["company"], j["location"], j["arrangement"]) == ("HP Inc.", "Palo Alto, CA, USA", "hybrid")
+    assert j["description"] == "We are seeking a UX/UI Designer"
+    assert j["posted"] == "2026-10-08"
+    empty = apify._parse_behance({})
+    assert (empty["title"], empty["arrangement"], empty["posted"]) == ("", None, None)
+
+
+def test_parse_hollylist_keeps_yearly_pay_and_the_first_place():
+    j = apify._parse_hollylist({
+        "title": "Director of Social\n    ", "url": "https://www.hollylist.com/job/director-of-social-x",
+        "company": {"name": "Paramount"},
+        "locations": [{"city": "London", "region": None, "countryCode": "GB"}],
+        "workType": [{"type": "hybrid"}], "description": {"text": "Lead social."},
+        "salaries": [{"period": "month", "min": 5000, "max": 6000, "isOriginal": False, "currency": "USD"},
+                     {"period": "year", "min": 60000, "max": 72000, "isOriginal": True, "currency": "USD"}],
+        "dates": {"posted": "2026-10-23"}})
+    assert (j["title"], j["company"], j["location"]) == ("Director of Social", "Paramount", "London, GB")
+    assert (j["salary_min"], j["salary_max"], j["arrangement"]) == (60000, 72000, "hybrid")
+    assert (j["description"], j["posted"]) == ("Lead social.", "2026-10-23")
+    hourly = apify._parse_hollylist({"salaries": [{"period": "hour", "min": 30, "isOriginal": True, "currency": "USD"}]})
+    assert (hourly["salary_min"], hourly["salary_max"]) == (None, None)
+    pounds = apify._parse_hollylist({"salaries": [{"period": "year", "min": 40000, "isOriginal": True, "currency": "GBP"}]})
+    assert (pounds["salary_min"], pounds["salary_max"]) == (None, None)
+    empty = apify._parse_hollylist({"company": {}, "description": {}, "dates": {}})
+    assert (empty["company"], empty["location"], empty["description"]) == ("", "", "")
+
 
 def test_parse_indeed_keeps_annual_salary_only():
     j = apify._parse_indeed({"positionName": "PM", "company": "Acme", "location": "Austin, TX",
@@ -293,8 +359,8 @@ async def test_run_clamps_results_wanted(monkeypatch, test_db):
 
 def test_board_keys_never_collide_with_jobspy_boards():
     """C4: a search whose sources still hold JobSpy boards picks no Apify board."""
-    from backend.api.routes_searches import SearchCreate
-    jobspy = set(SearchCreate.model_fields["sources"].default) | {"glassdoor", "zip_recruiter", "google", "direct"}
+    from backend.scraper.search_modes import JOBSPY_BOARDS
+    jobspy = set(JOBSPY_BOARDS)
     assert all(k.startswith("apify_") for k in apify.PRESETS)
     assert not jobspy & set(apify.PRESETS)
     assert apify.configured_presets(_search(sources=sorted(jobspy))) == []
@@ -432,6 +498,54 @@ async def test_preview_caps_the_fetch_and_explains_rejections(monkeypatch, test_
     assert by["Senior Engineer"]["reason"].startswith("Body exclusion")
     assert r["source_breakdown"] == {"apify_indeed": 3}
     assert r["source_errors"] == {"apify_greenhouse": "HTTP 402"}
+
+
+# ── Remote only on LinkedIn ─────────────────────────────────────────────────
+
+_HYBRID_JD = "You work 3 days per week in the office in Austin."
+_ONSITE_JD = "This role is fully on-site in Austin."
+_REMOTE_JD = "This is a fully remote role across the US."
+
+
+@pytest.mark.parametrize("source,desc,remote_only,expected", [
+    ("apify_linkedin", _HYBRID_JD, True, "Not remote: hybrid"),
+    ("apify_linkedin", _ONSITE_JD, True, "Not remote: onsite"),
+    ("apify_linkedin", _REMOTE_JD, True, None),
+    ("apify_linkedin", "Great role", True, None),        # unknown stays: the cascade never guesses
+    ("apify_linkedin", _HYBRID_JD, False, None),         # Any: nothing to enforce
+    ("apify_indeed", _HYBRID_JD, True, None),            # Indeed applies Remote itself
+    ("apify_behance", "Great role", True, None),
+    ("apify_hollylist", _ONSITE_JD, True, "Not remote: onsite"),
+])
+def test_remote_only_drops_linkedin_rows_the_posting_calls_hybrid_or_onsite(source, desc, remote_only, expected):
+    j = _job("SRE", "Acme", "https://www.linkedin.com/jobs/view/1", source=source, desc=desc)
+    assert apify._rejection(j, [], [], set(), set(), None, remote_only) == expected
+
+
+@pytest.mark.asyncio
+async def test_remote_only_linkedin_rows_are_filtered_in_run_and_preview(monkeypatch, test_db):
+    search = Search(name="t", search_mode="apify", search_term="sre", sources=["apify_linkedin"],
+                    is_remote=True, results_wanted=10, company_exclude=[])
+    test_db.add(search)
+    test_db.commit()
+
+    async def fake_collect(_search, limit):
+        return [_job("SRE", "Acme", "https://www.linkedin.com/jobs/view/1", source="apify_linkedin", desc=_REMOTE_JD),
+                _job("SRE", "Initech", "https://www.linkedin.com/jobs/view/2", source="apify_linkedin", desc=_HYBRID_JD)],             {"apify_linkedin": {"seen": 0, "new": 0, "returned": 2}}
+    monkeypatch.setattr(apify, "_collect", fake_collect)
+    monkeypatch.setattr("backend.activity.log_activity", lambda *a, **k: None)
+
+    async def no_analysis(job, db=None, arrangement=None):
+        pass
+    monkeypatch.setattr(apify, "analyze_inline", no_analysis)
+
+    r = await apify.preview(search, test_db)
+    assert {j["company"]: j["reason"] for j in r["jobs"]} == {"Acme": None, "Initech": "Not remote: hybrid"}
+
+    res = await apify.run(search)
+    assert res["source_breakdown"]["apify_linkedin"] == {"seen": 1, "new": 1, "returned": 2, "filtered": 1}
+    test_db.expire_all()
+    assert [j.company for j in test_db.query(Job).all()] == ["Acme"]
 
 
 # ── wiring ──────────────────────────────────────────────────────────────────
@@ -581,8 +695,11 @@ def test_apify_results_wanted_is_clamped_on_create_and_patch(api_client):
 
 
 def test_apify_search_without_apify_boards_is_400(api_client):
-    # no `sources`: the JobSpy default list must not reach the paid source
+    # no `sources`: nothing reaches the paid source (an Apify search has no default board)
     r = api_client.post("/api/searches", json={"name": "x", "search_mode": "apify", "search_term": "pm"})
+    assert r.status_code == 400 and "needs at least one Apify board" in r.json()["detail"]
+    r = api_client.post("/api/searches", json={"name": "x", "search_mode": "apify", "search_term": "pm",
+                                               "sources": ["linkedin", "indeed"]})
     assert r.status_code == 400 and "not Apify boards: linkedin, indeed" in r.json()["detail"]
     assert _new_apify(api_client, sources=[]).status_code == 400
     assert _new_apify(api_client, sources=["apify_indeed", "indeed"]).status_code == 400
