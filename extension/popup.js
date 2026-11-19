@@ -120,6 +120,8 @@ function _extractDescFn() {
   return '';
 }
 
+const { apiUrl, normalizeServerUrl, sameServer, accountTokenFor, authHint } = JNServer;
+
 // ---- state ----
 const state = {
   screen: 'capture', url: '', host: '', path: '',
@@ -131,23 +133,24 @@ const state = {
   // MT-18 / QA F1: target account. The signed API token the server issued for it (after its
   // PIN, when it has one) lives in chrome.storage.local with the id the row shows (per
   // browser profile, not synced: a synced token would carry to another machine).
-  accounts: [], accountId: '', accountToken: '', acctOpen: false, acctPending: '', acctNote: '',
+  accounts: [], accountId: '', accountToken: '', accountServer: '', acctOpen: false, acctPending: '', acctNote: '',
 };
 let _sendT, _saveT;
 
 async function forgetAccount(note) {
-  state.accountId = ''; state.accountToken = ''; state.acctNote = note;
-  await chrome.storage.local.remove(['accountId', 'accountToken']);
+  state.accountId = ''; state.accountToken = ''; state.accountServer = ''; state.acctNote = note;
+  await chrome.storage.local.remove(['accountId', 'accountToken', 'accountServer']);
   await chrome.storage.local.set({ accountRemoved: true });
 }
 
 async function cfg() {
   const s = await chrome.storage.sync.get(['serverUrl', 'apiKey']);
-  state.serverUrl = s.serverUrl || 'http://localhost';
+  try { state.serverUrl = normalizeServerUrl(s.serverUrl || 'http://localhost'); } catch { state.serverUrl = s.serverUrl; }   // a bad stored value surfaces on the first request
   state.apiKey = s.apiKey || '';
-  const l = await chrome.storage.local.get(['accountId', 'accountToken', 'accountRemoved']);
+  const l = await chrome.storage.local.get(['accountId', 'accountToken', 'accountServer', 'accountRemoved']);
   state.accountId = l.accountId || '';
-  state.accountToken = l.accountToken || '';
+  state.accountServer = l.accountServer || '';
+  state.accountToken = accountTokenFor(l, state.serverUrl);   // a token issued by another server is not used
   if (l.accountRemoved) state.acctNote = 'Account removed — pick again';
   // a choice stored by the pre-token extension (bare id, no token) no longer counts
   if (state.accountId && !state.accountToken) await forgetAccount('Pick the account again');
@@ -167,9 +170,9 @@ async function noteIfAccountGone(resp) {
   if (resp.status !== 401) return false;
   let d = null;
   try { d = await resp.clone().json(); } catch {}
-  if (d && d.detail === 'account_required') { state.errHint = 'Choose an account in Settings › Saves to.'; return false; }
-  if (!d || d.detail !== 'invalid_account_token') return false;
-  state.errHint = 'Account changed or removed — pick again in Settings › Saves to.';
+  const { hint, forget } = authHint(d && d.detail);
+  state.errHint = hint;
+  if (!forget) return false;
   await forgetAccount('Account changed or removed — pick again');
   await loadAccounts(); render();
   return true;
@@ -179,7 +182,7 @@ async function noteIfAccountGone(resp) {
 // The accounts list needs only the install key (no token: a stale one would 401).
 async function loadAccounts(url, key) {
   try {
-    const resp = await fetch(`${url || state.serverUrl}/api/auth/accounts`, { headers: { 'X-API-Key': key !== undefined ? key : state.apiKey } });
+    const resp = await fetch(apiUrl(url || state.serverUrl, '/api/auth/accounts'), { headers: { 'X-API-Key': key !== undefined ? key : state.apiKey } });
     state.accounts = resp.ok ? await resp.json() : [];
   } catch { state.accounts = []; }
   if (state.accounts.length >= 2 && state.accountId && !state.accounts.some(a => a.id === state.accountId)) {
@@ -213,9 +216,9 @@ function renderAccounts() {
   if (pend) $('acctPinFor').textContent = `Enter the PIN for ${pend.name} (the owner's PIN also works)`;
 }
 async function storeAccount(a, token) {
-  state.accountId = a.id; state.accountToken = token;
+  state.accountId = a.id; state.accountToken = token; state.accountServer = normalizeServerUrl($('serverUrl').value.trim() || state.serverUrl);
   state.acctNote = ''; state.acctOpen = false; state.acctPending = '';
-  await chrome.storage.local.set({ accountId: a.id, accountToken: token });
+  await chrome.storage.local.set({ accountId: a.id, accountToken: token, accountServer: state.accountServer });
   await chrome.storage.local.remove('accountRemoved');
   renderAccounts();
   // The popup reads the persona-bound state per account; background reads storage on each call.
@@ -226,7 +229,7 @@ async function storeAccount(a, token) {
 async function requestToken(a, pin) {
   const body = { account_id: a.id };
   if (pin !== undefined) body.pin = pin;
-  const resp = await fetch(`${$('serverUrl').value.trim() || state.serverUrl}/api/auth/verify-pin`, {
+  const resp = await fetch(apiUrl($('serverUrl').value.trim() || state.serverUrl, '/api/auth/verify-pin'), {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': $('apiKey').value.trim() || state.apiKey },
     body: JSON.stringify(body),
   });
@@ -305,7 +308,8 @@ function render() {
     $('errHd').textContent = 'Not added to the job feed';
     $('errBo').textContent = `${state.filterReason || 'Filtered out by your Extension search rules'}. Edit the rules in Searches › Extension.`;
   } else if (showErr) {
-    $('errHd').textContent = state.lastError === 'applied' ? "Couldn't reach the Application Board" : "Couldn't reach the Job Feed";
+    const verb = state.errHint ? "Couldn't save to" : "Couldn't reach";   // with a hint the server did answer
+    $('errHd').textContent = state.lastError === 'applied' ? `${verb} the Application Board` : `${verb} the Job Feed`;
     $('errBo').textContent = state.errHint ? `Not saved. ${state.errHint}` : 'Not saved. Check your connection, then retry.';
   }
 
@@ -337,6 +341,12 @@ function render() {
 }
 
 // ---- actions ----
+// An HTTP status (thrown by doSend/doApplied) or a bad Server URL is worth saying; a plain
+// network failure keeps the default "check your connection" text.
+function failHint(e) {
+  if (/^\d{3}$/.test(e.message)) return `Server answered ${e.message} — check the Server URL in Settings.`;
+  return e.name === 'ServerUrlError' ? e.message : '';
+}
 async function doSend() {
   if (state.send === 'sending') return;
   const title = $('title').value.trim(), company = $('company').value.trim(), url = state.url.trim();
@@ -348,7 +358,7 @@ async function doSend() {
     if (tab) { const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: _extractDescFn }); if (r && r.result) description = r.result; }
   } catch {}
   try {
-    const resp = await fetch(`${state.serverUrl}/api/jobs/save-from-extension`, {
+    const resp = await fetch(apiUrl(state.serverUrl, '/api/jobs/save-from-extension'), {
       method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title, company, url, description }),
     });
@@ -364,7 +374,7 @@ async function doSend() {
     state.filterReason = '';
     state.send = 'sent'; render();
     clearTimeout(_sendT); _sendT = setTimeout(() => { state.send = 'idle'; render(); }, 1800);
-  } catch { state.send = 'error'; state.lastError = 'send'; render(); }
+  } catch (e) { state.errHint = state.errHint || failHint(e); state.send = 'error'; state.lastError = 'send'; render(); }
 }
 async function doApplied() {
   if (state.applied === 'saving') return;
@@ -372,7 +382,7 @@ async function doApplied() {
   if (!title || !company || !url) return;
   state.errHint = ''; state.applied = 'saving'; render();
   try {
-    const resp = await fetch(`${state.serverUrl}/api/applications`, {
+    const resp = await fetch(apiUrl(state.serverUrl, '/api/applications'), {
       method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title, company, url }),
     });
@@ -380,7 +390,7 @@ async function doApplied() {
     if (!resp.ok) { await noteIfAccountGone(resp); throw new Error(String(resp.status)); }
     state.applied = 'saved'; render();
     clearTimeout(_saveT); _saveT = setTimeout(() => { state.applied = 'idle'; render(); }, 1800);
-  } catch { state.applied = 'error'; state.lastError = 'applied'; render(); }
+  } catch (e) { state.errHint = state.errHint || failHint(e); state.applied = 'error'; state.lastError = 'applied'; render(); }
 }
 
 async function checkConnection() {
@@ -389,15 +399,15 @@ async function checkConnection() {
     const url = $('serverUrl').value.trim() || state.serverUrl, key = $('apiKey').value.trim() || state.apiKey;
     const headers = { 'X-API-Key': key };
     if (state.accountToken) headers['X-Account-Token'] = state.accountToken;
-    const resp = await fetch(`${url}/api/autofill/config`, { headers });
+    const resp = await fetch(apiUrl(url, '/api/autofill/config'), { headers });
     let detail = '';
     if (resp.status === 401) { try { detail = (await resp.clone().json()).detail; } catch {} }
     if (detail === 'invalid_account_token') { await noteIfAccountGone(resp); $('connTx').textContent = 'Account changed or removed — pick again'; $('connDot').classList.add('bad'); }
     else if (detail === 'account_required') { $('connDot').classList.remove('bad'); $('connTx').textContent = 'Connected · choose an account'; }
-    else if (resp.status === 401) { $('connDot').classList.add('bad'); $('connTx').textContent = 'API key rejected'; }
+    else if (resp.status === 401) { $('connDot').classList.add('bad'); $('connTx').textContent = detail === 'API key required' ? 'API key missing' : 'API key rejected'; }
     else if (resp.ok) { $('connDot').classList.remove('bad'); $('connTx').textContent = `Connected · v${VERSION}`; }
     else { $('connDot').classList.add('bad'); $('connTx').textContent = `Server error ${resp.status}`; }
-  } catch { $('connDot').classList.add('bad'); $('connTx').textContent = 'Cannot reach server'; }
+  } catch (e) { $('connDot').classList.add('bad'); $('connTx').textContent = e.name === 'ServerUrlError' ? e.message : 'Cannot reach server'; }
 }
 
 // ---- init ----
@@ -508,14 +518,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkConnection();
   };
   $('apiKey').onchange = recheck;
-  $('serverUrl').onchange = recheck;
+  // The API key belongs to one server: a different URL starts with an empty key, so the
+  // old install's key is never sent to the new one.
+  $('serverUrl').onchange = () => {
+    try { $('serverUrl').value = normalizeServerUrl($('serverUrl').value); } catch {}
+    if (!sameServer($('serverUrl').value, state.serverUrl)) $('apiKey').value = '';
+    recheck();
+  };
   $('acctChange').onclick = () => { state.acctOpen = !state.acctOpen; state.acctPending = ''; renderAccounts(); };
   $('acctPinOk').onclick = verifyPinAndStore;
   $('acctPinIn').onkeydown = (e) => { if (e.key === 'Enter') verifyPinAndStore(); };
   $('acctPinCancel').onclick = () => { state.acctPending = ''; renderAccounts(); };
   $('saveSettings').onclick = async () => {
-    state.serverUrl = $('serverUrl').value.trim(); state.apiKey = $('apiKey').value.trim();
+    try { $('serverUrl').value = normalizeServerUrl($('serverUrl').value); }
+    catch (e) { $('connDot').classList.add('bad'); $('connTx').textContent = e.message; return; }
+    state.serverUrl = $('serverUrl').value; state.apiKey = $('apiKey').value.trim();
     await chrome.storage.sync.set({ serverUrl: state.serverUrl, apiKey: state.apiKey });
+    if (state.accountToken && !accountTokenFor({ accountToken: state.accountToken, accountServer: state.accountServer }, state.serverUrl)) {
+      await forgetAccount('Server changed — pick the account again');
+    }
     await loadAccounts();
     await checkConnection();
     state.screen = 'capture'; render();

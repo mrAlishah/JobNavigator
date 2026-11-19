@@ -1,4 +1,6 @@
 // Background service worker for JobNavigator Chrome Extension
+importScripts('lib/server_url.js');
+const { apiUrl, accountTokenFor } = JNServer;
 // Handles context menu and background operations
 
 // The Job Feed previews postings in an iframe, which most career sites refuse
@@ -135,9 +137,9 @@ function backupToSession() {
 // /api/auth/verify-pin) in chrome.storage.local (per browser profile, not synced) next to
 // the id it shows. Nothing stored = no X-Account-Token header (a one-account server then
 // uses its owner, as before). A bare account id is never sent: the server ignores it.
-async function addAccountHeader(headers) {
-  const { accountToken } = await chrome.storage.local.get('accountToken');
-  if (accountToken) headers['X-Account-Token'] = accountToken;
+async function addAccountHeader(headers, serverUrl) {
+  const token = accountTokenFor(await chrome.storage.local.get(['accountToken', 'accountServer']), serverUrl);
+  if (token) headers['X-Account-Token'] = token;
   return headers;
 }
 
@@ -148,7 +150,7 @@ async function noteAccountGone(resp) {
   try {
     const d = await resp.clone().json();
     if (d && d.detail === 'invalid_account_token') {
-      await chrome.storage.local.remove(['accountId', 'accountToken']);
+      await chrome.storage.local.remove(['accountId', 'accountToken', 'accountServer']);
       await chrome.storage.local.set({ accountRemoved: true });
     }
   } catch (_) { /* not JSON */ }
@@ -187,9 +189,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const headers = { 'Content-Type': 'application/json' };
         if (apiKey) headers['X-API-Key'] = apiKey;
-        await addAccountHeader(headers);
+        await addAccountHeader(headers, serverUrl);
 
-        const resp = await fetch(`${serverUrl}/api/jobs/linkedin-import`, {
+        const resp = await fetch(apiUrl(serverUrl, '/api/jobs/linkedin-import'), {
           method: 'POST',
           headers,
           body: JSON.stringify({ linkedin_ids: ids }),
@@ -234,9 +236,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const headers = { 'Content-Type': 'application/json' };
         if (apiKey) headers['X-API-Key'] = apiKey;
-        await addAccountHeader(headers);
+        await addAccountHeader(headers, serverUrl);
 
-        const resp = await fetch(`${serverUrl}/api/autofill/answer`, {
+        const resp = await fetch(apiUrl(serverUrl, '/api/autofill/answer'), {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -272,9 +274,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const headers = { 'Content-Type': 'application/json' };
         if (apiKey) headers['X-API-Key'] = apiKey;
-        await addAccountHeader(headers);
+        await addAccountHeader(headers, serverUrl);
 
-        const resp = await fetch(`${serverUrl}/api/persona/qa-bank`, {
+        const resp = await fetch(apiUrl(serverUrl, '/api/persona/qa-bank'), {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -307,8 +309,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const headers = {};
         if (apiKey) headers['X-API-Key'] = apiKey;
-        await addAccountHeader(headers);
-        const resp = await fetch(`${serverUrl}/api/autofill/config`, { headers });
+        await addAccountHeader(headers, serverUrl);
+        const resp = await fetch(apiUrl(serverUrl, '/api/autofill/config'), { headers });
         if (!resp.ok) {
           await noteAccountGone(resp);
           sendResponse({ error: `Server error: ${resp.status}` });
@@ -343,8 +345,8 @@ chrome.runtime.onConnect.addListener((port) => {
       try {
         const headers = { 'Content-Type': 'application/json' };
         if (apiKey) headers['X-API-Key'] = apiKey;
-        await addAccountHeader(headers);
-        const resp = await fetch(`${serverUrl}/api/autofill/answer/stream`, {
+        await addAccountHeader(headers, serverUrl);
+        const resp = await fetch(apiUrl(serverUrl, '/api/autofill/answer/stream'), {
           method: 'POST',
           headers,
           body: JSON.stringify({
