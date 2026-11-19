@@ -12,9 +12,13 @@ services:
     volumes:
       - ./backups-alish:/app/backups
       - ./backend/.linkedin_api-alish:/root/.linkedin_api
+      # Git worktree checkout: ./.git is a file pointing at a host path the container cannot see.
+      # Mount the main clone's .git read-only and point JN_GIT_DIR at this worktree's folder in it
+      # (both set in .env, see misc/Docker-setup.md). Unset = plain clone: a second mount of ./.git.
+      - ${JN_GIT_COMMON_DIR:-./.git}:/app/.git-common:ro
 
   frontend:
-    # Diagnostic only. Use Caddy at http://alish.localhost:8080 for the app.
+    # Diagnostic only. Use Caddy at http://localhost:8082 for the app.
     ports: !override
       - "127.0.0.1:13000:80"
 

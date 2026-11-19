@@ -12,9 +12,13 @@ services:
     volumes:
       - ./backups-elsa:/app/backups
       - ./backend/.linkedin_api-elsa:/root/.linkedin_api
+      # Git worktree checkout: ./.git is a file pointing at a host path the container cannot see.
+      # Mount the main clone's .git read-only and point JN_GIT_DIR at this worktree's folder in it
+      # (both set in .env, see misc/Docker-setup.md). Unset = plain clone: a second mount of ./.git.
+      - ${JN_GIT_COMMON_DIR:-./.git}:/app/.git-common:ro
 
   frontend:
-    # Diagnostic only. Use Caddy at http://elsa.localhost:8081 for the app.
+    # Diagnostic only. Use Caddy at http://192.168.178.33:8081 for the app.
     ports: !override
       - "0.0.0.0:13001:80"
 
