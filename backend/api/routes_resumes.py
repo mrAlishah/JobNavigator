@@ -7,11 +7,12 @@ import logging
 import re
 import unicodedata
 import uuid as _uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 from urllib.parse import quote as _url_quote, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse, Response, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -19,7 +20,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend.accounts.owned import get_owned, get_owned_or_404, get_persona, owned_id_or_404
 from backend.models.db import get_db, Resume, TracerLink, TracerClickEvent, Job, Application, SessionLocal, utcnow, Persona
 from backend.accounts.settings import get_setting
-from backend.api._input import str_field
+from backend.api._input import str_field, uuid_filter
 from backend import resume_template_overrides as _template_overrides
 from backend import resume_template_aliases as _aliases
 from backend.analyzer.model_json import UNPARSEABLE_MESSAGE, ModelReplyError, parse_model_json
@@ -1188,6 +1189,11 @@ def _is_traceable_url(url: str) -> bool:
     return "@" not in url.split("/", 1)[0]
 
 
+# Random tracer tokens: secrets.token_urlsafe(n) is ceil(4n/3) characters, and must fit
+# tracer_links.token (String(10)); 7 bytes = 10 characters.
+_RANDOM_TOKEN_BYTES = 7
+
+
 def _rewrite_urls_with_tracers(json_data: dict, resume_id: str, db,
                                cover_letter_id: str = None, job_id=None) -> dict:
     """Replace header contact URLs with tracer redirect URLs, returning a modified copy; owner is exactly one of a resume (resume_id) or a cover letter (cover_letter_id), with job_id resolving the short_id for job_id token styles."""
@@ -1333,9 +1339,10 @@ def _rewrite_urls_with_tracers(json_data: dict, resume_id: str, db,
                             token = None   # another account's token: take a random one below
             if not token:
                 # secrets, not random: the fallback token is the only entropy a
-                # link without a job short_id has (R4-T5-07). 8 bytes ≈ 11 chars.
+                # link without a job short_id has (R4-T5-07). 7 bytes = 10 chars (56 bits),
+                # the width of tracer_links.token: 8 bytes gave 11 and Postgres refused the row.
                 for _ in range(100):
-                    token = secrets.token_urlsafe(8)
+                    token = secrets.token_urlsafe(_RANDOM_TOKEN_BYTES)
                     if _any_account_links().filter(TracerLink.token == token).first():
                         continue
                     try:
@@ -1386,13 +1393,27 @@ def list_templates():
 # ── CRUD ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_resumes(is_base: Optional[bool] = None, active: Optional[bool] = None, db: Session = Depends(get_db)):
-    """List all resumes. Optional filters: is_base=true for base resumes only; active=true/false for the active flag (a NULL flag counts as active)."""
+def list_resumes(is_base: Optional[bool] = None, active: Optional[bool] = None,
+                 job_id: Optional[str] = None,
+                 created_after: Optional[datetime] = None,
+                 limit: Annotated[Optional[int], Query(ge=1, le=500)] = None,
+                 db: Session = Depends(get_db)):
+    """List resumes, most recently updated first. Optional filters: is_base=true for base
+    resumes only, active=true/false for the active flag (a NULL flag counts as active),
+    job_id for the copies tailored for one job, created_after (ISO time)
+    for the resumes created later than that, limit for the newest N."""
     q = db.query(Resume).order_by(Resume.updated_at.desc())
     if is_base is not None:
         q = q.filter(Resume.is_base == is_base)
     if active is not None:
         q = q.filter(Resume.active.is_not(False) if active else Resume.active.is_(False))
+    job_id = uuid_filter(job_id, "job_id")
+    if job_id:
+        q = q.filter(Resume.job_id == job_id)
+    if created_after is not None:
+        q = q.filter(Resume.created_at > created_after)
+    if limit is not None:
+        q = q.limit(limit)
     resumes = q.all()
     return [_resume_to_dict(r) for r in resumes]
 
@@ -1636,10 +1657,22 @@ def _resolve_chain_score_depth(db) -> str | None:
 @router.post("/tailor", status_code=202)
 async def tailor_resume(body: dict, db: Session = Depends(get_db)):
     """Tailor a base resume for a job in the background, returning a run_id to track via GET /api/monitor/in-flight; the response's `chain_score` reports the depth of any scoring run that will follow ('light'/'full'/'off'), since only job-linked tailors chain."""
-    base_resume_id = body.get("base_resume_id")
-    job_id = body.get("job_id")
-    job_description = body.get("job_description")
+    try:
+        run_id, chain_depth = launch_tailor(db, body.get("base_resume_id"), body.get("job_id"),
+                                            body.get("job_description"))
+        return {"run_id": run_id, "status": "running", "chain_score": chain_depth or "off"}
+    except JobAlreadyRunningError as e:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": f"{e.job_type} is already running for this pair"},
+        )
 
+
+def launch_tailor(db: Session, base_resume_id, job_id, job_description=None):
+    """Check a tailor request and start its background run: (run_id, chain score depth or None).
+
+    Raises HTTPException for a request that cannot run and JobAlreadyRunningError for a
+    pair that is already running. Called by POST /tailor and by the generate batch."""
     if not base_resume_id:
         raise HTTPException(400, "base_resume_id is required")
     if not job_id and not job_description:
@@ -1677,27 +1710,20 @@ async def tailor_resume(body: dict, db: Session = Depends(get_db)):
         Resume.job_id == target_uuid, Resume.is_base == False
     ).first() is not None
 
-    try:
-        run_id = launch_background(
-            "tailor_resume",
-            _tailor_impl,
-            trigger="manual",
-            scope_key=scope,
-            target_job_id=target_uuid,
-            meta={"base_name": base_name, "replaces": replaces},
-            func_kwargs={
-                "base_resume_id": base_resume_id,
-                "job_id": job_id,
-                "job_description_override": job_description,
-            },
-        )
-        chain_depth = _resolve_chain_score_depth(db) if job_id else None
-        return {"run_id": run_id, "status": "running", "chain_score": chain_depth or "off"}
-    except JobAlreadyRunningError as e:
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"{e.job_type} is already running for this pair"},
-        )
+    run_id = launch_background(
+        "tailor_resume",
+        _tailor_impl,
+        trigger="manual",
+        scope_key=scope,
+        target_job_id=target_uuid,
+        meta={"base_name": base_name, "replaces": replaces},
+        func_kwargs={
+            "base_resume_id": base_resume_id,
+            "job_id": job_id,
+            "job_description_override": job_description,
+        },
+    )
+    return run_id, (_resolve_chain_score_depth(db) if job_id else None)
 
 
 def _persist_job_description(job_id, description: str) -> None:
@@ -1923,10 +1949,11 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
         finally:
             db.close()
 
+        chained_run_id = None
         if chain_depth and job_id:
             try:
                 from backend.analyzer.cv_scorer import score_single_job
-                launch_background(
+                chained_run_id = launch_background(
                     "analyze_job",
                     score_single_job,
                     trigger="manual",
@@ -1944,6 +1971,8 @@ async def _tailor_impl(base_resume_id: str, job_id: str | None, job_description_
                 # Non-fatal -- tailor succeeded, chain is a nice-to-have
                 logger.warning(f"Tailor chain score failed to launch: {_e}")
         logger.info(f"Tailor: created resume {tailored_id} for job {job_id}")
+        from backend.job_monitor import note_run_created
+        note_run_created(resume_id=tailored_id, chained_run_id=chained_run_id)
         # Returned string becomes JobRun.result_summary (Stats -> Run history).
         return (f"Created '{name}'"
                 + (f" - {chain_depth} score chained" if chain_depth and job_id else ""))

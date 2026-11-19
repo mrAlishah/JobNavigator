@@ -7,6 +7,7 @@ import { describeCron, whenShort, CRON_PRESETS } from '../time'
 import api, { authFailure } from '../api'
 import { MAX_ACCOUNTS, useFlushBeforeSwitch } from '../accounts'
 import { PURPOSE, SENT_SUMMARY, TelemetrySettingRow } from '../TelemetryChoice'
+import { UpdateStatusRow } from '../UpdateCheck'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useToasts, ToastStack } from '../Toast'
 import {
@@ -545,7 +546,7 @@ export default function Settings() {
       ['models', 'AI', 'Models', '', [
         { kind: 'pair', label: 'Primary provider · model', help: 'Every AI feature uses this pair unless overridden below.',
           pKey: 'llm_provider', mKey: 'llm_model', eKey: 'llm_effort',
-          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), Antigravity CLI (Google subscription), OpenCode Go (subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and Ollama and LM Studio have no effort setting. Antigravity's -high models can think for 5 minutes on a tailoring or a PDF import; -medium answers in under a minute." },
+          info: "Providers: Claude API, Claude Code, Codex CLI (your ChatGPT subscription), Antigravity CLI (Google subscription), OpenCode Go (subscription), OpenAI, Ollama (local), LM Studio (local), OpenRouter. The model list shows that provider's models, including any you added under Model catalog. OpenRouter covers every vendor with one key but has no prompt-cache discount. The subscription CLIs are meant for attended use and have plan limits; a limit hit fails over to the fallback without retrying. Reasoning effort sets how much the model thinks before it answers: higher is slower and costs more. 'default effort' keeps the model's own default. Not every model takes every level; Claude Code steps down to the nearest level, the APIs return an error. Antigravity CLI sets effort in the model name, and LM Studio has no effort setting. On Ollama, 'default effort' keeps a thinking model from thinking, since on a local GPU it would spend the whole answer on reasoning; any level turns thinking on, which will be a bit slower. Antigravity's -high models can think for 5 minutes on a tailoring or a PDF import; -medium answers in under a minute." },
         { kind: 'runners', label: 'Provider containers', accountId: me?.id, isOwner,
           help: 'Codex, Claude Code and Antigravity start automatically after settings are saved.',
           info: 'Includes all profiles, feature overrides and scoring fallback. Ollama and LM Studio use their configured external addresses.' },
@@ -781,6 +782,13 @@ export default function Settings() {
         B('Proxy URL', 'Used by scrapes that hit rate limits or geo-blocks. Empty = direct.', 'proxy_url', { mono: true, w: '340px', placeholder: 'socks5://127.0.0.1:9050' }),
         { kind: 'apikey', label: 'Dashboard API key', help: 'Saving refreshes the session cookie so iframes keep working.' },
         BT('DB backup', 'DB snapshot now, outside the cron.', 'Run backup', () => api.post('/db/backup'), { ownerOnly: true }),
+      ]],
+      ['updates', '', 'Updates', '', [
+        SEL('Check for updates', 'Compares this install with GitHub. It only reports; it never updates the install.', 'update_check_mode',
+          [['off', 'Off'], ['release', 'New releases'], ['commit', 'New commits on main']], { w: '260px', dflt: 'off',
+            info: 'New releases compares the version with the latest GitHub release. New commits on main compares the commit of this clone with the head of main; the backend reads it from the clone’s .git, which docker-compose.yml mounts read-only. Only api.github.com is called, without a token and without data about this install. To update: git pull && docker compose pull && docker compose up -d. Commits on main have no prebuilt images, so after git pull build them with docker compose up --build -d.' }),
+        B('Repository', 'The GitHub repository to compare with, as owner/name. Empty = vesaias/JobNavigator.', 'update_check_repo', { mono: true, w: '260px', placeholder: 'vesaias/JobNavigator' }),
+        { kind: 'updates', label: 'Status', help: 'The last result. GitHub is asked at most every 6 hours.' },
       ]],
       ['telemetry', '', 'Telemetry', '', [
         { kind: 'telemetry', label: 'Allow anonymous telemetry', help: PURPOSE,
@@ -1151,6 +1159,8 @@ function Row({ r, ctx }) {
         return <ApiKeyRow value={val('dashboard_api_key')} save={save} flash={flash} />
       case 'telemetry':
         return <TelemetrySettingRow />
+      case 'updates':
+        return <UpdateStatusRow mode={val('update_check_mode', 'off')} repo={val('update_check_repo')} />
       case 'readonly': {
         const set = !!val(r.key)
         if (!set) return <Helper style={{ flex: 1, minWidth: 0 }}>{r.emptyText || 'Not set'}</Helper>
